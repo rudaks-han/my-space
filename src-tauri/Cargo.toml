@@ -1,0 +1,48 @@
+[package]
+name = "my-space"
+version = "0.1.0"
+description = "My Space - 업무용 통합 앱"
+authors = ["rudaks"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "my_space_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+log = "0.4"
+tauri-plugin-log = "2"
+# `unstable`: 한 창에 여러 자식 웹뷰를 임베드(add_child)하기 위해 필요 — 브라우저 탭 구현에 사용.
+# `devtools`: 웹뷰 개발자도구를 릴리스 빌드에서도 사용 가능하게 한다 (debug 빌드는 원래 기본 활성).
+tauri = { version = "2", features = ["macos-private-api", "unstable", "devtools", "tray-icon"] }
+tauri-plugin-opener = "2"
+# GitHub 릴리스 기반 자동 업데이트: 새 버전 확인·다운로드·설치.
+tauri-plugin-updater = "2"
+# 업데이트 설치 후 앱을 재시작(relaunch)하는 데 사용.
+tauri-plugin-process = "2"
+# 작업 상태 변화(입력 대기·작업 완료) 시 macOS 시스템 알림을 띄우는 데 사용.
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Slack/Google API 호출용 HTTP 클라이언트. macOS 는 native-tls(Secure Transport)를 써서 OpenSSL 불필요.
+reqwest = { version = "0.12", features = ["json"] }
+# Slack rate-limit(429) 백오프 대기 + Google OAuth 루프백 대기에 tokio 사용.
+tokio = { version = "1", features = ["time"] }
+# Google 캘린더: 오늘 날짜 경계(로컬 타임존) 계산.
+chrono = "0.4"
+# OAuth 인증 URL 파라미터 인코딩/디코딩.
+urlencoding = "2"
+
+# macOS 전용: 자식 웹뷰의 WKWebView 에 두 손가락 스와이프(뒤로/앞으로) 제스처를 켜기 위해
+# 네이티브 ObjC 메서드(setAllowsBackForwardNavigationGestures:)를 호출한다.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+
