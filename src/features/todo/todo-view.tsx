@@ -50,13 +50,7 @@ const COLOR_LABEL: Record<StickyColor, string> = {
 
 type Api = ReturnType<typeof useStickies>
 
-function StickyCard({
-  note,
-  api,
-}: {
-  note: StickyNote
-  api: Api
-}) {
+function StickyCard({ note, api }: { note: StickyNote; api: Api }) {
   const [draft, setDraft] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState("")
@@ -82,7 +76,7 @@ function StickyCard({
     <div
       className={cn(
         "flex flex-col gap-3 rounded-xl border p-3 shadow-sm",
-        PALETTE[note.color].card,
+        PALETTE[note.color].card
       )}
     >
       <div className="flex items-center gap-2">
@@ -92,7 +86,7 @@ function StickyCard({
           placeholder="제목 없음"
           className="min-w-0 flex-1 bg-transparent text-sm font-semibold placeholder:text-muted-foreground/70 focus:outline-none"
         />
-        <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
           {note.todos.length > 0 && `${remaining}/${note.todos.length}`}
         </span>
         <Button
@@ -133,7 +127,7 @@ function StickyCard({
               <span
                 className={cn(
                   "flex-1 cursor-text text-sm break-words",
-                  t.done && "text-muted-foreground line-through",
+                  t.done && "text-muted-foreground line-through"
                 )}
                 onDoubleClick={() => {
                   setEditingId(t.id)
@@ -148,21 +142,21 @@ function StickyCard({
               type="button"
               onClick={() => api.removeTodo(note.id, t.id)}
               aria-label="할 일 삭제"
-              className="text-muted-foreground shrink-0 opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+              className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
             >
               <XIcon className="size-3.5" />
             </button>
           </li>
         ))}
         {note.todos.length === 0 && (
-          <li className="text-muted-foreground py-1 text-xs">
+          <li className="py-1 text-xs text-muted-foreground">
             아래에 할 일을 추가하세요.
           </li>
         )}
       </ul>
 
       <form onSubmit={submitTodo} className="flex items-center gap-1.5">
-        <PlusIcon className="text-muted-foreground size-3.5 shrink-0" />
+        <PlusIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -184,7 +178,7 @@ function StickyCard({
               PALETTE[c].swatch,
               note.color === c
                 ? "ring-2 ring-foreground/50 ring-offset-transparent"
-                : "hover:scale-110",
+                : "hover:scale-110"
             )}
           />
         ))}
@@ -202,7 +196,7 @@ export function TodoView() {
       <div className="flex items-center justify-between">
         <div className="flex flex-col">
           <h2 className="text-lg font-semibold">할 일</h2>
-          <p className="text-muted-foreground text-sm">
+          <p className="text-sm text-muted-foreground">
             포스트잇 {notes.length}개
           </p>
         </div>
@@ -213,7 +207,7 @@ export function TodoView() {
       </div>
 
       {notes.length === 0 ? (
-        <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-3 py-20 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-20 text-center text-muted-foreground">
           <StickyNoteIcon className="size-8 opacity-60" />
           <p className="text-sm">
             아직 포스트잇이 없습니다. “포스트잇 추가”로 시작하세요.

@@ -83,26 +83,41 @@ export function useHerdr() {
     setError(null)
     try {
       setAgents(await trackedInvoke<HerdrAgent[]>("herdr_list_agents"))
-      setWorkspaces(await trackedInvoke<HerdrWorkspace[]>("herdr_list_workspaces"))
+      setWorkspaces(
+        await trackedInvoke<HerdrWorkspace[]>("herdr_list_workspaces")
+      )
     } catch (e) {
       setError(String(e))
     }
   }, [])
 
   /** 해당 워크스페이스로 이동(터미널 창을 앞으로). session=herdr 세션명. */
-  const focusWorkspace = useCallback(async (session: string, workspaceId: string) => {
-    await trackedInvoke("herdr_focus_workspace", { session, workspaceId })
-  }, [])
+  const focusWorkspace = useCallback(
+    async (session: string, workspaceId: string) => {
+      await trackedInvoke("herdr_focus_workspace", { session, workspaceId })
+    },
+    []
+  )
 
   /** 해당 pane 의 Claude 세션에 프롬프트를 입력·전송한다(텍스트+Enter). session=herdr 세션명. */
-  const sendPrompt = useCallback(async (session: string, paneId: string, text: string) => {
-    await trackedInvoke("herdr_send_prompt", { session, paneId, text })
-  }, [])
+  const sendPrompt = useCallback(
+    async (session: string, paneId: string, text: string) => {
+      await trackedInvoke("herdr_send_prompt", { session, paneId, text })
+    },
+    []
+  )
 
   /** 특정 pane(workspace)의 최근 터미널 로그(주고받은 메시지)를 herdr 소켓으로 읽는다. session=herdr 세션명. */
-  const readPane = useCallback(async (session: string, paneId: string, lines = 300) => {
-    return await trackedInvoke<string>("herdr_read_pane", { session, paneId, lines })
-  }, [])
+  const readPane = useCallback(
+    async (session: string, paneId: string, lines = 300) => {
+      return await trackedInvoke<string>("herdr_read_pane", {
+        session,
+        paneId,
+        lines,
+      })
+    },
+    []
+  )
 
   // 최초 로드 + 이벤트 구독(감시 중이면 800ms 마다 갱신됨).
   useEffect(() => {

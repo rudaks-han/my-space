@@ -14,7 +14,10 @@ const STORAGE_KEY = "myspace.menuOrder"
  * - order 에 없는(새로 추가된) 항목은 원래 순서대로 뒤에 붙인다
  * - order 에만 있고 실제로 없는 id 는 무시한다
  */
-function applyOrder(items: MenuItem[], order: string[] | undefined): MenuItem[] {
+function applyOrder(
+  items: MenuItem[],
+  order: string[] | undefined
+): MenuItem[] {
   if (!order || order.length === 0) return items
   const byId = new Map(items.map((i) => [i.id, i]))
   const result: MenuItem[] = []
@@ -63,7 +66,7 @@ export function useMenuOrder() {
         return { ...prev, [groupId]: ids }
       })
     },
-    [setOrderMap],
+    [setOrderMap]
   )
 
   return { groups, moveItem }

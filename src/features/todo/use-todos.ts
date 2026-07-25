@@ -4,12 +4,7 @@ import { useLocalStorage } from "@/lib/use-local-storage"
 
 /** 포스트잇 색상 키. 실제 색은 뷰(todo-view)의 팔레트에서 매핑한다. */
 export type StickyColor =
-  | "yellow"
-  | "pink"
-  | "green"
-  | "blue"
-  | "purple"
-  | "gray"
+  "yellow" | "pink" | "green" | "blue" | "purple" | "gray"
 
 /** 색상 순환 순서(포스트잇을 새로 추가할 때 다음 색을 고르는 데 사용). */
 export const STICKY_COLORS: StickyColor[] = [
@@ -71,25 +66,25 @@ export function useStickies() {
     (noteId: string) => {
       setNotes((prev) => prev.filter((n) => n.id !== noteId))
     },
-    [setNotes],
+    [setNotes]
   )
 
   const setTitle = useCallback(
     (noteId: string, title: string) => {
       setNotes((prev) =>
-        prev.map((n) => (n.id === noteId ? { ...n, title } : n)),
+        prev.map((n) => (n.id === noteId ? { ...n, title } : n))
       )
     },
-    [setNotes],
+    [setNotes]
   )
 
   const setColor = useCallback(
     (noteId: string, color: StickyColor) => {
       setNotes((prev) =>
-        prev.map((n) => (n.id === noteId ? { ...n, color } : n)),
+        prev.map((n) => (n.id === noteId ? { ...n, color } : n))
       )
     },
-    [setNotes],
+    [setNotes]
   )
 
   const addTodo = useCallback(
@@ -111,11 +106,11 @@ export function useStickies() {
                   },
                 ],
               }
-            : n,
-        ),
+            : n
+        )
       )
     },
-    [setNotes],
+    [setNotes]
   )
 
   const toggleTodo = useCallback(
@@ -126,14 +121,14 @@ export function useStickies() {
             ? {
                 ...n,
                 todos: n.todos.map((t) =>
-                  t.id === todoId ? { ...t, done: !t.done } : t,
+                  t.id === todoId ? { ...t, done: !t.done } : t
                 ),
               }
-            : n,
-        ),
+            : n
+        )
       )
     },
-    [setNotes],
+    [setNotes]
   )
 
   const updateTodo = useCallback(
@@ -144,14 +139,14 @@ export function useStickies() {
             ? {
                 ...n,
                 todos: n.todos.map((t) =>
-                  t.id === todoId ? { ...t, text: text.trim() } : t,
+                  t.id === todoId ? { ...t, text: text.trim() } : t
                 ),
               }
-            : n,
-        ),
+            : n
+        )
       )
     },
-    [setNotes],
+    [setNotes]
   )
 
   const removeTodo = useCallback(
@@ -160,11 +155,11 @@ export function useStickies() {
         prev.map((n) =>
           n.id === noteId
             ? { ...n, todos: n.todos.filter((t) => t.id !== todoId) }
-            : n,
-        ),
+            : n
+        )
       )
     },
-    [setNotes],
+    [setNotes]
   )
 
   return {

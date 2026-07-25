@@ -61,7 +61,7 @@ export function WidgetRoot() {
   }
   // 알림(입력 대기/작업 완료)을 상단에, 그 아래에 herdr 질문 화면을 함께 표시한다.
   return (
-    <div className="bg-background fixed inset-0 flex flex-col overflow-hidden rounded-lg border text-left">
+    <div className="fixed inset-0 flex flex-col overflow-hidden rounded-lg border bg-background text-left">
       <WidgetNotice />
       <WidgetQuestion />
     </div>

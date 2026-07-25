@@ -34,7 +34,7 @@ export function SlackProvider({ children }: { children: ReactNode }) {
   // 채널 목록은 로컬에 캐시해 선택 UI 를 즉시 띄운다. 새로고침 시에만 서버 재조회.
   const [channelsList, setChannelsList] = useLocalStorage<ChannelInfo[]>(
     CHANNELS_CACHE_KEY,
-    [],
+    []
   )
   const [channelsFetchedAt, setChannelsFetchedAt] = useLocalStorage<
     number | null
@@ -80,7 +80,7 @@ export function SlackProvider({ children }: { children: ReactNode }) {
         setError(String(e))
       }
     },
-    [refresh],
+    [refresh]
   )
 
   const markRead = useCallback(
@@ -97,7 +97,7 @@ export function SlackProvider({ children }: { children: ReactNode }) {
         void refresh()
       }
     },
-    [refresh],
+    [refresh]
   )
 
   const markAllRead = useCallback(async () => {
@@ -110,8 +110,8 @@ export function SlackProvider({ children }: { children: ReactNode }) {
     try {
       await Promise.all(
         targets.map((t) =>
-          trackedInvoke("slack_mark_read", { channel: t.id, ts: t.ts }),
-        ),
+          trackedInvoke("slack_mark_read", { channel: t.id, ts: t.ts })
+        )
       )
     } catch (e) {
       setError(String(e))
@@ -130,7 +130,7 @@ export function SlackProvider({ children }: { children: ReactNode }) {
         setError(String(e))
       }
     },
-    [refresh],
+    [refresh]
   )
 
   const connect = useCallback(
@@ -154,7 +154,7 @@ export function SlackProvider({ children }: { children: ReactNode }) {
         void refresh()
       }
     },
-    [refresh],
+    [refresh]
   )
 
   const disconnect = useCallback(async () => {
@@ -204,13 +204,15 @@ export function SlackProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!isTauri() || !status?.connected) return
     let last = 0
-    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-      if (!focused) return
-      const now = performance.now()
-      if (now - last < 3000) return
-      last = now
-      void refresh()
-    })
+    const unlisten = getCurrentWindow().onFocusChanged(
+      ({ payload: focused }) => {
+        if (!focused) return
+        const now = performance.now()
+        if (now - last < 3000) return
+        last = now
+        void refresh()
+      }
+    )
     return () => {
       void unlisten.then((f) => f())
     }

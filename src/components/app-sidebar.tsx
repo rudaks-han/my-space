@@ -47,7 +47,11 @@ export function AppSidebar({
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
-      <SidebarHeader>
+      {/*
+        타이틀바가 Overlay 라 콘텐츠가 창 맨 위까지 올라온다. 신호등 버튼(좌상단)이
+        가리지 않도록 위쪽을 비워 두고, 이 영역을 창 드래그 핸들로 쓴다.
+      */}
+      <SidebarHeader className="pt-7" data-tauri-drag-region>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton className="data-[slot=sidebar-menu-button]:p-1.5!">
@@ -60,7 +64,9 @@ export function AppSidebar({
       <SidebarContent>
         {groups.map((group) => (
           <SidebarGroup key={group.id}>
-            {group.label && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
+            {group.label && (
+              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            )}
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items.map((m) => {
@@ -95,7 +101,7 @@ export function AppSidebar({
                         "rounded-md transition-opacity",
                         isDragging && "opacity-40",
                         isOver &&
-                          "before:bg-primary relative before:absolute before:-top-0.5 before:right-1 before:left-1 before:h-0.5 before:rounded-full",
+                          "relative before:absolute before:-top-0.5 before:right-1 before:left-1 before:h-0.5 before:rounded-full before:bg-primary"
                       )}
                     >
                       <SidebarMenuButton
@@ -118,7 +124,7 @@ export function AppSidebar({
       </SidebarContent>
       <SidebarFooter>
         <div className="flex items-center justify-between px-2 py-1">
-          <span className="text-muted-foreground text-xs">v0.1.0</span>
+          <span className="text-xs text-muted-foreground">v0.1.0</span>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -129,7 +135,7 @@ export function AppSidebar({
                   onClick={() => onSelectMenu("settings")}
                   className={cn(
                     "cursor-pointer",
-                    activeId === "settings" && "bg-muted text-foreground",
+                    activeId === "settings" && "bg-muted text-foreground"
                   )}
                 >
                   <SettingsIcon />

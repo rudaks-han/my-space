@@ -19,7 +19,9 @@
         "width": 1400,
         "height": 918,
         "center": true,
-        "visible": false
+        "visible": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       },
       {
         "label": "widget",
@@ -34,6 +36,7 @@
         "visibleOnAllWorkspaces": true,
         "skipTaskbar": true,
         "shadow": false,
+        "acceptFirstMouse": true,
         "visible": false
       }
     ],

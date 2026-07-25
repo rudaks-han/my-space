@@ -1,6 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
-import { getCurrentWindow } from "@tauri-apps/api/window"
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -14,22 +13,9 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
+import { useWebviewBounds } from "@/lib/use-webview-bounds"
 import { cn } from "@/lib/utils"
 import { labelFor, normalizeUrl, useBrowser } from "./use-browser"
-
-interface Bounds {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-const sameBounds = (a: Bounds | null, b: Bounds) =>
-  a !== null &&
-  a.x === b.x &&
-  a.y === b.y &&
-  a.width === b.width &&
-  a.height === b.height
 
 // isTauri 는 함수이므로 한 번 호출해 boolean 으로 둔다 (Tauri 앱 안에서 실행 중인지).
 const inTauri = isTauri()
@@ -39,45 +25,8 @@ export function BrowserView() {
     useBrowser()
 
   const contentRef = useRef<HTMLDivElement>(null)
-  const [bounds, setBounds] = useState<Bounds | null>(null)
-  // 레이아웃이 안정되기 전에는 웹뷰를 만들지 않는다. dev 모드(Vite)는 CSS 가 JS 로 주입돼
-  // 첫 프레임이 스타일 적용 전일 수 있고, 그때 잘못된 위치에 웹뷰가 생성되면 툴바를 덮는다.
-  const [settled, setSettled] = useState(false)
-
-  // DOM 뷰포트 좌표와 네이티브 자식 웹뷰 좌표 사이의 오프셋을 런타임에 계산해 보정한다.
-  // (창 데코레이션/타이틀바 높이 등으로 상수 오프셋이 생길 수 있음)
-  const [offset, setOffset] = useState<{ x: number; y: number } | null>(
-    inTauri ? null : { x: 0, y: 0 },
-  )
-  // 핵심: macOS(wry)는 자식 웹뷰 y 원점을 '창 최상단(타이틀바 포함)' 기준으로 잡는 반면,
-  // DOM 좌표(getBoundingClientRect)는 타이틀바 아래가 0 이다. 그 차이(=타이틀바 높이)만큼
-  // 웹뷰가 위로 그려져 툴바를 덮었다. 이 차이는 '창 inner 크기 − DOM 뷰포트 크기' 로 구할 수 있다
-  // (타이틀바가 없는 OS 에선 0 이 되어 그대로 동작).
-  useEffect(() => {
-    if (!inTauri) return
-    let cancelled = false
-    ;(async () => {
-      try {
-        const win = getCurrentWindow()
-        const [size, scale] = await Promise.all([
-          win.innerSize(),
-          win.scaleFactor(),
-        ])
-        if (cancelled) return
-        const winW = size.width / scale
-        const winH = size.height / scale
-        setOffset({
-          x: Math.max(0, Math.round(winW - window.innerWidth)),
-          y: Math.max(0, Math.round(winH - window.innerHeight)),
-        })
-      } catch {
-        if (!cancelled) setOffset({ x: 0, y: 0 })
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  // 네이티브 웹뷰를 겹쳐 그릴 영역(레이아웃이 안정되기 전에는 null).
+  const rect = useWebviewBounds(contentRef)
 
   // 주소창은 활성 탭의 현재 URL 을 반영하되 편집 가능해야 한다.
   // 활성 탭이나 그 URL(탭 전환·페이지 내부 이동)이 바뀌면 입력값을 재동기화한다
@@ -106,55 +55,16 @@ export function BrowserView() {
     if (tabs.length === 0) addTab()
   }, [tabs.length, addTab])
 
-  // 웹뷰가 차지할 영역의 뷰포트 기준 좌표·크기를 측정한다.
-  // 네이티브 웹뷰는 이 위에 겹쳐 그려지므로 좌표가 조금이라도 어긋나면 툴바를 덮어버린다.
-  // ResizeObserver 는 '크기' 변화만 감지해 위치만 바뀌는 경우(CSS 로딩·헤더 높이 확정 등)를
-  // 놓친다. 그래서 매 프레임 실제 사각형을 다시 재어 값이 바뀔 때만 갱신한다(변화 없으면 렌더 없음).
-  useLayoutEffect(() => {
-    const el = contentRef.current
-    if (!el) return
-    let raf = 0
-    let last: Bounds | null = null
-    let stable = 0
-    let isSettled = false
-    const tick = () => {
-      const r = el.getBoundingClientRect()
-      const next: Bounds = {
-        x: Math.round(r.left),
-        y: Math.round(r.top),
-        width: Math.round(r.width),
-        height: Math.round(r.height),
-      }
-      if (sameBounds(last, next)) {
-        // 같은 값이 연속 3프레임 유지되면 레이아웃이 안정된 것으로 보고 웹뷰 생성을 허용
-        if (!isSettled && next.height > 0 && ++stable >= 3) {
-          isSettled = true
-          setSettled(true)
-        }
-      } else {
-        last = next
-        stable = 0
-        setBounds(next)
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [])
-
   // 활성 탭을 현재 영역에 표시(없으면 생성)하고 나머지는 숨긴다.
   // 이미 존재하는 웹뷰는 재배치만 하므로 탭 전환·리사이즈로 페이지가 다시 로드되지 않는다.
   useEffect(() => {
-    if (!inTauri || !bounds || !settled || !offset) return
+    if (!inTauri || !rect) return
     const active = tabs.find((t) => t.id === activeId)
     if (active) {
       void trackedInvoke("browser_open", {
         label: labelFor(active.id),
         url: active.url,
-        x: bounds.x + offset.x,
-        y: bounds.y + offset.y,
-        width: bounds.width,
-        height: bounds.height,
+        ...rect,
       })
     }
     for (const t of tabs) {
@@ -162,7 +72,7 @@ export function BrowserView() {
         void trackedInvoke("browser_hide", { label: labelFor(t.id) })
       }
     }
-  }, [activeId, bounds, tabs, settled, offset])
+  }, [activeId, rect, tabs])
 
   // 웹뷰 내부 이동(링크 클릭 등)을 Rust 가 알려주면 탭 URL·제목을 동기화한다.
   useEffect(() => {
@@ -173,7 +83,7 @@ export function BrowserView() {
         const { label, url } = event.payload
         const tab = tabsRef.current.find((t) => labelFor(t.id) === label)
         if (tab && tab.url !== url) setTabUrl(tab.id, url)
-      },
+      }
     )
     return () => {
       void unlisten.then((fn) => fn())
@@ -212,23 +122,22 @@ export function BrowserView() {
     if (!activeId) return
     const url = normalizeUrl(address)
     setTabUrl(activeId, url)
-    if (inTauri) void trackedInvoke("browser_navigate", { label: labelFor(activeId), url })
+    if (inTauri)
+      void trackedInvoke("browser_navigate", { label: labelFor(activeId), url })
   }
 
   const nav = (
     command:
-      | "browser_back"
-      | "browser_forward"
-      | "browser_reload"
-      | "browser_devtools",
+      "browser_back" | "browser_forward" | "browser_reload" | "browser_devtools"
   ) => {
-    if (activeId && inTauri) void trackedInvoke(command, { label: labelFor(activeId) })
+    if (activeId && inTauri)
+      void trackedInvoke(command, { label: labelFor(activeId) })
   }
 
   return (
-    <div className="bg-card flex h-full flex-col overflow-hidden rounded-lg border">
+    <div className="flex h-full flex-col overflow-hidden rounded-lg border bg-card">
       {/* 탭 스트립 */}
-      <div className="bg-muted/40 flex items-center gap-1 overflow-x-auto border-b px-1.5 py-1">
+      <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted/40 px-1.5 py-1">
         {tabs.map((t) => {
           const active = t.id === activeId
           return (
@@ -236,10 +145,10 @@ export function BrowserView() {
               key={t.id}
               onClick={() => setActiveId(t.id)}
               className={cn(
-                "group flex h-8 min-w-32 max-w-52 cursor-default items-center gap-2 rounded-md px-2.5 text-sm transition-colors",
+                "group flex h-8 max-w-52 min-w-32 cursor-default items-center gap-2 rounded-md px-2.5 text-sm transition-colors",
                 active
                   ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-background/60",
+                  : "text-muted-foreground hover:bg-background/60"
               )}
             >
               <GlobeIcon className="size-3.5 shrink-0 opacity-70" />
@@ -250,7 +159,7 @@ export function BrowserView() {
                   closeTab(t.id)
                 }}
                 aria-label="탭 닫기"
-                className="hover:bg-muted-foreground/20 grid size-4 shrink-0 place-items-center rounded opacity-0 transition-opacity group-hover:opacity-100"
+                className="grid size-4 shrink-0 place-items-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-muted-foreground/20"
               >
                 <XIcon className="size-3" />
               </button>
@@ -325,9 +234,9 @@ export function BrowserView() {
       </form>
 
       {/* 웹뷰가 그려질 영역 — 네이티브 웹뷰가 이 위에 겹쳐서 렌더된다 */}
-      <div ref={contentRef} className="bg-muted/20 relative flex-1">
+      <div ref={contentRef} className="relative flex-1 bg-muted/20">
         {(!inTauri || tabs.length === 0) && (
-          <div className="text-muted-foreground absolute inset-0 grid place-items-center p-6 text-center text-sm">
+          <div className="absolute inset-0 grid place-items-center p-6 text-center text-sm text-muted-foreground">
             {inTauri
               ? "‘+’ 를 눌러 새 탭을 여세요."
               : "브라우저 기능은 Tauri 앱(bun run tauri dev)에서만 동작합니다."}

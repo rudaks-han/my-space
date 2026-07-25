@@ -35,14 +35,27 @@ serde_json = "1"
 # Slack/Google API 호출용 HTTP 클라이언트. macOS 는 native-tls(Secure Transport)를 써서 OpenSSL 불필요.
 reqwest = { version = "0.12", features = ["json"] }
 # Slack rate-limit(429) 백오프 대기 + Google OAuth 루프백 대기에 tokio 사용.
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "sync"] }
 # Google 캘린더: 오늘 날짜 경계(로컬 타임존) 계산.
 chrono = "0.4"
 # OAuth 인증 URL 파라미터 인코딩/디코딩.
 urlencoding = "2"
+# IntelliJ 실행 설정(.idea/runConfigurations/*.xml) 파싱용 경량 read-only XML 파서.
+roxmltree = "0.20"
+
+# ── GitHub 자동 로그인: 로컬 Chrome 의 github.com 쿠키를 읽어 복호화해 임베드 웹뷰에 주입 ──
+# Chrome 쿠키 SQLite DB 읽기(시스템 SQLite 의존 없이 번들 컴파일).
+rusqlite = { version = "0.31", features = ["bundled"] }
+# 쿠키 값 복호화: AES-128-CBC (Chrome "v10" 형식).
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc", "block-padding"] }
+# Keychain 비밀번호 → AES 키 유도: PBKDF2-HMAC-SHA1, salt="saltysalt", 1003회.
+pbkdf2 = "0.12"
+sha1 = "0.10"
 
 # macOS 전용: 자식 웹뷰의 WKWebView 에 두 손가락 스와이프(뒤로/앞으로) 제스처를 켜기 위해
 # 네이티브 ObjC 메서드(setAllowsBackForwardNavigationGestures:)를 호출한다.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
-
+# IntelliJ 서비스 종료 시 프로세스 그룹 전체에 시그널(kill(-pgid))을 보내는 데 사용.
+libc = "0.2"

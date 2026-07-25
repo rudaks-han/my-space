@@ -56,7 +56,7 @@ export interface SlackContextValue {
   openMessage: (
     channel: string,
     ts: string,
-    threadTs?: string | null,
+    threadTs?: string | null
   ) => Promise<void>
 }
 

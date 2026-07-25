@@ -52,7 +52,7 @@ export function WidgetQuestion() {
         }}
         className="flex cursor-move items-center gap-2 border-b px-3 py-2 select-none"
       >
-        <span className="bg-primary text-primary-foreground rounded px-1.5 py-0.5 text-[10px] font-medium">
+        <span className="rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
           Claude
         </span>
         <span className="text-xs font-medium">
@@ -61,7 +61,7 @@ export function WidgetQuestion() {
         <button
           type="button"
           onClick={() => void close()}
-          className="text-muted-foreground hover:text-foreground ml-auto text-sm"
+          className="ml-auto text-sm text-muted-foreground hover:text-foreground"
           aria-label="닫기"
           title="닫기"
         >
@@ -70,7 +70,7 @@ export function WidgetQuestion() {
       </div>
 
       {questions.length === 0 ? (
-        <div className="text-muted-foreground flex flex-1 items-center justify-center px-4 text-center text-xs">
+        <div className="flex flex-1 items-center justify-center px-4 text-center text-xs text-muted-foreground">
           대기 중인 선택이 없습니다
         </div>
       ) : (
@@ -82,19 +82,23 @@ export function WidgetQuestion() {
                   key={`${q.session} ${q.pane_id}`}
                   type="button"
                   onClick={() => void focus(q.session, q.pane_id)}
-                  className="hover:bg-accent flex flex-col items-start gap-1 rounded-md border px-2.5 py-2 text-left transition-colors"
+                  className="flex flex-col items-start gap-1 rounded-md border px-2.5 py-2 text-left transition-colors hover:bg-accent"
                 >
                   <div className="flex w-full items-center gap-2">
-                    <span className="bg-muted rounded px-1 py-0.5 font-mono text-[10px]">
+                    <span className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">
                       {q.pane_id}
                     </span>
                     {q.header && (
-                      <span className="text-[11px] font-medium">{q.header}</span>
+                      <span className="text-[11px] font-medium">
+                        {q.header}
+                      </span>
                     )}
-                    <span className="text-primary ml-auto text-[10px]">이동 →</span>
+                    <span className="ml-auto text-[10px] text-primary">
+                      이동 →
+                    </span>
                   </div>
                   {q.question && (
-                    <span className="text-muted-foreground max-h-10 overflow-hidden text-[11px] leading-snug whitespace-pre-wrap">
+                    <span className="max-h-10 overflow-hidden text-[11px] leading-snug whitespace-pre-wrap text-muted-foreground">
                       {q.question}
                     </span>
                   )}
@@ -102,7 +106,7 @@ export function WidgetQuestion() {
               ))}
             </div>
           </div>
-          <div className="text-muted-foreground border-t px-3 py-1.5 text-[10px]">
+          <div className="border-t px-3 py-1.5 text-[10px] text-muted-foreground">
             항목을 클릭하면 해당 터미널로 이동합니다 · 선택은 터미널에서
           </div>
         </>

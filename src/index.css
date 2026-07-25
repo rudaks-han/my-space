@@ -7,7 +7,7 @@
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: 'Inter Variable', sans-serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter Variable', system-ui, sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -49,72 +49,78 @@
 }
 
 :root {
+    /* Slack 톤: 콘텐츠는 순백, 바깥/사이드바는 오버진(가지색), 액션은 Slack 그린. */
     --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
+    --foreground: oklch(0.22 0.006 340);
     --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
+    --card-foreground: oklch(0.22 0.006 340);
     --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --popover-foreground: oklch(0.22 0.006 340);
+    /* Slack green #007a5a */
+    --primary: oklch(0.52 0.11 165);
+    --primary-foreground: oklch(0.985 0.005 165);
+    --secondary: oklch(0.965 0.004 330);
+    --secondary-foreground: oklch(0.3 0.02 340);
+    --muted: oklch(0.965 0.004 330);
+    --muted-foreground: oklch(0.55 0.012 340);
+    --accent: oklch(0.955 0.014 328);
+    --accent-foreground: oklch(0.32 0.09 328);
+    /* Slack mention red #E01E5A */
+    --destructive: oklch(0.575 0.21 8);
+    --border: oklch(0.9 0.005 330);
+    --input: oklch(0.9 0.005 330);
+    --ring: oklch(0.52 0.11 165);
+    /* Slack 브랜드 컬러: 오버진 / 그린 / 블루 / 옐로 / 레드 */
+    --chart-1: oklch(0.42 0.14 328);
+    --chart-2: oklch(0.68 0.14 162);
+    --chart-3: oklch(0.72 0.12 224);
+    --chart-4: oklch(0.8 0.13 85);
+    --chart-5: oklch(0.6 0.2 10);
+    --radius: 0.5rem;
+    /* 오버진 사이드바 (라이트/다크 공통) */
+    --sidebar: oklch(0.245 0.105 328);
+    --sidebar-foreground: oklch(0.93 0.012 330);
+    --sidebar-primary: oklch(0.56 0.13 248);
+    --sidebar-primary-foreground: oklch(0.985 0.005 250);
+    --sidebar-accent: oklch(1 0 0 / 0.14);
+    --sidebar-accent-foreground: oklch(0.985 0.005 330);
+    --sidebar-border: oklch(1 0 0 / 0.1);
+    --sidebar-ring: oklch(0.56 0.13 248);
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
+    --background: oklch(0.17 0.008 340);
+    --foreground: oklch(0.95 0.004 330);
+    --card: oklch(0.205 0.008 340);
+    --card-foreground: oklch(0.95 0.004 330);
+    --popover: oklch(0.205 0.008 340);
+    --popover-foreground: oklch(0.95 0.004 330);
+    --primary: oklch(0.62 0.12 163);
+    --primary-foreground: oklch(0.15 0.02 165);
+    --secondary: oklch(0.26 0.008 340);
+    --secondary-foreground: oklch(0.95 0.004 330);
+    --muted: oklch(0.26 0.008 340);
+    --muted-foreground: oklch(0.7 0.012 330);
+    --accent: oklch(0.3 0.03 328);
+    --accent-foreground: oklch(0.92 0.02 328);
+    --destructive: oklch(0.62 0.2 8);
     --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --input: oklch(1 0 0 / 14%);
+    --ring: oklch(0.62 0.12 163);
+    --chart-1: oklch(0.6 0.14 328);
+    --chart-2: oklch(0.68 0.14 162);
+    --chart-3: oklch(0.72 0.12 224);
+    --chart-4: oklch(0.8 0.13 85);
+    --chart-5: oklch(0.66 0.19 10);
+    /* 오버진 사이드바는 다크에서도 유지 */
+    --sidebar: oklch(0.23 0.1 328);
+    --sidebar-foreground: oklch(0.92 0.012 330);
+    --sidebar-primary: oklch(0.6 0.13 248);
+    --sidebar-primary-foreground: oklch(0.985 0.005 250);
+    --sidebar-accent: oklch(1 0 0 / 0.14);
+    --sidebar-accent-foreground: oklch(0.985 0.005 330);
+    --sidebar-border: oklch(1 0 0 / 0.1);
+    --sidebar-ring: oklch(0.6 0.13 248);
 }
 
 @layer base {
@@ -123,6 +129,9 @@
     }
   body {
     @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
     }
   html {
     @apply font-sans;

@@ -1,48 +1,35 @@
-import { useEffect, useState } from "react"
 import { MoonIcon, PictureInPicture2Icon, SunIcon } from "lucide-react"
 
-import { useTheme } from "@/components/theme-provider"
+import { useIsDark, useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
 
-/**
- * 현재 적용 중인 테마가 다크인지. system 이면 OS 설정을 따르되, 앱 실행 중 OS 외관이
- * 바뀌면(prefers-color-scheme 변경) 토글 아이콘이 즉시 갱신되도록 구독한다.
- */
-function useIsDark() {
-  const { theme } = useTheme()
-  const [systemDark, setSystemDark] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches,
-  )
-
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)")
-    const onChange = () => setSystemDark(mq.matches)
-    mq.addEventListener("change", onChange)
-    return () => mq.removeEventListener("change", onChange)
-  }, [])
-
-  if (theme === "dark") return true
-  if (theme === "light") return false
-  return systemDark
-}
-
 export function SiteHeader({ title }: { title: string }) {
-  const { setTheme } = useTheme()
+  const { setTheme, forcedTheme } = useTheme()
+  const { state } = useSidebar()
   const isDark = useIsDark()
 
   return (
-    <header className="flex h-(--header-height) shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
-      <div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
+    <header
+      // Overlay 타이틀바 아래로 콘텐츠가 들어오므로 헤더를 창 드래그 핸들로 쓴다.
+      data-tauri-drag-region
+      className="flex h-(--header-height) shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)"
+    >
+      {/* 사이드바를 접으면 이 헤더가 창 좌상단까지 오므로 신호등 버튼 자리를 비운다. */}
+      <div
+        className={cn(
+          "flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6",
+          state === "collapsed" && "pl-20 lg:pl-20"
+        )}
+      >
         <SidebarTrigger className="-ml-1" />
         <Separator
           orientation="vertical"
@@ -57,7 +44,14 @@ export function SiteHeader({ title }: { title: string }) {
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={isDark ? "라이트 모드로 전환" : "다크 모드로 전환"}
+                  disabled={forcedTheme !== undefined}
+                  aria-label={
+                    forcedTheme
+                      ? "현재 테마는 모드가 고정되어 있습니다"
+                      : isDark
+                        ? "라이트 모드로 전환"
+                        : "다크 모드로 전환"
+                  }
                   onClick={() => setTheme(isDark ? "light" : "dark")}
                 >
                   {isDark ? <SunIcon /> : <MoonIcon />}
@@ -65,7 +59,11 @@ export function SiteHeader({ title }: { title: string }) {
               }
             />
             <TooltipContent>
-              {isDark ? "라이트 모드" : "다크 모드"}
+              {forcedTheme
+                ? "이 테마는 다크 전용입니다"
+                : isDark
+                  ? "라이트 모드"
+                  : "다크 모드"}
             </TooltipContent>
           </Tooltip>
 

@@ -1,5 +1,8 @@
 mod gcal;
+mod github;
 mod herdr;
+mod intellij;
+mod mcp;
 mod popover;
 mod reminder;
 mod slack;
@@ -289,6 +292,79 @@ fn browser_devtools(app: tauri::AppHandle, label: String) -> Result<(), String> 
     Ok(())
 }
 
+/// GitHub 임베드 웹뷰를 만들면서, 로컬 Chrome 의 github.com 로그인 쿠키가 있으면
+/// 복호화해 주입한 뒤 대상 URL 로 이동시킨다(별도 로그인 없이 로그인 상태로 진입).
+///
+/// - 웹뷰가 이미 있으면 재배치만 하고 끝낸다(로그인·스크롤 상태 보존, 재주입 안 함).
+/// - 쿠키를 못 읽어도(미설치·미로그인·Keychain 거부) 에러가 아니라 그냥 로그인 화면으로 진입한다.
+/// - 라벨은 반드시 BROWSER_PREFIX(`browser-tab-`)로 시작해 내부 이동이 유지되게 한다.
+#[tauri::command]
+fn github_import_chrome_cookies(
+    app: tauri::AppHandle,
+    label: String,
+    url: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    // 이미 있으면 재배치만 (browser_open 과 동일한 표시 동작).
+    if let Some(webview) = app.get_webview(&label) {
+        webview
+            .set_position(LogicalPosition::new(x, y))
+            .map_err(|e| e.to_string())?;
+        webview
+            .set_size(LogicalSize::new(width, height))
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    // Chrome 쿠키 읽기는 best-effort — 실패해도 로그인 화면을 띄운다.
+    let cookies = match github::read_github_cookies() {
+        Ok(c) => c,
+        Err(e) => {
+            log::info!("Chrome github 쿠키 가져오기 생략: {e}");
+            Vec::new()
+        }
+    };
+
+    let window = app
+        .get_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    // 쿠키를 먼저 주입한 뒤 이동시키기 위해 about:blank 로 생성한다.
+    let blank: tauri::Url = "about:blank".parse().map_err(|_| "invalid url".to_string())?;
+    let app_for_new_window = app.clone();
+    let builder = WebviewBuilder::new(&label, WebviewUrl::External(blank))
+        .data_store_identifier(BROWSER_DATA_STORE_ID)
+        .initialization_script(NEW_TAB_SCRIPT)
+        .on_new_window(move |target_url, _features| {
+            log::info!("on_new_window → new tab: {}", target_url);
+            let _ = app_for_new_window.emit("browser:new-tab", target_url.to_string());
+            tauri::webview::NewWindowResponse::Deny
+        });
+    let webview = window
+        .add_child(
+            builder,
+            LogicalPosition::new(x, y),
+            LogicalSize::new(width, height),
+        )
+        .map_err(|e| e.to_string())?;
+    enable_back_forward_gestures(&webview);
+
+    github::inject_cookies(&webview, cookies);
+
+    // 쿠키 주입(setCookie completion 은 비동기)이 커밋될 시간을 잠깐 준 뒤 이동한다.
+    let target = url;
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        if let Ok(parsed) = target.parse::<tauri::Url>() {
+            let _ = webview.navigate(parsed);
+        }
+    });
+
+    Ok(())
+}
+
 fn external_navigation_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri::plugin::Builder::<R>::new("external-navigation")
         .on_navigation(|webview, url| {
@@ -362,6 +438,9 @@ pub fn run() {
         .manage(herdr::PendingQuestions::default())
         .manage(herdr::Notices::default())
         .manage(reminder::PendingReminder::default())
+        .manage(intellij::ServiceState::default())
+        .manage(intellij::RunTracking::default())
+        .manage(intellij::WatchProject::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             minimize_to_widget,
@@ -376,6 +455,7 @@ pub fn run() {
             browser_forward,
             browser_reload,
             browser_devtools,
+            github_import_chrome_cookies,
             slack::slack_save_token,
             slack::slack_status,
             slack::slack_disconnect,
@@ -406,7 +486,17 @@ pub fn run() {
             reminder::reminder_fire,
             reminder::reminder_current,
             reminder::reminder_dismiss,
-            reminder::reminder_snooze
+            reminder::reminder_snooze,
+            intellij::intellij_list_services,
+            intellij::intellij_recent_projects,
+            intellij::intellij_start_service,
+            intellij::intellij_stop_service,
+            intellij::intellij_restart_service,
+            intellij::intellij_running,
+            intellij::intellij_watch_project,
+            intellij::intellij_mcp_status,
+            intellij::intellij_logs,
+            intellij::intellij_clear_logs
         ])
         .setup(|app| {
             // 메뉴바(작업표시줄) 트레이 아이콘. 클릭하면 바로 앱을 열지 않고 메뉴를 띄운다:

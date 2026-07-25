@@ -31,7 +31,7 @@ export function WidgetReminder({
   onSnooze: (minutes: number) => void
 }) {
   return (
-    <div className="bg-background fixed inset-0 flex flex-col overflow-hidden rounded-lg border text-left">
+    <div className="fixed inset-0 flex flex-col overflow-hidden rounded-lg border bg-background text-left">
       {/* 헤더를 드래그하면 팝오버 창을 이동할 수 있다(네이티브 창 드래그). */}
       <div
         onPointerDown={(e) => {
@@ -39,8 +39,8 @@ export function WidgetReminder({
         }}
         className="flex cursor-move items-center gap-2 border-b px-3 py-2 select-none"
       >
-        <BellRingIcon className="text-primary size-3.5" />
-        <span className="text-muted-foreground text-xs">알림</span>
+        <BellRingIcon className="size-3.5 text-primary" />
+        <span className="text-xs text-muted-foreground">알림</span>
       </div>
 
       <div className="flex flex-1 flex-col justify-center px-4 py-3">
@@ -48,20 +48,20 @@ export function WidgetReminder({
           {reminder.title}
         </p>
         {reminder.body && (
-          <p className="text-muted-foreground mt-1 text-xs">{reminder.body}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{reminder.body}</p>
         )}
       </div>
 
       <div className="flex flex-col gap-2 border-t px-3 py-2">
         <div className="flex items-center gap-1.5">
-          <span className="text-muted-foreground text-xs">다시 알림</span>
+          <span className="text-xs text-muted-foreground">다시 알림</span>
           <div className="ml-auto flex gap-1">
             {SNOOZE_OPTIONS.map((o) => (
               <button
                 key={o.minutes}
                 type="button"
                 onClick={() => onSnooze(o.minutes)}
-                className="hover:bg-muted rounded-md border px-2 py-1 text-xs font-medium transition-colors"
+                className="rounded-md border px-2 py-1 text-xs font-medium transition-colors hover:bg-muted"
               >
                 {o.label}
               </button>
@@ -72,7 +72,7 @@ export function WidgetReminder({
           <button
             type="button"
             onClick={onDismiss}
-            className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+            className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
             확인
           </button>

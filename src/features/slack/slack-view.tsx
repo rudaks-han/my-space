@@ -1,12 +1,9 @@
 import {
   AtSignIcon,
   CheckCheckIcon,
-  CheckIcon,
-  CopyIcon,
   HashIcon,
   ListChecksIcon,
   LockIcon,
-  LogOutIcon,
   MessageSquareIcon,
   RefreshCwIcon,
   ReplyIcon,
@@ -25,30 +22,14 @@ import {
 } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 
+import { friendlyError } from "./slack-errors"
 import {
   useSlack,
   type ChannelInfo,
   type ChannelKind,
   type ChannelUnread,
 } from "./use-slack"
-
-const SCOPES =
-  "channels:read,groups:read,im:read,mpim:read,channels:history,groups:history,im:history,mpim:history,users:read,usergroups:read"
-
-/** Slack API 오류 코드를 사용자용 한국어 메시지로. */
-function friendlyError(code: string): string {
-  if (code.includes("missing_scope"))
-    return "토큰에 메시지 읽기 권한(*:history)이 없습니다. OAuth & Permissions 에서 아래 스코프를 모두 추가하고 Reinstall to Workspace 후 새 토큰으로 다시 연결하세요."
-  if (code.includes("invalid_auth") || code.includes("not_authed"))
-    return "토큰이 유효하지 않습니다. xoxp- 로 시작하는 User OAuth Token 인지 확인하세요."
-  if (code.includes("token_revoked") || code.includes("account_inactive"))
-    return "토큰이 만료/취소되었습니다. 새로 발급해 주세요."
-  if (code.includes("rate_limited"))
-    return "Slack 요청 한도에 걸렸습니다. 잠시 후 다시 시도하세요."
-  return `오류: ${code}`
-}
 
 function formatTs(ts: string): string {
   const sec = parseFloat(ts)
@@ -60,7 +41,10 @@ function formatTs(ts: string): string {
   })
   const sameDay = d.toDateString() === new Date().toDateString()
   if (sameDay) return time
-  const date = d.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })
+  const date = d.toLocaleDateString("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+  })
   return `${date} ${time}`
 }
 
@@ -141,7 +125,7 @@ function ChannelCard({
                 {formatTs(m.ts)}
               </span>
             </div>
-            <p className="text-sm whitespace-pre-wrap break-words text-foreground/90">
+            <p className="text-sm break-words whitespace-pre-wrap text-foreground/90">
               {m.text || "(첨부 파일 또는 빈 메시지)"}
             </p>
           </div>
@@ -289,124 +273,6 @@ function ChannelPicker({
   )
 }
 
-function SetupView({
-  onConnect,
-  error,
-  onBack,
-}: {
-  onConnect: (token: string) => Promise<void>
-  error: string | null
-  /** 이미 연결된 상태에서 권한 갱신차 다시 연결하는 경우, 취소하고 돌아가는 콜백. */
-  onBack?: () => void
-}) {
-  const [token, setToken] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
-
-  async function handleConnect() {
-    if (!token.trim() || busy) return
-    setBusy(true)
-    try {
-      await onConnect(token.trim())
-    } catch {
-      /* 오류는 상위 상태로 표시된다 */
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  function copyScopes() {
-    void navigator.clipboard.writeText(SCOPES)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
-
-  return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>{onBack ? "Slack 권한 갱신 / 재연결" : "Slack 연결"}</CardTitle>
-          <CardDescription>
-            {onBack
-              ? "그룹 멘션 이름(@제품개발본부 등)을 표시하려면 아래 스코프(특히 usergroups:read)를 추가해 Reinstall 후 새 토큰으로 다시 연결하세요."
-              : "안 읽은 메시지를 보려면 Slack 사용자 토큰(xoxp-)이 필요합니다."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4 text-sm">
-          <ol className="flex list-decimal flex-col gap-2 pl-5 text-muted-foreground">
-            <li>
-              <span className="text-foreground">api.slack.com/apps</span> →{" "}
-              <b className="text-foreground">Create New App</b> → From scratch
-              (워크스페이스 선택)
-            </li>
-            <li>
-              왼쪽 <b className="text-foreground">OAuth &amp; Permissions</b> →{" "}
-              <b className="text-foreground">User Token Scopes</b> 에 아래 스코프
-              모두 추가:
-              <div className="mt-2 flex items-start gap-2">
-                <code className="flex-1 rounded-md bg-muted px-2 py-1.5 text-xs break-all">
-                  {SCOPES.replaceAll(",", ", ")}
-                </code>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={copyScopes}
-                  aria-label="스코프 복사"
-                >
-                  {copied ? (
-                    <CheckIcon className="text-green-600" />
-                  ) : (
-                    <CopyIcon />
-                  )}
-                </Button>
-              </div>
-            </li>
-            <li>
-              같은 화면 상단 <b className="text-foreground">Install to Workspace</b>{" "}
-              → 승인 (회사 워크스페이스는 관리자 승인이 필요할 수 있음)
-            </li>
-            <li>
-              생성된 <b className="text-foreground">User OAuth Token</b>{" "}
-              (xoxp-…)을 복사해 아래에 붙여넣기
-            </li>
-          </ol>
-
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="slack-token">User OAuth Token</Label>
-            <div className="flex gap-2">
-              <Input
-                id="slack-token"
-                type="password"
-                placeholder="xoxp-..."
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleConnect()
-                }}
-                className="ui-selectable"
-              />
-              <Button onClick={handleConnect} disabled={busy || !token.trim()}>
-                {busy ? "확인 중…" : "연결"}
-              </Button>
-              {onBack && (
-                <Button variant="ghost" onClick={onBack} disabled={busy}>
-                  돌아가기
-                </Button>
-              )}
-            </div>
-          </div>
-
-          {error && (
-            <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {friendlyError(error)}
-            </p>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
 export function SlackView() {
   const {
     status,
@@ -418,8 +284,6 @@ export function SlackView() {
     channelsList,
     channelsLoading,
     channelsFetchedAt,
-    connect,
-    disconnect,
     refresh,
     loadChannels,
     saveSelected,
@@ -429,7 +293,6 @@ export function SlackView() {
   } = useSlack()
 
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [reconnect, setReconnect] = useState(false)
 
   // 연결 상태 확인 중
   if (status === null) {
@@ -440,16 +303,18 @@ export function SlackView() {
     )
   }
 
-  if (!status.connected || reconnect) {
+  // 연결·연결 해제는 설정으로 옮겼다. 미연결이면 설정으로 안내한다.
+  if (!status.connected) {
     return (
-      <SetupView
-        onConnect={async (token) => {
-          await connect(token)
-          setReconnect(false)
-        }}
-        error={error}
-        onBack={reconnect ? () => setReconnect(false) : undefined}
-      />
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center">
+        <MessageSquareIcon className="size-8 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">
+          Slack 에 연결되어 있지 않습니다.
+          <br />
+          왼쪽 아래 <b className="text-foreground">설정 ⚙ → Slack</b> 에서
+          연결하세요.
+        </p>
+      </div>
     )
   }
 
@@ -505,18 +370,6 @@ export function SlackView() {
           >
             <RefreshCwIcon className={loading ? "animate-spin" : undefined} />
             새로고침
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setReconnect(true)}
-            title="권한(스코프)을 추가하거나 새 토큰으로 다시 연결"
-          >
-            재연결
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => void disconnect()}>
-            <LogOutIcon />
-            연결 해제
           </Button>
         </div>
       </div>

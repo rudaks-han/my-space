@@ -57,7 +57,7 @@ export function ReminderView() {
 
   const activeCount = useMemo(
     () => reminders.filter((r) => r.enabled && !isFiredOnce(r)).length,
-    [reminders],
+    [reminders]
   )
 
   const submit = (e: React.FormEvent) => {
@@ -73,7 +73,8 @@ export function ReminderView() {
         <CardHeader>
           <CardTitle>알림</CardTitle>
           <CardDescription>
-            예정된 알림 {activeCount}개 · 시간이 되면 메뉴바 팝오버로 알려줍니다.
+            예정된 알림 {activeCount}개 · 시간이 되면 메뉴바 팝오버로
+            알려줍니다.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -87,7 +88,7 @@ export function ReminderView() {
 
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1.5">
-                <Label className="text-muted-foreground text-xs">반복</Label>
+                <Label className="text-xs text-muted-foreground">반복</Label>
                 <div className="flex gap-1">
                   {REPEATS.map((r) => (
                     <Button
@@ -104,7 +105,7 @@ export function ReminderView() {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <Label className="text-muted-foreground text-xs">
+                <Label className="text-xs text-muted-foreground">
                   {repeat === "daily" ? "매일 이 시각" : "예정 일시"}
                 </Label>
                 {repeat === "daily" ? (
@@ -132,7 +133,7 @@ export function ReminderView() {
 
           <ul className="flex flex-col gap-1.5">
             {reminders.length === 0 && (
-              <li className="text-muted-foreground py-8 text-center text-sm">
+              <li className="py-8 text-center text-sm text-muted-foreground">
                 등록된 알림이 없습니다.
               </li>
             )}
@@ -142,7 +143,7 @@ export function ReminderView() {
               return (
                 <li
                   key={r.id}
-                  className="bg-card hover:bg-muted/40 flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors"
+                  className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 transition-colors hover:bg-muted/40"
                 >
                   <Button
                     size="icon-sm"
@@ -150,7 +151,9 @@ export function ReminderView() {
                     onClick={() => toggle(r.id)}
                     aria-label={r.enabled ? "알림 끄기" : "알림 켜기"}
                     title={r.enabled ? "알림 끄기" : "알림 켜기"}
-                    className={r.enabled ? "text-foreground" : "text-muted-foreground"}
+                    className={
+                      r.enabled ? "text-foreground" : "text-muted-foreground"
+                    }
                   >
                     {r.enabled ? <BellIcon /> : <BellOffIcon />}
                   </Button>
@@ -159,12 +162,12 @@ export function ReminderView() {
                     <span
                       className={cn(
                         "truncate text-sm",
-                        dimmed && "text-muted-foreground line-through",
+                        dimmed && "text-muted-foreground line-through"
                       )}
                     >
                       {r.title}
                     </span>
-                    <span className="text-muted-foreground text-xs">
+                    <span className="text-xs text-muted-foreground">
                       {scheduleText(r)}
                       {fired && " · 완료"}
                     </span>

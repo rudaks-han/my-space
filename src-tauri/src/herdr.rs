@@ -853,11 +853,8 @@ pub fn herdr_focus_workspace(
 ) -> Result<(), String> {
     run_herdr(Some(&session), &["workspace", "focus", &workspace_id])?;
     hide_popover(&app);
-    // Kaku pane 활성화가 성공하면 그 자체로 올바른 창이 앞으로 온다.
-    // 실패(다른 터미널 등)할 때만 앱 레벨로 폴백(open -a 는 특정 창을 못 골라 엉뚱한 창을 올릴 수 있음).
-    if !kaku_activate_session_pane(&session) {
-        focus_terminal_app();
-    }
+    // Kaku pane/탭 선택 + OS 앱 활성화(다른 Space 면 macOS 가 전환). 아래 헬퍼 doc 참고.
+    focus_terminal_for_session(&session);
     Ok(())
 }
 
@@ -953,6 +950,23 @@ fn focus_terminal_app() {
             let _ = Command::new("open").args(["-a", &app]).output();
         }
     }
+}
+
+/// 해당 세션의 호스트 터미널을 앞으로 가져온다(Slack 딥링크와 같은 원리 = OS 앱 활성화).
+///
+/// 다른 Space(가상 데스크탑)로의 전환은 **AXRaise 로는 불가능**하다(AX API 는 같은 Space
+/// 안에서만 창 순서를 바꾼다). Space 전환은 오직 OS 앱 활성화(`open -a`)로만 되므로,
+/// 순서를 이렇게 둔다:
+///   1) Kaku 면 `kaku cli activate-pane` 으로 mux 상 해당 pane/탭을 먼저 활성화하고
+///      (그 pane 이 속한 창이 Kaku 의 활성 창이 된다), 같은 Space 안이면 AXRaise 로 정확한 창을 올린다.
+///   2) 이어서 항상 `open -a`(OS 앱 활성화)를 호출한다 — 대상 창이 다른 Space 에 있으면
+///      macOS 가 그 Space 로 전환한다.
+///
+/// ⚠️ 2)의 Space 전환은 macOS "응용 프로그램으로 전환 시 열린 윈도우가 있는 Space 로 전환"
+/// (NSGlobalDomain `AppleSpacesSwitchOnActivate`) 설정이 켜져 있어야 동작한다.
+fn focus_terminal_for_session(session: &str) {
+    let _ = kaku_activate_session_pane(session);
+    focus_terminal_app();
 }
 
 /// kaku(터미널) 실행 파일 경로를 찾는다. 없으면 None(=Kaku 아님 → 탭 전환 생략).
@@ -1080,10 +1094,12 @@ end run"#;
     }
 }
 
-/// 해당 herdr 세션이 떠 있는 Kaku pane/창을 앞으로 가져온다. Kaku 세션이면 true(→ open -a 폴백 생략).
+/// 해당 herdr 세션이 떠 있는 Kaku pane/탭을 활성화한다. Kaku 세션이면 true(아니면 false).
 /// 두 herdr 세션이 같은 Kaku 창의 다른 탭이거나 별도 창(다른 Space 포함)일 때 "이동" 이 올바른 곳을 활성화한다.
 /// 세션 클라이언트의 TTY 로 pane 을 찾아 (1) `kaku cli activate-pane` 으로 Kaku 내부 pane/탭을 선택하고,
-/// (2) 그 pane 의 cwd 로 OS 창을 AXRaise 한다. Kaku 가 아니면(다른 터미널) false 를 반환해 앱 레벨 폴백.
+/// (2) 그 pane 의 cwd 로 OS 창을 AXRaise 한다(같은 Space 안에서 정확한 창을 앞으로).
+/// ⚠️ AXRaise 는 Space 를 넘지 못한다 — 다른 Space 로의 전환은 caller(focus_terminal_for_session)의
+/// `open -a`(OS 앱 활성화)가 담당한다. 반환값은 Kaku 세션인지 여부일 뿐, Space 전환 성공을 뜻하지 않는다.
 #[cfg(target_os = "macos")]
 fn kaku_activate_session_pane(session: &str) -> bool {
     let Some(kaku) = kaku_bin() else { return false };
@@ -1141,10 +1157,8 @@ pub fn herdr_focus_pane(
 ) -> Result<(), String> {
     run_herdr(Some(&session), &["agent", "focus", &pane_id])?; // herdr 내부 pane 전환
     hide_popover(&app); // 우리 팝오버는 치우고
-    // Kaku pane 활성화 성공 시 그 자체로 올바른 창이 앞으로 옴. 실패할 때만 앱 레벨 폴백.
-    if !kaku_activate_session_pane(&session) {
-        focus_terminal_app();
-    }
+    // Kaku pane/탭 선택 + OS 앱 활성화(다른 Space 면 macOS 가 전환). 아래 헬퍼 doc 참고.
+    focus_terminal_for_session(&session);
     Ok(())
 }
 

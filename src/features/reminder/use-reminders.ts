@@ -42,7 +42,9 @@ export const ReminderContext = createContext<ReminderContextValue | null>(null)
 export function useReminders() {
   const ctx = useContext(ReminderContext)
   if (!ctx) {
-    throw new Error("useReminders 는 ReminderProvider 안에서만 사용할 수 있습니다.")
+    throw new Error(
+      "useReminders 는 ReminderProvider 안에서만 사용할 수 있습니다."
+    )
   }
   return ctx
 }

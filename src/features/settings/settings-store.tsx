@@ -55,9 +55,14 @@ const STORAGE_KEY = "myspace.settings"
  * 저장된 값에 기본값을 병합한다. 앱 버전이 올라가 새 설정 키가 생겨도(오래된 저장값에
  * 그 키가 없어도) 항상 완전한 설정 객체를 얻도록 카테고리별로 얕은 병합한다.
  */
-function withDefaults(stored: Partial<AppSettings> | null | undefined): AppSettings {
+function withDefaults(
+  stored: Partial<AppSettings> | null | undefined
+): AppSettings {
   return {
-    claudeCode: { ...DEFAULT_SETTINGS.claudeCode, ...(stored?.claudeCode ?? {}) },
+    claudeCode: {
+      ...DEFAULT_SETTINGS.claudeCode,
+      ...(stored?.claudeCode ?? {}),
+    },
     slack: { ...DEFAULT_SETTINGS.slack, ...(stored?.slack ?? {}) },
   }
 }
@@ -79,7 +84,7 @@ const SettingsContext = createContext<SettingsContextValue | null>(null)
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [raw, setRaw] = useLocalStorage<Partial<AppSettings>>(
     STORAGE_KEY,
-    DEFAULT_SETTINGS,
+    DEFAULT_SETTINGS
   )
 
   const settings = useMemo(() => withDefaults(raw), [raw])
@@ -91,7 +96,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         return { ...base, claudeCode: { ...base.claudeCode, ...patch } }
       })
     },
-    [setRaw],
+    [setRaw]
   )
 
   const setSlack = useCallback(
@@ -101,12 +106,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         return { ...base, slack: { ...base.slack, ...patch } }
       })
     },
-    [setRaw],
+    [setRaw]
   )
 
   const value = useMemo(
     () => ({ settings, setClaudeCode, setSlack }),
-    [settings, setClaudeCode, setSlack],
+    [settings, setClaudeCode, setSlack]
   )
 
   return (
@@ -119,7 +124,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 export function useSettings(): SettingsContextValue {
   const ctx = useContext(SettingsContext)
   if (!ctx) {
-    throw new Error("useSettings 는 SettingsProvider 안에서만 사용할 수 있습니다.")
+    throw new Error(
+      "useSettings 는 SettingsProvider 안에서만 사용할 수 있습니다."
+    )
   }
   return ctx
 }

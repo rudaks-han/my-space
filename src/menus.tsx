@@ -7,6 +7,9 @@ import {
   CalendarIcon,
   BellIcon,
   BotIcon,
+  ServerIcon,
+  LayoutDashboardIcon,
+  GitBranchIcon,
 } from "lucide-react"
 
 import { HomeView } from "@/features/home/home-view"
@@ -17,6 +20,9 @@ import { SlackMenuBadge } from "@/features/slack/slack-menu-badge"
 import { GcalView } from "@/features/gcal/gcal-view"
 import { ReminderView } from "@/features/reminder/reminder-view"
 import { ClaudeBridgeView } from "@/features/claude-bridge/claude-bridge-view"
+import { IntellijServicesView } from "@/features/intellij/intellij-services-view"
+import { CoworkAiView } from "@/features/cowork-ai/cowork-ai-view"
+import { GithubCoworkView } from "@/features/github-cowork/github-cowork-view"
 
 export interface MenuItem {
   /** 고유 id (활성 메뉴 저장 키로 사용) */
@@ -85,8 +91,18 @@ export const MENU_GROUPS: MenuGroup[] = [
     id: "productivity",
     label: "생산성",
     items: [
-      { id: "todo", title: "할 일", icon: CheckSquareIcon, element: <TodoView /> },
-      { id: "reminder", title: "알림", icon: BellIcon, element: <ReminderView /> },
+      {
+        id: "todo",
+        title: "할 일",
+        icon: CheckSquareIcon,
+        element: <TodoView />,
+      },
+      {
+        id: "reminder",
+        title: "알림",
+        icon: BellIcon,
+        element: <ReminderView />,
+      },
     ],
   },
   {
@@ -98,6 +114,24 @@ export const MENU_GROUPS: MenuGroup[] = [
         title: "Claude Code 작업목록",
         icon: BotIcon,
         element: <ClaudeBridgeView />,
+      },
+      {
+        id: "intellij-services",
+        title: "IntelliJ Services",
+        icon: ServerIcon,
+        element: <IntellijServicesView />,
+      },
+      {
+        id: "cowork-ai-dashboard",
+        title: "Cowork AI Dashboard",
+        icon: LayoutDashboardIcon,
+        element: <CoworkAiView />,
+      },
+      {
+        id: "github-cowork",
+        title: "Github - cowork",
+        icon: GitBranchIcon,
+        element: <GithubCoworkView />,
       },
     ],
   },

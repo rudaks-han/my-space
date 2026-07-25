@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window"
 
 import "./index.css"
 import App from "./App.tsx"
-import { ThemeProvider } from "@/components/theme-provider.tsx"
+import { ThemeProviders } from "@/components/theme-preset-provider.tsx"
 import { ExternalLinkGuard } from "./components/external-link-guard.tsx"
 import { WidgetRoot } from "@/features/widget/widget-root.tsx"
 import { Toaster } from "@/components/ui/sonner"
@@ -21,21 +21,21 @@ if (windowLabel === "widget") {
   document.documentElement.classList.add("widget-window")
   root.render(
     <StrictMode>
-      <ThemeProvider>
+      <ThemeProviders>
         <WidgetRoot />
-      </ThemeProvider>
-    </StrictMode>,
+      </ThemeProviders>
+    </StrictMode>
   )
 } else {
   root.render(
     <StrictMode>
-      <ThemeProvider>
+      <ThemeProviders>
         <ExternalLinkGuard />
         <main data-ui-scroll-container>
           <App />
         </main>
         <Toaster />
-      </ThemeProvider>
-    </StrictMode>,
+      </ThemeProviders>
+    </StrictMode>
   )
 }

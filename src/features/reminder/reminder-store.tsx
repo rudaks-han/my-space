@@ -99,16 +99,16 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
 
       setReminders((prev) => [reminder, ...prev])
     },
-    [setReminders],
+    [setReminders]
   )
 
   const toggle = useCallback(
     (id: string) => {
       setReminders((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)),
+        prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r))
       )
     },
-    [setReminders],
+    [setReminders]
   )
 
   const remove = useCallback(
@@ -116,7 +116,7 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
       firedGuard.current.delete(id)
       setReminders((prev) => prev.filter((r) => r.id !== id))
     },
-    [setReminders],
+    [setReminders]
   )
 
   // 스케줄러: 예정 시각 도달 시 팝오버 발생.
@@ -144,7 +144,9 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
       }
 
       // 이미 이번 세션에 발생 처리한 회차는 제외(스냅샷 지연 중복 방지).
-      const fresh = due.filter(({ occurrence }) => !firedGuard.current.has(occurrence))
+      const fresh = due.filter(
+        ({ occurrence }) => !firedGuard.current.has(occurrence)
+      )
       if (fresh.length === 0) return
       for (const { occurrence } of fresh) firedGuard.current.add(occurrence)
 
@@ -156,7 +158,7 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
           return r.repeat === "once"
             ? { ...r, firedAt: now.getTime() }
             : { ...r, lastFired: todayKey }
-        }),
+        })
       )
 
       // 팝오버 발생(여러 건이면 마지막 것이 최종 표시).
@@ -203,7 +205,7 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
       (e) => {
         const { id, minutes } = e.payload
         snoozed.current.set(id, Date.now() + Math.max(1, minutes) * 60_000)
-      },
+      }
     )
     return () => {
       void unlisten.then((f) => f())

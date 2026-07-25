@@ -53,24 +53,24 @@ export function WidgetNotice() {
             key={n.id}
             type="button"
             onClick={() => void openNotice(n)}
-            className="hover:bg-accent flex w-full flex-col gap-1 rounded-md border px-2.5 py-2 text-left transition-colors"
+            className="flex w-full flex-col gap-1 rounded-md border px-2.5 py-2 text-left transition-colors hover:bg-accent"
           >
             <div className="flex w-full items-center gap-2">
               <span
                 className={
                   done
-                    ? "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium bg-blue-500/15 text-blue-600 dark:text-blue-400"
-                    : "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                    ? "shrink-0 rounded bg-blue-500/15 px-1.5 py-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400"
+                    : "shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
                 }
               >
                 {done ? "작업 완료" : "입력 대기"}
               </span>
-              <span className="text-primary ml-auto shrink-0 text-[11px]">
+              <span className="ml-auto shrink-0 text-[11px] text-primary">
                 이동 →
               </span>
             </div>
             {/* 알림 메시지 = 사용자가 입력했던 프롬프트 */}
-            <span className="text-foreground line-clamp-2 w-full text-xs leading-snug">
+            <span className="line-clamp-2 w-full text-xs leading-snug text-foreground">
               {n.label}
             </span>
           </button>

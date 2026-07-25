@@ -30,7 +30,9 @@ export function normalizeUrl(input: string): string {
 
   // 공백이 없을 때만 URL 후보로 본다. scheme 이 없으면 https:// 를 붙인다.
   if (!/\s/.test(trimmed)) {
-    const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+    const candidate = /^https?:\/\//i.test(trimmed)
+      ? trimmed
+      : `https://${trimmed}`
     try {
       const u = new URL(candidate)
       // 정상적인 ASCII 도메인 형태(점 포함)일 때만 URL 로 인정한다.
@@ -58,11 +60,11 @@ export function hostLabel(url: string): string {
 export function useBrowser() {
   const [tabs, setTabs] = useLocalStorage<BrowserTab[]>(
     "myspace.browser.tabs",
-    [],
+    []
   )
   const [activeId, setActiveId] = useLocalStorage<string | null>(
     "myspace.browser.activeTab",
-    null,
+    null
   )
 
   const addTab = useCallback(
@@ -72,7 +74,7 @@ export function useBrowser() {
       setActiveId(id)
       return id
     },
-    [setTabs, setActiveId],
+    [setTabs, setActiveId]
   )
 
   /** 탭 목록에서 제거하고, 닫은 탭이 활성 탭이면 인접 탭을 활성화한다. */
@@ -91,7 +93,7 @@ export function useBrowser() {
         return next
       })
     },
-    [setTabs, setActiveId],
+    [setTabs, setActiveId]
   )
 
   /** 탭의 URL/제목을 갱신한다 (주소창 이동, 또는 웹뷰 내부 이동 이벤트 반영). */
@@ -99,11 +101,11 @@ export function useBrowser() {
     (id: string, url: string) => {
       setTabs((prev) =>
         prev.map((t) =>
-          t.id === id ? { ...t, url, title: hostLabel(url) } : t,
-        ),
+          t.id === id ? { ...t, url, title: hostLabel(url) } : t
+        )
       )
     },
-    [setTabs],
+    [setTabs]
   )
 
   return { tabs, activeId, setActiveId, addTab, removeTab, setTabUrl }
