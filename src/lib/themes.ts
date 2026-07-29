@@ -5,6 +5,14 @@
  * 선택된 프리셋은 theme-preset-provider 가 `<style>` 로 문서에 주입하며, index.css 의
  * 기본값(:root / .dark)을 덮어쓴다. 라이트/다크 전환(theme-provider)과는 독립적이다.
  *
+ * 기본 프리셋은 `slack` 이다 — 앱 전체 외형이 Slack 데스크톱 앱을 기준으로 만들어져 있고
+ * (15px 본문 · 8px 라운드 · 부드러운 그림자), 다른 프리셋은 그 위의 색 변형으로만 동작한다.
+ * 즉 프리셋은 **색만** 바꾸고 구조·밀도·타이포는 건드리지 않는다.
+ *
+ * 프리셋은 본문 색 외에 **크롬 색도 공급한다**(`chrome` / `chromeFg` / `selection` / `selectionFg`).
+ * 그래서 프리셋을 바꾸면 상단바 · 좌측 레일 · 상태바 · 활성 내비 알약이 그 색으로 함께 바뀐다.
+ * 나머지 `--ui-*`(탭·배지·위젯·상태색 등)는 index.css 에만 있고 프리셋이 건드리지 않는다.
+ *
  * ★ 프리셋 추가 지점 ★ — 아래 PRESETS 배열에 makeVars 로 만든 항목을 추가하면
  * 설정 화면(Theme 카테고리)에 자동으로 스와치가 나타난다.
  */
@@ -36,6 +44,17 @@ interface ModeSpec {
   sidebarAccentFg?: string
   sidebarBorder?: string
   sidebarRing?: string
+  /**
+   * 상단바 + 좌측 레일 배경. **브랜드 정색을 진하게** 깐다(연한 틴트가 아니다) —
+   * 포인트 컬러가 화면 좌·상단에서 바로 보이게 하는 것이 이 토큰의 목적이다.
+   */
+  chrome: string
+  /** 크롬 위 글자·아이콘 색. 크롬이 진하므로 사실상 항상 흰색이다. */
+  chromeFg: string
+  /** 활성 내비 항목 알약 배경. 같은 브랜드 색의 **더 밝은 톤**을 쓴다. 없으면 primary. */
+  selection?: string
+  /** 활성 내비 항목 글자색. 없으면 흰색. */
+  selectionFg?: string
 }
 
 export type ThemeVars = Record<string, string>
@@ -48,7 +67,7 @@ export interface ThemePreset {
   /** 한 줄 설명 */
   description: string
   /**
-   * 원본에 한쪽 모드만 있는 테마(예: Darcula)라면 여기에 그 모드를 적는다.
+   * 원본에 한쪽 모드만 있는 테마라면 여기에 그 모드를 적는다.
    * 이 프리셋이 켜져 있는 동안 라이트/다크 토글은 무효가 되고 해당 모드로 고정된다.
    */
   forcedMode?: "light" | "dark"
@@ -92,18 +111,36 @@ function makeVars(radius: string, s: ModeSpec): ThemeVars {
     "--sidebar-accent-foreground": s.sidebarAccentFg ?? s.sidebarFg,
     "--sidebar-border": s.sidebarBorder ?? s.border,
     "--sidebar-ring": s.sidebarRing ?? s.ring ?? s.primary,
+    /*
+     * 크롬 4색. index.css 가 --ui-titlebar / --ui-activitybar / --ui-statusbar / --ui-list-active
+     * 에서 이 값을 참조하므로, 프리셋을 바꾸면 상단바·레일·상태바·활성 알약이 함께 바뀐다.
+     * hover/활성 타일/비활성 글자는 index.css 가 --ui-chrome-fg 에서 color-mix 로 파생한다.
+     */
+    "--ui-chrome": s.chrome,
+    "--ui-chrome-fg": s.chromeFg,
+    "--ui-selection": s.selection ?? s.primary,
+    "--ui-selection-fg": s.selectionFg ?? "#FFFFFF",
   }
 }
+
+/** Slack 미학에 맞춘 공통 라운드 — 프리셋은 색만 바꾸므로 6개 전부 같은 값을 쓴다. */
+const RADIUS = "0.5rem"
 
 const WHITE_OVERLAY = "oklch(1 0 0 / 0.12)"
 const DARK_OVERLAY = "oklch(0.45 0 0 / 0.09)"
 
+/* ─── Slack 시그니처 색 ──────────────────────────────────────────────── */
+
+/** 활성 내비 알약의 와인색(스크린샷의 선택된 채널). */
+const SLACK_WINE = "#8B1D41"
+
 /* ─── IntelliJ 시그니처 색 ───────────────────────────────────────────── */
+
+/** Claude 시그니처 코럴(활성 알약·버튼). */
+const CLAUDE_CORAL = "#D97757"
 
 /** New UI 액션 블루(선택된 항목·기본 버튼). */
 const IDEA_BLUE = "#3574F0"
-/** Darcula 리스트 선택 블루. */
-const DARCULA_SELECT = "#4B6EAF"
 
 /* ─── Raycast 시그니처 색 ────────────────────────────────────────────── */
 
@@ -114,84 +151,177 @@ const DARCULA_SELECT = "#4B6EAF"
  */
 const RAYCAST_CORAL = "#FF6363"
 
-/**
- * Darcula 는 IntelliJ 에서 다크 전용 테마라 라이트 변형이 없다.
- * 라이트/다크 토글과 무관하게 같은 팔레트를 쓰도록 한 번만 만들어 양쪽에 넣는다.
- */
-const DARCULA_VARS = makeVars("0.4rem", {
-  bg: "#2B2B2B",
-  fg: "#A9B7C6",
-  card: "#313335",
-  primary: DARCULA_SELECT,
-  primaryFg: "#FFFFFF",
-  secondary: "#3C3F41",
-  secondaryFg: "#BBBBBB",
-  muted: "#3C3F41",
-  mutedFg: "#8C8C8C",
-  accent: "#2D5177",
-  accentFg: "#D2E4F7",
-  destructive: "#CF5B56",
-  border: "#323232",
-  input: "#5E6060",
-  ring: DARCULA_SELECT,
-  sidebar: "#3C3F41",
-  sidebarFg: "#BBBBBB",
-  sidebarAccent: DARCULA_SELECT,
-  sidebarAccentFg: "#FFFFFF",
-  sidebarBorder: "#323232",
-})
-
 export const PRESETS: ThemePreset[] = [
+  // 기본 프리셋. index.css 의 :root / .dark 와 같은 값이라 선택해도 외형이 변하지 않는다.
   {
     id: "slack",
     label: "Slack",
-    description: "오버진(가지색) 사이드바 + 흰 콘텐츠 + Slack 그린",
-    light: makeVars("0.5rem", {
-      bg: "oklch(1 0 0)",
-      fg: "oklch(0.22 0.006 340)",
-      primary: "oklch(0.52 0.11 165)",
-      primaryFg: "oklch(0.985 0.005 165)",
-      muted: "oklch(0.965 0.004 330)",
-      mutedFg: "oklch(0.55 0.012 340)",
-      accent: "oklch(0.955 0.014 328)",
-      accentFg: "oklch(0.32 0.09 328)",
-      destructive: "oklch(0.575 0.21 8)",
-      border: "oklch(0.9 0.005 330)",
-      sidebar: "oklch(0.245 0.105 328)",
-      sidebarFg: "oklch(0.93 0.012 330)",
-      sidebarPrimary: "oklch(0.56 0.13 248)",
-      sidebarAccent: WHITE_OVERLAY,
-      sidebarAccentFg: "oklch(0.985 0.005 330)",
-      sidebarBorder: "oklch(1 0 0 / 0.1)",
-      sidebarRing: "oklch(0.56 0.13 248)",
-    }),
-    dark: makeVars("0.5rem", {
-      bg: "oklch(0.17 0.008 340)",
-      fg: "oklch(0.95 0.004 330)",
-      card: "oklch(0.205 0.008 340)",
-      primary: "oklch(0.62 0.12 163)",
-      primaryFg: "oklch(0.15 0.02 165)",
-      muted: "oklch(0.26 0.008 340)",
-      mutedFg: "oklch(0.7 0.012 330)",
-      accent: "oklch(0.3 0.03 328)",
-      accentFg: "oklch(0.92 0.02 328)",
-      destructive: "oklch(0.62 0.2 8)",
-      border: "oklch(1 0 0 / 0.1)",
-      input: "oklch(1 0 0 / 0.14)",
-      sidebar: "oklch(0.23 0.1 328)",
-      sidebarFg: "oklch(0.92 0.012 330)",
-      sidebarPrimary: "oklch(0.6 0.13 248)",
-      sidebarAccent: WHITE_OVERLAY,
-      sidebarAccentFg: "oklch(0.985 0.005 330)",
-      sidebarBorder: "oklch(1 0 0 / 0.1)",
-      sidebarRing: "oklch(0.6 0.13 248)",
-    }),
+    description: "오버진 크롬 + 흰 패널 + 와인색 선택 알약",
+    light: {
+      ...makeVars(RADIUS, {
+        bg: "#FFFFFF",
+        fg: "#1D1C1D",
+        card: "#FFFFFF",
+        cardFg: "#1D1C1D",
+        popover: "#FFFFFF",
+        primary: "#007A5A",
+        primaryFg: "#FFFFFF",
+        secondary: "#F6F6F6",
+        secondaryFg: "#1D1C1D",
+        muted: "#F6F6F6",
+        mutedFg: "#616061",
+        accent: "#F4E7EC",
+        accentFg: SLACK_WINE,
+        destructive: "#E01E5A",
+        border: "#E0E0E0",
+        input: "#C9C9C9",
+        ring: "#1264A3",
+        sidebar: "#FFFFFF",
+        sidebarFg: "#1D1C1D",
+        sidebarPrimary: SLACK_WINE,
+        sidebarPrimaryFg: "#FFFFFF",
+        sidebarAccent: SLACK_WINE,
+        sidebarAccentFg: "#FFFFFF",
+        sidebarBorder: "#E0E0E0",
+        sidebarRing: "#1264A3",
+        chrome: "#4A154B",
+        chromeFg: "#FFFFFF",
+        selection: SLACK_WINE,
+        selectionFg: "#FFFFFF",
+      }),
+      // makeVars 는 차트 색을 oklch 기본값으로 채우므로 Slack 브랜드 4색 + 자주로 덮어쓴다.
+      "--chart-1": "#36C5F0",
+      "--chart-2": "#2EB67D",
+      "--chart-3": "#ECB22E",
+      "--chart-4": "#E01E5A",
+      "--chart-5": "#4A154B",
+    },
+    dark: {
+      ...makeVars(RADIUS, {
+        bg: "#1A1D21",
+        fg: "#D1D2D3",
+        card: "#222529",
+        cardFg: "#D1D2D3",
+        popover: "#222529",
+        primary: "#148567",
+        primaryFg: "#FFFFFF",
+        secondary: "#27242C",
+        secondaryFg: "#D1D2D3",
+        muted: "#27242C",
+        mutedFg: "#ABABAD",
+        accent: "#3A2430",
+        accentFg: "#F0C4D3",
+        destructive: "#E01E5A",
+        border: "#35373B",
+        input: "#565856",
+        ring: "#1D9BD1",
+        sidebar: "#1A1D21",
+        sidebarFg: "#D1D2D3",
+        sidebarPrimary: SLACK_WINE,
+        sidebarPrimaryFg: "#FFFFFF",
+        sidebarAccent: SLACK_WINE,
+        sidebarAccentFg: "#FFFFFF",
+        sidebarBorder: "#35373B",
+        sidebarRing: "#1D9BD1",
+        chrome: "#3A1039",
+        chromeFg: "#FFFFFF",
+        selection: SLACK_WINE,
+        selectionFg: "#FFFFFF",
+      }),
+      "--chart-1": "#36C5F0",
+      "--chart-2": "#2EB67D",
+      "--chart-3": "#ECB22E",
+      "--chart-4": "#E01E5A",
+      "--chart-5": "#A97FAA",
+    },
+  },
+  {
+    id: "vscode",
+    label: "VS Code",
+    description: "Dark Modern / Light Modern — 에디터 워크벤치 톤",
+    light: {
+      ...makeVars(RADIUS, {
+        bg: "#FFFFFF",
+        fg: "#3B3B3B",
+        card: "#F8F8F8",
+        cardFg: "#3B3B3B",
+        popover: "#FFFFFF",
+        primary: "#005FB8",
+        primaryFg: "#FFFFFF",
+        secondary: "#E5E5E5",
+        secondaryFg: "#3B3B3B",
+        muted: "#F3F3F3",
+        mutedFg: "#616161",
+        accent: "#E8E8E8",
+        accentFg: "#000000",
+        destructive: "#E51400",
+        border: "#E5E5E5",
+        input: "#CECECE",
+        ring: "#005FB8",
+        sidebar: "#F8F8F8",
+        sidebarFg: "#3B3B3B",
+        sidebarPrimary: "#005FB8",
+        sidebarPrimaryFg: "#FFFFFF",
+        sidebarAccent: "#E8E8E8",
+        sidebarAccentFg: "#000000",
+        sidebarBorder: "#E5E5E5",
+        sidebarRing: "#005FB8",
+        chrome: "#0E639C",
+        chromeFg: "#FFFFFF",
+        selection: "#0078D4",
+        selectionFg: "#FFFFFF",
+      }),
+      // makeVars 는 차트 색을 oklch 기본값으로 채우므로 VS Code 진단 색으로 덮어쓴다.
+      "--chart-1": "#1A85FF",
+      "--chart-2": "#388A34",
+      "--chart-3": "#B58900",
+      "--chart-4": "#E51400",
+      "--chart-5": "#652D90",
+    },
+    dark: {
+      ...makeVars(RADIUS, {
+        bg: "#1F1F1F",
+        fg: "#CCCCCC",
+        card: "#202020",
+        cardFg: "#CCCCCC",
+        popover: "#202020",
+        primary: "#0078D4",
+        primaryFg: "#FFFFFF",
+        secondary: "#313131",
+        secondaryFg: "#CCCCCC",
+        muted: "#313131",
+        mutedFg: "#9D9D9D",
+        accent: "#04395E",
+        accentFg: "#FFFFFF",
+        destructive: "#F85149",
+        border: "#2B2B2B",
+        input: "#3C3C3C",
+        ring: "#0078D4",
+        sidebar: "#181818",
+        sidebarFg: "#CCCCCC",
+        sidebarPrimary: "#0078D4",
+        sidebarPrimaryFg: "#FFFFFF",
+        sidebarAccent: "#04395E",
+        sidebarAccentFg: "#FFFFFF",
+        sidebarBorder: "#2B2B2B",
+        sidebarRing: "#0078D4",
+        chrome: "#0B4A75",
+        chromeFg: "#FFFFFF",
+        selection: "#0078D4",
+        selectionFg: "#FFFFFF",
+      }),
+      "--chart-1": "#3794FF",
+      "--chart-2": "#89D185",
+      "--chart-3": "#CCA700",
+      "--chart-4": "#F14C4C",
+      "--chart-5": "#C586C0",
+    },
   },
   {
     id: "claude",
     label: "Claude",
     description: "따뜻한 아이보리 종이 톤 + 코럴 포인트",
-    light: makeVars("0.6rem", {
+    light: makeVars(RADIUS, {
       bg: "oklch(0.985 0.006 90)",
       fg: "oklch(0.28 0.008 75)",
       card: "oklch(1 0 0)",
@@ -207,8 +337,12 @@ export const PRESETS: ThemePreset[] = [
       sidebarAccent: "oklch(0.6 0.13 40 / 0.12)",
       sidebarAccentFg: "oklch(0.45 0.12 40)",
       sidebarBorder: "oklch(0.9 0.012 85)",
+      chrome: "#A64B2A",
+      chromeFg: "#FFFFFF",
+      selection: CLAUDE_CORAL,
+      selectionFg: "#FFFFFF",
     }),
-    dark: makeVars("0.6rem", {
+    dark: makeVars(RADIUS, {
       bg: "oklch(0.24 0.004 75)",
       fg: "oklch(0.95 0.006 90)",
       card: "oklch(0.27 0.004 75)",
@@ -225,203 +359,18 @@ export const PRESETS: ThemePreset[] = [
       sidebarAccent: "oklch(0.67 0.13 42 / 0.18)",
       sidebarAccentFg: "oklch(0.85 0.08 45)",
       sidebarBorder: "oklch(1 0 0 / 0.08)",
+      chrome: "#7E3820",
+      chromeFg: "#FFFFFF",
+      selection: CLAUDE_CORAL,
+      selectionFg: "#FFFFFF",
     }),
   },
-  {
-    id: "apple",
-    label: "Apple",
-    description: "macOS 시스템 그레이 + Apple 블루",
-    light: makeVars("0.75rem", {
-      bg: "oklch(1 0 0)",
-      fg: "oklch(0.22 0.004 260)",
-      primary: "oklch(0.62 0.2 258)",
-      primaryFg: "oklch(0.99 0 0)",
-      muted: "oklch(0.965 0.002 260)",
-      mutedFg: "oklch(0.55 0.006 260)",
-      accent: "oklch(0.95 0.02 258)",
-      accentFg: "oklch(0.5 0.15 258)",
-      border: "oklch(0.9 0.003 260)",
-      sidebar: "oklch(0.955 0.002 260)",
-      sidebarFg: "oklch(0.28 0.004 260)",
-      sidebarAccent: "oklch(0.62 0.2 258 / 0.14)",
-      sidebarAccentFg: "oklch(0.5 0.17 258)",
-      sidebarBorder: "oklch(0.9 0.003 260)",
-    }),
-    dark: makeVars("0.75rem", {
-      bg: "oklch(0.21 0.004 260)",
-      fg: "oklch(0.96 0.002 260)",
-      card: "oklch(0.26 0.004 260)",
-      primary: "oklch(0.64 0.19 256)",
-      primaryFg: "oklch(0.99 0 0)",
-      muted: "oklch(0.28 0.004 260)",
-      mutedFg: "oklch(0.72 0.006 260)",
-      accent: "oklch(0.32 0.02 258)",
-      accentFg: "oklch(0.85 0.08 258)",
-      border: "oklch(1 0 0 / 0.1)",
-      input: "oklch(1 0 0 / 0.14)",
-      sidebar: "oklch(0.185 0.004 260)",
-      sidebarFg: "oklch(0.92 0.004 260)",
-      sidebarAccent: "oklch(0.64 0.19 256 / 0.2)",
-      sidebarAccentFg: "oklch(0.85 0.09 256)",
-      sidebarBorder: "oklch(1 0 0 / 0.08)",
-    }),
-  },
-  {
-    id: "linear",
-    label: "Linear",
-    description: "차분한 다크 + 인디고 퍼플, 미니멀",
-    light: makeVars("0.5rem", {
-      bg: "oklch(0.99 0.002 275)",
-      fg: "oklch(0.24 0.008 275)",
-      primary: "oklch(0.56 0.15 275)",
-      primaryFg: "oklch(0.99 0 0)",
-      muted: "oklch(0.965 0.004 275)",
-      mutedFg: "oklch(0.54 0.01 275)",
-      accent: "oklch(0.95 0.02 275)",
-      accentFg: "oklch(0.45 0.13 275)",
-      border: "oklch(0.91 0.005 275)",
-      sidebar: "oklch(0.965 0.004 275)",
-      sidebarFg: "oklch(0.3 0.008 275)",
-      sidebarAccent: DARK_OVERLAY,
-      sidebarBorder: "oklch(0.91 0.005 275)",
-    }),
-    dark: makeVars("0.5rem", {
-      bg: "oklch(0.18 0.006 275)",
-      fg: "oklch(0.93 0.004 275)",
-      card: "oklch(0.21 0.006 275)",
-      primary: "oklch(0.62 0.15 275)",
-      primaryFg: "oklch(0.99 0 0)",
-      muted: "oklch(0.25 0.006 275)",
-      mutedFg: "oklch(0.68 0.008 275)",
-      accent: "oklch(0.3 0.03 275)",
-      accentFg: "oklch(0.88 0.04 275)",
-      border: "oklch(1 0 0 / 0.09)",
-      input: "oklch(1 0 0 / 0.12)",
-      sidebar: "oklch(0.15 0.006 275)",
-      sidebarFg: "oklch(0.85 0.006 275)",
-      sidebarAccent: WHITE_OVERLAY,
-      sidebarBorder: "oklch(1 0 0 / 0.07)",
-    }),
-  },
-  {
-    id: "notion",
-    label: "Notion",
-    description: "깔끔한 무채색 + 절제된 블루, 문서 느낌",
-    light: makeVars("0.4rem", {
-      bg: "oklch(1 0 0)",
-      fg: "oklch(0.24 0 0)",
-      primary: "oklch(0.58 0.14 245)",
-      primaryFg: "oklch(0.99 0 0)",
-      muted: "oklch(0.97 0.002 90)",
-      mutedFg: "oklch(0.56 0.004 80)",
-      accent: "oklch(0.955 0.003 90)",
-      accentFg: "oklch(0.3 0 0)",
-      border: "oklch(0.925 0.002 90)",
-      sidebar: "oklch(0.975 0.003 90)",
-      sidebarFg: "oklch(0.34 0.004 80)",
-      sidebarAccent: DARK_OVERLAY,
-      sidebarBorder: "oklch(0.925 0.002 90)",
-    }),
-    dark: makeVars("0.4rem", {
-      bg: "oklch(0.22 0 0)",
-      fg: "oklch(0.93 0 0)",
-      card: "oklch(0.25 0 0)",
-      primary: "oklch(0.66 0.14 245)",
-      primaryFg: "oklch(0.99 0 0)",
-      muted: "oklch(0.27 0 0)",
-      mutedFg: "oklch(0.7 0 0)",
-      accent: "oklch(0.3 0 0)",
-      accentFg: "oklch(0.9 0 0)",
-      border: "oklch(1 0 0 / 0.1)",
-      input: "oklch(1 0 0 / 0.13)",
-      sidebar: "oklch(0.25 0 0)",
-      sidebarFg: "oklch(0.85 0 0)",
-      sidebarAccent: WHITE_OVERLAY,
-      sidebarBorder: "oklch(1 0 0 / 0.08)",
-    }),
-  },
-  {
-    id: "spotify",
-    label: "Spotify",
-    description: "블랙 사이드바 + 시그니처 그린, 몰입형 다크",
-    light: makeVars("0.75rem", {
-      bg: "oklch(1 0 0)",
-      fg: "oklch(0.2 0 0)",
-      primary: "oklch(0.68 0.17 150)",
-      primaryFg: "oklch(0.16 0.02 150)",
-      muted: "oklch(0.965 0.002 150)",
-      mutedFg: "oklch(0.52 0.004 150)",
-      accent: "oklch(0.94 0.04 150)",
-      accentFg: "oklch(0.4 0.1 150)",
-      border: "oklch(0.9 0.003 150)",
-      sidebar: "oklch(0.965 0.002 150)",
-      sidebarFg: "oklch(0.28 0.004 150)",
-      sidebarAccent: DARK_OVERLAY,
-      sidebarBorder: "oklch(0.9 0.003 150)",
-    }),
-    dark: makeVars("0.75rem", {
-      bg: "oklch(0.205 0 0)",
-      fg: "oklch(0.97 0 0)",
-      card: "oklch(0.24 0 0)",
-      primary: "oklch(0.72 0.18 150)",
-      primaryFg: "oklch(0.16 0.03 150)",
-      muted: "oklch(0.28 0 0)",
-      mutedFg: "oklch(0.74 0 0)",
-      accent: "oklch(0.32 0.03 150)",
-      accentFg: "oklch(0.85 0.1 150)",
-      border: "oklch(1 0 0 / 0.1)",
-      input: "oklch(1 0 0 / 0.14)",
-      sidebar: "oklch(0.14 0 0)",
-      sidebarFg: "oklch(0.88 0 0)",
-      sidebarPrimary: "oklch(0.72 0.18 150)",
-      sidebarAccent: WHITE_OVERLAY,
-      sidebarBorder: "oklch(1 0 0 / 0.08)",
-    }),
-  },
-  {
-    id: "discord",
-    label: "Discord",
-    description: "블러플(Blurple) 포인트 + 부드러운 다크 그레이",
-    light: makeVars("0.75rem", {
-      bg: "oklch(1 0 0)",
-      fg: "oklch(0.32 0.006 285)",
-      primary: "oklch(0.58 0.2 274)",
-      primaryFg: "oklch(0.99 0 0)",
-      muted: "oklch(0.965 0.003 285)",
-      mutedFg: "oklch(0.53 0.008 285)",
-      accent: "oklch(0.95 0.02 274)",
-      accentFg: "oklch(0.48 0.16 274)",
-      border: "oklch(0.9 0.004 285)",
-      sidebar: "oklch(0.96 0.004 285)",
-      sidebarFg: "oklch(0.34 0.008 285)",
-      sidebarAccent: DARK_OVERLAY,
-      sidebarBorder: "oklch(0.9 0.004 285)",
-    }),
-    dark: makeVars("0.75rem", {
-      bg: "oklch(0.32 0.006 285)",
-      fg: "oklch(0.95 0.003 285)",
-      card: "oklch(0.3 0.006 285)",
-      primary: "oklch(0.58 0.2 274)",
-      primaryFg: "oklch(0.99 0 0)",
-      muted: "oklch(0.36 0.006 285)",
-      mutedFg: "oklch(0.78 0.006 285)",
-      accent: "oklch(0.4 0.04 274)",
-      accentFg: "oklch(0.9 0.05 274)",
-      border: "oklch(1 0 0 / 0.08)",
-      input: "oklch(1 0 0 / 0.12)",
-      sidebar: "oklch(0.24 0.006 285)",
-      sidebarFg: "oklch(0.86 0.006 285)",
-      sidebarPrimary: "oklch(0.58 0.2 274)",
-      sidebarAccent: WHITE_OVERLAY,
-      sidebarBorder: "oklch(1 0 0 / 0.07)",
-    }),
-  },
-  // IntelliJ IDEA. New UI(2022.3+) 의 Light/Dark 와 클래식 Darcula 두 갈래.
+  // IntelliJ IDEA New UI(2022.3+) 의 Light / Dark.
   {
     id: "intellij",
     label: "IntelliJ",
     description: "New UI — 뉴트럴 패널 + JetBrains 블루",
-    light: makeVars("0.4rem", {
+    light: makeVars(RADIUS, {
       bg: "#FFFFFF",
       fg: "#1E1F22",
       primary: IDEA_BLUE,
@@ -440,8 +389,12 @@ export const PRESETS: ThemePreset[] = [
       sidebarAccent: "#D4E2FF",
       sidebarAccentFg: "#1E3C8C",
       sidebarBorder: "#EBECF0",
+      chrome: "#2B4B8F",
+      chromeFg: "#FFFFFF",
+      selection: IDEA_BLUE,
+      selectionFg: "#FFFFFF",
     }),
-    dark: makeVars("0.4rem", {
+    dark: makeVars(RADIUS, {
       bg: "#1E1F22",
       fg: "#DFE1E5",
       card: "#2B2D30",
@@ -461,22 +414,63 @@ export const PRESETS: ThemePreset[] = [
       sidebarAccent: "#2E436E",
       sidebarAccentFg: "#C7DBFF",
       sidebarBorder: "#393B40",
+      chrome: "#1F3768",
+      chromeFg: "#FFFFFF",
+      selection: IDEA_BLUE,
+      selectionFg: "#FFFFFF",
     }),
   },
   {
-    id: "intellij-darcula",
-    label: "IntelliJ Darcula",
-    description: "클래식 다크 전용 — 웜 그레이 + 오렌지 키워드",
-    // 다크 전용. forcedMode 로 .dark 클래스까지 고정되므로 양쪽 블록이 같아도 된다.
-    forcedMode: "dark",
-    light: DARCULA_VARS,
-    dark: DARCULA_VARS,
+    id: "discord",
+    label: "Discord",
+    description: "블러플(Blurple) 포인트 + 부드러운 다크 그레이",
+    light: makeVars(RADIUS, {
+      bg: "oklch(1 0 0)",
+      fg: "oklch(0.32 0.006 285)",
+      primary: "oklch(0.58 0.2 274)",
+      primaryFg: "oklch(0.99 0 0)",
+      muted: "oklch(0.965 0.003 285)",
+      mutedFg: "oklch(0.53 0.008 285)",
+      accent: "oklch(0.95 0.02 274)",
+      accentFg: "oklch(0.48 0.16 274)",
+      border: "oklch(0.9 0.004 285)",
+      sidebar: "oklch(0.96 0.004 285)",
+      sidebarFg: "oklch(0.34 0.008 285)",
+      sidebarAccent: DARK_OVERLAY,
+      sidebarBorder: "oklch(0.9 0.004 285)",
+      chrome: "#4650E0",
+      chromeFg: "#FFFFFF",
+      selection: "#5865F2",
+      selectionFg: "#FFFFFF",
+    }),
+    dark: makeVars(RADIUS, {
+      bg: "oklch(0.32 0.006 285)",
+      fg: "oklch(0.95 0.003 285)",
+      card: "oklch(0.3 0.006 285)",
+      primary: "oklch(0.58 0.2 274)",
+      primaryFg: "oklch(0.99 0 0)",
+      muted: "oklch(0.36 0.006 285)",
+      mutedFg: "oklch(0.78 0.006 285)",
+      accent: "oklch(0.4 0.04 274)",
+      accentFg: "oklch(0.9 0.05 274)",
+      border: "oklch(1 0 0 / 0.08)",
+      input: "oklch(1 0 0 / 0.12)",
+      sidebar: "oklch(0.24 0.006 285)",
+      sidebarFg: "oklch(0.86 0.006 285)",
+      sidebarPrimary: "oklch(0.58 0.2 274)",
+      sidebarAccent: WHITE_OVERLAY,
+      sidebarBorder: "oklch(1 0 0 / 0.07)",
+      chrome: "#3640B4",
+      chromeFg: "#FFFFFF",
+      selection: "#5865F2",
+      selectionFg: "#FFFFFF",
+    }),
   },
   {
     id: "raycast",
     label: "Raycast",
     description: "니어블랙 커맨드 팔레트 + 코럴 레드 포인트",
-    light: makeVars("0.625rem", {
+    light: makeVars(RADIUS, {
       bg: "#FFFFFF",
       fg: "#1A1A1A",
       primary: RAYCAST_CORAL,
@@ -498,8 +492,13 @@ export const PRESETS: ThemePreset[] = [
       sidebarAccent: "#E5E5E5",
       sidebarAccentFg: "#1A1A1A",
       sidebarBorder: "#E5E5E5",
+      chrome: "#C4433F",
+      chromeFg: "#FFFFFF",
+      selection: RAYCAST_CORAL,
+      // 여기도 같은 이유로 알약 위 글자만 어둡게 둔다.
+      selectionFg: "#1A1A1A",
     }),
-    dark: makeVars("0.625rem", {
+    dark: makeVars(RADIUS, {
       bg: "#1A1A1A",
       fg: "#FFFFFF",
       card: "#212121",
@@ -520,6 +519,10 @@ export const PRESETS: ThemePreset[] = [
       sidebarAccent: "#333333",
       sidebarAccentFg: "#FFFFFF",
       sidebarBorder: "#2A2A2A",
+      chrome: "#93302D",
+      chromeFg: "#FFFFFF",
+      selection: RAYCAST_CORAL,
+      selectionFg: "#1A1A1A",
     }),
   },
 ]

@@ -1,0 +1,675 @@
+//! Flex(flex.team) 휴가/일정 연동 — 공개 API 가 없어 웹 API 를 그대로 호출한다.
+//!
+//! 인증은 세 갈래를 순서대로 시도한다.
+//!  1. 메모리 캐시 — 직전에 통했던 Cookie 헤더(자동 로그인 결과 포함).
+//!  2. Chrome 쿠키 — 사용자가 Chrome 에서 flex.team 에 로그인해 둔 경우.
+//!  3. 저장된 계정으로 **자동 로그인**(아래).
+//!
+//! ── 자동 로그인 ──
+//! 로그인 화면이 쓰는 내부 API 를 그대로 호출한다(브라우저를 띄우지 않는다).
+//! 5단계이고, 2~4단계는 1단계에서 받은 세션 id 를 `FlexTeam-V2-Login-Session-Id`
+//! 헤더로 들고 다닌다. 비밀번호는 클라이언트에서 암호화하지 않는다(웹도 평문 전송).
+//!
+//! ```text
+//! POST /api-public/v2/auth/challenge                 {}                    → sessionId
+//! POST /api-public/v2/auth/verification/identifier   {"identifier": 이메일}
+//! POST /api-public/v2/auth/authentication/password   {"password": 비밀번호}
+//! POST /api-public/v2/auth/authorization             {}                    → 워크스페이스 accessToken
+//! POST /api-public/v2/auth/tokens/customer-user/exchange/all               → AID 토큰
+//!        (헤더 FlexTeam-V2-Workspace-Access: 워크스페이스 accessToken)
+//! ```
+//!
+//! 마지막 AID 토큰을 `Cookie: AID=<토큰>` 으로 붙이면 `/api/v2/...` 가 열린다(약 12시간 유효).
+//! 웹도 이 값을 `AID` 쿠키에 넣어 쓴다. 만료되면 401 → 다시 로그인한다.
+//!
+//! OTP·SSO 처럼 비밀번호만으로 끝나지 않는 계정은 중간 단계에서 걸리며, 그때는 서버가 준
+//! 한국어 메시지를 그대로 올려 보낸다(사용자는 Chrome 로그인으로 우회할 수 있다).
+//!
+//! 계정은 앱 설정 디렉터리의 `flex.json` 에 저장하고, 비밀번호는 이 맥의 하드웨어
+//! UUID 로 유도한 키로 AES-128-CBC 암호화해 둔다(파일만 유출돼선 못 푼다. 같은 기기에서
+//! 앱 소스를 아는 사람은 풀 수 있는 수준의 보호다).
+//!
+//! 응답은 아직 스키마를 확정하지 않아 raw JSON(Value)으로 그대로 프론트에 넘긴다.
+
+use aes::cipher::block_padding::Pkcs7;
+use aes::cipher::generic_array::GenericArray;
+use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use base64::Engine;
+use pbkdf2::pbkdf2_hmac;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha1::Sha1;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
+
+type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
+type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
+
+const BASE: &str = "https://flex.team";
+const HOST: &str = "flex.team";
+/// 로그인이 살아 있는지 확인할 때 때리는 가장 가벼운 API.
+const PROBE_PATH: &str = "/api/v2/calendar/calendars/primary";
+/// 계정 저장 파일(앱 설정 디렉터리).
+const CONFIG_FILE: &str = "flex.json";
+/// 로그인 세션 id 를 실어 나르는 헤더.
+const LOGIN_SESSION_HEADER: &str = "FlexTeam-V2-Login-Session-Id";
+/// 워크스페이스 토큰 → 사용자 토큰 교환에 쓰는 헤더.
+const WORKSPACE_ACCESS_HEADER: &str = "FlexTeam-V2-Workspace-Access";
+const UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) MySpace";
+
+/// 이벤트 조회 시 함께 요청하는 유형/상태(사용자가 준 URL 과 동일).
+const EVENT_TYPES: [&str; 5] = [
+    "MEETING",
+    "TIME_OFF",
+    "WORK_RECORD",
+    "BIRTHDAY",
+    "COMPANY_JOIN_DAY",
+];
+const STATUSES: [&str; 2] = ["CONFIRMED", "TENTATIVE"];
+
+/// 직전에 통했던 Cookie 헤더. Chrome 쿠키를 매번 복호화하지 않으려는 캐시이기도 하다.
+/// 401 이 나면 비운다.
+static SESSION: Mutex<Option<String>> = Mutex::new(None);
+/// 자동 로그인 동시 실행 방지 — 화면 여러 곳에서 동시에 새로고침해도 로그인은 한 번만.
+static LOGIN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn http() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
+
+/* ────────────────────────────── 계정 저장 ────────────────────────────── */
+
+#[derive(Serialize, Deserialize, Default)]
+struct FlexConfig {
+    /// 로그인 이메일(평문 — 비밀이 아니다).
+    #[serde(default)]
+    email: String,
+    /// AES-128-CBC 로 암호화한 비밀번호(base64). 비어 있으면 저장된 비밀번호 없음.
+    #[serde(default)]
+    password_enc: String,
+}
+
+fn app_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+fn config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app_dir(app)?.join(CONFIG_FILE))
+}
+
+fn read_config(app: &tauri::AppHandle) -> FlexConfig {
+    config_path(app)
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<FlexConfig>(&s).ok())
+        .unwrap_or_default()
+}
+
+fn write_config(app: &tauri::AppHandle, cfg: &FlexConfig) -> Result<(), String> {
+    let path = config_path(app)?;
+    let json = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    // 비밀번호가 들어 있으니 본인만 읽게 한다(0600).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+/// 이 맥에 묶인 비밀 문자열. 하드웨어 UUID 를 쓰고, 못 읽으면 고정값으로 떨어진다.
+fn machine_secret() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = std::process::Command::new("ioreg")
+            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+            .output()
+        {
+            if let Ok(text) = String::from_utf8(out.stdout) {
+                if let Some(line) = text.lines().find(|l| l.contains("IOPlatformUUID")) {
+                    if let Some(uuid) = line.split('"').nth(3) {
+                        return format!("myspace-flex:{uuid}");
+                    }
+                }
+            }
+        }
+    }
+    "myspace-flex:fallback".to_string()
+}
+
+/// 기기 비밀 → AES 키·IV.
+fn derive_key_iv() -> ([u8; 16], [u8; 16]) {
+    let secret = machine_secret();
+    let mut key = [0u8; 16];
+    let mut iv = [0u8; 16];
+    pbkdf2_hmac::<Sha1>(secret.as_bytes(), b"myspace-flex-key", 4096, &mut key);
+    pbkdf2_hmac::<Sha1>(secret.as_bytes(), b"myspace-flex-iv", 4096, &mut iv);
+    (key, iv)
+}
+
+fn encrypt_password(plain: &str) -> String {
+    let (key, iv) = derive_key_iv();
+    let ct = Aes128CbcEnc::new(GenericArray::from_slice(&key), GenericArray::from_slice(&iv))
+        .encrypt_padded_vec_mut::<Pkcs7>(plain.as_bytes());
+    base64::engine::general_purpose::STANDARD.encode(ct)
+}
+
+fn decrypt_password(enc: &str) -> Option<String> {
+    if enc.is_empty() {
+        return None;
+    }
+    let raw = base64::engine::general_purpose::STANDARD.decode(enc).ok()?;
+    let (key, iv) = derive_key_iv();
+    let pt = Aes128CbcDec::new(GenericArray::from_slice(&key), GenericArray::from_slice(&iv))
+        .decrypt_padded_vec_mut::<Pkcs7>(&raw)
+        .ok()?;
+    String::from_utf8(pt).ok()
+}
+
+/// 저장된 (이메일, 비밀번호). 둘 중 하나라도 없으면 None.
+fn saved_credentials(app: &tauri::AppHandle) -> Option<(String, String)> {
+    let cfg = read_config(app);
+    if cfg.email.trim().is_empty() {
+        return None;
+    }
+    let pw = decrypt_password(&cfg.password_enc)?;
+    if pw.is_empty() {
+        return None;
+    }
+    Some((cfg.email, pw))
+}
+
+/* ────────────────────────────── 쿠키 수집 ────────────────────────────── */
+
+/// Chrome 의 flex.team 쿠키(만료된 건 제외)로 Cookie 헤더를 만든다.
+fn cookies_from_chrome() -> Option<String> {
+    let cookies = crate::chrome_cookies::read_cookies_for_host(HOST).ok()?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+
+    let pairs: Vec<String> = cookies
+        .into_iter()
+        .filter(|c| c.expires_unix.map(|exp| exp >= now).unwrap_or(true))
+        .map(|c| format!("{}={}", c.name, c.value))
+        .collect();
+    if pairs.is_empty() {
+        None
+    } else {
+        Some(pairs.join("; "))
+    }
+}
+
+fn cached_cookie() -> Option<String> {
+    SESSION.lock().ok().and_then(|g| g.clone())
+}
+
+fn remember_cookie(cookie: &str) {
+    if let Ok(mut g) = SESSION.lock() {
+        *g = Some(cookie.to_string());
+    }
+}
+
+fn forget_cookie() {
+    if let Ok(mut g) = SESSION.lock() {
+        *g = None;
+    }
+}
+
+/// 시도할 쿠키 후보를 순서대로. 같은 값이 중복되면 한 번만.
+fn cookie_candidates() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for c in [cached_cookie(), cookies_from_chrome()].into_iter().flatten() {
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/* ────────────────────────────── HTTP 호출 ────────────────────────────── */
+
+enum SendError {
+    /// 401/403 — 이 쿠키로는 안 된다(다음 후보/자동 로그인으로).
+    Unauthorized,
+    Other(String),
+}
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendError::Unauthorized => write!(f, "not_logged_in"),
+            SendError::Other(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// 쿠키 하나로 flex API 를 한 번 호출한다. body 가 Some 이면 POST(JSON), None 이면 GET.
+async fn send(url: &str, body: Option<&Value>, cookie: &str) -> Result<Value, SendError> {
+    let client = http();
+    let mut req = match body {
+        Some(_) => client.post(url),
+        None => client.get(url),
+    };
+    req = req
+        .header(reqwest::header::COOKIE, cookie)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::USER_AGENT, UA);
+    if let Some(b) = body {
+        req = req.json(b);
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| SendError::Other(e.to_string()))?;
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| SendError::Other(e.to_string()))?;
+    if !status.is_success() {
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            return Err(SendError::Unauthorized);
+        }
+        return Err(SendError::Other(format!(
+            "flex_error {}: {}",
+            status.as_u16(),
+            text
+        )));
+    }
+    serde_json::from_str::<Value>(&text).map_err(|e| SendError::Other(format!("json_parse: {e}")))
+}
+
+/// 이 쿠키로 로그인이 살아 있는지 확인.
+async fn probe(cookie: &str) -> bool {
+    send(&format!("{BASE}{PROBE_PATH}"), None, cookie)
+        .await
+        .is_ok()
+}
+
+/// 후보 쿠키를 차례로 써 보고, 전부 401 이면 저장된 계정으로 자동 로그인해 한 번 더 시도한다.
+async fn flex_request(
+    app: &tauri::AppHandle,
+    url: &str,
+    body: Option<&Value>,
+) -> Result<Value, String> {
+    for cookie in cookie_candidates() {
+        match send(url, body, &cookie).await {
+            Ok(v) => {
+                remember_cookie(&cookie);
+                return Ok(v);
+            }
+            Err(SendError::Unauthorized) => forget_cookie(),
+            Err(SendError::Other(e)) => return Err(e),
+        }
+    }
+
+    // 쿠키가 없거나 전부 만료 — 계정이 저장돼 있으면 자동 로그인.
+    if saved_credentials(app).is_none() {
+        return Err("not_logged_in".into());
+    }
+    let cookie = auto_login(app).await?;
+    send(url, body, &cookie).await.map_err(|e| e.to_string())
+}
+
+async fn flex_get(app: &tauri::AppHandle, url: &str) -> Result<Value, String> {
+    flex_request(app, url, None).await
+}
+
+/* ────────────────────────────── 자동 로그인 ────────────────────────────── */
+
+/// 로그인 단계 하나. 실패하면 서버가 준 한국어 메시지를 그대로 올린다
+/// ("계정 또는 비밀번호에 오류가 있어요." 처럼 그대로 보여 주면 되는 문구다).
+async fn auth_post(path: &str, body: &Value, headers: &[(&str, &str)]) -> Result<Value, String> {
+    let mut req = http()
+        .post(format!("{BASE}{path}"))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::USER_AGENT, UA)
+        .header(reqwest::header::ORIGIN, BASE)
+        .header(reqwest::header::REFERER, format!("{BASE}/auth/login"))
+        .json(body);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let parsed = serde_json::from_str::<Value>(&text).ok();
+
+    if !status.is_success() {
+        let msg = parsed
+            .as_ref()
+            .and_then(|v| v["message"].as_str().or_else(|| v["detail"].as_str()))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("로그인 실패({})", status.as_u16()));
+        return Err(msg);
+    }
+    parsed.ok_or_else(|| format!("json_parse: {path}"))
+}
+
+/// 이메일·비밀번호로 로그인해 API 에 붙일 Cookie 헤더를 만든다.
+async fn http_login(email: &str, password: &str) -> Result<String, String> {
+    // 1) 로그인 세션 열기.
+    let challenge = auth_post("/api-public/v2/auth/challenge", &json!({}), &[]).await?;
+    let sid = challenge["sessionId"]
+        .as_str()
+        .ok_or("로그인 세션을 열지 못했습니다.")?
+        .to_string();
+    let session = [(LOGIN_SESSION_HEADER, sid.as_str())];
+
+    // 2) 이메일 확인. SSO 전용 계정 등은 여기서 AUTHENTICATION 으로 넘어가지 않는다.
+    let verified = auth_post(
+        "/api-public/v2/auth/verification/identifier",
+        &json!({ "identifier": email }),
+        &session,
+    )
+    .await?;
+    if verified["nextStep"] != "AUTHENTICATION" {
+        return Err(format!(
+            "비밀번호 로그인을 쓸 수 없는 계정입니다(다음 단계: {}). Chrome 에서 로그인해 주세요.",
+            verified["nextStep"]
+        ));
+    }
+
+    // 3) 비밀번호. OTP 등이 더 필요하면 AUTHORIZATION 으로 넘어가지 않는다.
+    let authed = auth_post(
+        "/api-public/v2/auth/authentication/password",
+        &json!({ "password": password }),
+        &session,
+    )
+    .await?;
+    if authed["nextStep"] != "AUTHORIZATION" {
+        return Err(format!(
+            "추가 인증이 필요한 계정입니다(다음 단계: {}). Chrome 에서 로그인해 주세요.",
+            authed["nextStep"]
+        ));
+    }
+
+    // 4) 워크스페이스 토큰 발급.
+    let authorized = auth_post("/api-public/v2/auth/authorization", &json!({}), &session).await?;
+    let workspace_token = authorized
+        .pointer("/v2Response/workspaceToken/accessToken/token")
+        .and_then(|v| v.as_str())
+        .ok_or("워크스페이스 토큰을 받지 못했습니다.")?
+        .to_string();
+
+    // 5) 워크스페이스 토큰 → 사용자 토큰(AID) 교환.
+    let granted = auth_post(
+        "/api-public/v2/auth/tokens/customer-user/exchange/all",
+        &json!({}),
+        &[(WORKSPACE_ACCESS_HEADER, workspace_token.as_str())],
+    )
+    .await?;
+    let aid = granted
+        .pointer("/tokens/0/token")
+        .and_then(|v| v.as_str())
+        .ok_or("사용자 토큰을 받지 못했습니다.")?;
+
+    // 웹이 쓰는 것과 같은 쿠키 이름. AID 만 있어도 열리지만 버전 표시도 같이 보낸다.
+    Ok(format!("FlexTeam-Version=V2; AID={aid}"))
+}
+
+/// 저장된 계정으로 로그인해 Cookie 헤더를 돌려준다(동시 호출은 한 번만 실제로 로그인).
+async fn auto_login(app: &tauri::AppHandle) -> Result<String, String> {
+    let _guard = LOGIN_LOCK.lock().await;
+
+    // 기다리는 동안 다른 호출이 이미 로그인해 놨을 수 있다.
+    if let Some(c) = cached_cookie() {
+        if probe(&c).await {
+            return Ok(c);
+        }
+        forget_cookie();
+    }
+
+    let (email, password) = saved_credentials(app).ok_or("no_credentials")?;
+    let cookie = http_login(&email, &password).await?;
+    remember_cookie(&cookie);
+    log::info!("flex: 자동 로그인 성공");
+    Ok(cookie)
+}
+
+/* ────────────────────────────── 커맨드 ────────────────────────────── */
+
+/// 조직(구성원) 정보. 프론트에서 localStorage 에 캐시해 새로고침 전까지 재사용한다.
+#[tauri::command]
+pub async fn flex_coworkers(app: tauri::AppHandle) -> Result<Value, String> {
+    flex_get(
+        &app,
+        &format!("{BASE}/api/v2/calendar/calendars/coworkers?size=500"),
+    )
+    .await
+}
+
+/// 내 정보(primary 캘린더).
+#[tauri::command]
+pub async fn flex_primary(app: tauri::AppHandle) -> Result<Value, String> {
+    flex_get(&app, &format!("{BASE}{PROBE_PATH}")).await
+}
+
+/// 기간 내 일정(휴가/회의/근무기록/생일/입사일).
+/// POST 이며 body 에 조회할 구성원들의 캘린더 ID 목록을 담는다(coworkers 응답에서 수집).
+/// date_min/date_max 는 RFC3339 문자열.
+#[tauri::command]
+pub async fn flex_events(
+    app: tauri::AppHandle,
+    date_min: String,
+    date_max: String,
+    calendar_ids: Vec<String>,
+) -> Result<Value, String> {
+    let mut url = format!(
+        "{BASE}/api/v2/calendar/calendars/events?dateTimeMin={}&dateTimeMaxExclusive={}&timeZone={}&size=500",
+        urlencoding::encode(&date_min),
+        urlencoding::encode(&date_max),
+        urlencoding::encode("Asia/Seoul"),
+    );
+    for t in EVENT_TYPES {
+        url.push_str(&format!("&flexEventTypes={t}"));
+    }
+    for s in STATUSES {
+        url.push_str(&format!("&statuses={s}"));
+    }
+    let body = serde_json::json!({ "calendarIds": calendar_ids });
+    flex_request(&app, &url, Some(&body)).await
+}
+
+/// 설정 화면에 보여 줄 계정/세션 상태.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlexStatus {
+    /// 저장된 로그인 이메일(없으면 null).
+    pub email: Option<String>,
+    /// 비밀번호까지 저장돼 자동 로그인이 가능한지.
+    pub can_auto_login: bool,
+    /// 지금 쓸 수 있는 세션이 있는지.
+    pub logged_in: bool,
+    /// 그 세션의 출처: "app"(자동 로그인) | "chrome" | null.
+    pub source: Option<String>,
+}
+
+/// 계정 저장 여부 + 현재 세션이 살아 있는지 확인한다(설정 화면용).
+#[tauri::command]
+pub async fn flex_status(app: tauri::AppHandle) -> Result<FlexStatus, String> {
+    let cfg = read_config(&app);
+    let email = if cfg.email.trim().is_empty() {
+        None
+    } else {
+        Some(cfg.email.clone())
+    };
+
+    // 캐시된 세션 → Chrome 순으로 살아 있는 쿠키를 찾는다.
+    let mut source = None;
+    for (name, cookie) in [("app", cached_cookie()), ("chrome", cookies_from_chrome())] {
+        let Some(cookie) = cookie else { continue };
+        if probe(&cookie).await {
+            remember_cookie(&cookie);
+            source = Some(name.to_string());
+            break;
+        }
+    }
+
+    Ok(FlexStatus {
+        email,
+        can_auto_login: saved_credentials(&app).is_some(),
+        logged_in: source.is_some(),
+        source,
+    })
+}
+
+/// 계정을 저장하고 곧바로 자동 로그인까지 시도한다(설정 화면의 "저장하고 로그인").
+#[tauri::command]
+pub async fn flex_save_account(
+    app: tauri::AppHandle,
+    email: String,
+    password: String,
+) -> Result<FlexStatus, String> {
+    let email = email.trim().to_string();
+    if email.is_empty() || password.is_empty() {
+        return Err("empty_credentials".into());
+    }
+    write_config(
+        &app,
+        &FlexConfig {
+            email,
+            password_enc: encrypt_password(&password),
+        },
+    )?;
+    forget_cookie();
+    auto_login(&app).await?;
+    flex_status(app).await
+}
+
+/// 저장된 계정을 지운다(세션 캐시도 함께 비운다).
+#[tauri::command]
+pub async fn flex_clear_account(app: tauri::AppHandle) -> Result<(), String> {
+    if let Ok(path) = config_path(&app) {
+        let _ = std::fs::remove_file(path);
+    }
+    forget_cookie();
+    Ok(())
+}
+
+/// 지금 바로 다시 로그인한다(설정 화면의 "다시 로그인").
+#[tauri::command]
+pub async fn flex_login_now(app: tauri::AppHandle) -> Result<FlexStatus, String> {
+    forget_cookie();
+    auto_login(&app).await?;
+    flex_status(app).await
+}
+
+/// 휴가 신청 화면(내 휴가 대시보드) 주소.
+const TIME_OFF_URL: &str = "https://flex.team/time-tracking/my-time-off/dashboard";
+
+/// 휴가 신청 화면을 **Chrome 에서** 연다.
+///
+/// 기본 브라우저가 아니라 Chrome 을 지정하는 게 중요하다 — 이 연동은 Chrome 에
+/// 로그인해 둔 flex 세션 쿠키를 읽어 쓰므로(파일 헤더 참고), 같은 브라우저에서
+/// 열면 곧바로 로그인된 화면이 뜬다. Chrome 이 없는 맥에서는 실패하니 기본
+/// 브라우저로 한 번 더 시도한다.
+///
+/// `async` 인 이유: macOS 에서 앱을 지정한 open 은 `/usr/bin/open -a` 의 종료를
+/// **기다린다**(그래서 Chrome 부재를 Err 로 알 수 있다). 동기 커맨드로 두면 그
+/// 대기가 메인 스레드에서 일어난다.
+#[tauri::command]
+pub async fn flex_open_time_off(app: tauri::AppHandle) -> Result<(), String> {
+    let opener = app.opener();
+    if opener
+        .open_url(TIME_OFF_URL, Some("Google Chrome"))
+        .is_err()
+    {
+        opener
+            .open_url(TIME_OFF_URL, None::<&str>)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roundtrips_password() {
+        let enc = encrypt_password("hunter2!한글");
+        assert_ne!(enc, "hunter2!한글");
+        assert_eq!(decrypt_password(&enc).as_deref(), Some("hunter2!한글"));
+    }
+
+    #[test]
+    fn rejects_garbage_password_blob() {
+        assert_eq!(decrypt_password(""), None);
+        assert_eq!(decrypt_password("not-base64!!"), None);
+    }
+
+    /// 같은 쿠키가 캐시와 Chrome 양쪽에서 나와도 한 번만 시도한다.
+    #[test]
+    fn dedupes_cookie_candidates() {
+        remember_cookie("AID=abc");
+        let list = cookie_candidates();
+        assert_eq!(list.iter().filter(|c| *c == "AID=abc").count(), 1);
+        forget_cookie();
+    }
+
+    /// 실제 flex.team 에 로그인해 보는 통합 테스트 — 로그인 흐름이 바뀌면 여기서 먼저 깨진다.
+    /// 계정이 필요하고 네트워크를 타므로 기본으로는 건너뛴다.
+    ///
+    /// ```sh
+    /// FLEX_TEST_EMAIL=me@example.com FLEX_TEST_PASSWORD='...' \
+    ///   cargo test --lib flex::tests::logs_in -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore = "실제 계정과 네트워크가 필요하다"]
+    async fn logs_in_and_reads_primary() {
+        let (Ok(email), Ok(password)) = (
+            std::env::var("FLEX_TEST_EMAIL"),
+            std::env::var("FLEX_TEST_PASSWORD"),
+        ) else {
+            panic!("FLEX_TEST_EMAIL / FLEX_TEST_PASSWORD 환경변수가 필요합니다");
+        };
+
+        let cookie = http_login(&email, &password)
+            .await
+            .expect("로그인에 성공해야 한다");
+        assert!(cookie.contains("AID="), "AID 쿠키가 있어야 한다: {cookie}");
+
+        let me = send(&format!("{BASE}{PROBE_PATH}"), None, &cookie)
+            .await
+            .map_err(|e| e.to_string())
+            .expect("primary 캘린더를 읽을 수 있어야 한다");
+        assert!(
+            me["token"].is_string(),
+            "primary 응답에 token 이 있어야 한다: {me}"
+        );
+
+        // 뷰가 실제로 쓰는 엔드포인트도 같은 쿠키로 열려야 한다.
+        let coworkers = send(
+            &format!("{BASE}/api/v2/calendar/calendars/coworkers?size=500"),
+            None,
+            &cookie,
+        )
+        .await
+        .map_err(|e| e.to_string())
+        .expect("구성원 목록을 읽을 수 있어야 한다");
+        let list = coworkers["calendars"]
+            .as_array()
+            .expect("calendars 배열이 있어야 한다");
+        assert!(!list.is_empty(), "구성원이 한 명 이상이어야 한다");
+        println!("구성원 {}명", list.len());
+
+        // 잘못된 비밀번호는 서버 메시지를 그대로 올린다.
+        let err = http_login(&email, "definitely-wrong-password-1")
+            .await
+            .expect_err("틀린 비밀번호는 실패해야 한다");
+        assert!(!err.is_empty(), "오류 메시지가 있어야 한다");
+        println!("틀린 비밀번호 메시지: {err}");
+    }
+}

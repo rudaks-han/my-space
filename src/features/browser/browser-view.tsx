@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
+import { useTabActive } from "@/lib/use-tab-active"
 import { useWebviewBounds } from "@/lib/use-webview-bounds"
 import { cn } from "@/lib/utils"
 import { labelFor, normalizeUrl, useBrowser } from "./use-browser"
@@ -23,6 +24,9 @@ const inTauri = isTauri()
 export function BrowserView() {
   const { tabs, activeId, setActiveId, addTab, removeTab, setTabUrl } =
     useBrowser()
+
+  // 이 뷰가 보이는 탭인지(숨은 동안 네이티브 웹뷰도 같이 숨겨야 한다).
+  const tabActive = useTabActive()
 
   const contentRef = useRef<HTMLDivElement>(null)
   // 네이티브 웹뷰를 겹쳐 그릴 영역(레이아웃이 안정되기 전에는 null).
@@ -58,7 +62,7 @@ export function BrowserView() {
   // 활성 탭을 현재 영역에 표시(없으면 생성)하고 나머지는 숨긴다.
   // 이미 존재하는 웹뷰는 재배치만 하므로 탭 전환·리사이즈로 페이지가 다시 로드되지 않는다.
   useEffect(() => {
-    if (!inTauri || !rect) return
+    if (!inTauri || !rect || !tabActive) return
     const active = tabs.find((t) => t.id === activeId)
     if (active) {
       void trackedInvoke("browser_open", {
@@ -72,7 +76,17 @@ export function BrowserView() {
         void trackedInvoke("browser_hide", { label: labelFor(t.id) })
       }
     }
-  }, [activeId, rect, tabs])
+  }, [activeId, rect, tabs, tabActive])
+
+  // 다른 메뉴 탭으로 넘어가면(뷰는 그대로 마운트돼 있다) 네이티브 웹뷰를 숨긴다.
+  // 웹뷰는 창 위에 겹쳐 그려지므로 CSS 로 감춰지지 않는다 — 숨기지 않으면 다른 화면을 덮는다.
+  // 웹뷰 자체는 살려 두므로 돌아왔을 때 페이지가 그대로 남아 있다.
+  useEffect(() => {
+    if (!inTauri || tabActive) return
+    for (const t of tabsRef.current) {
+      void trackedInvoke("browser_hide", { label: labelFor(t.id) })
+    }
+  }, [tabActive])
 
   // 웹뷰 내부 이동(링크 클릭 등)을 Rust 가 알려주면 탭 URL·제목을 동기화한다.
   useEffect(() => {
@@ -135,9 +149,9 @@ export function BrowserView() {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-lg border bg-card">
-      {/* 탭 스트립 */}
-      <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted/40 px-1.5 py-1">
+    <div className="flex h-full flex-col overflow-hidden rounded-[10px] border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
+      {/* 탭 스트립 — Slack 밑줄 탭(배경 채움 없이 활성 탭만 굵은 글자 + 2px 밑줄) */}
+      <div className="flex h-(--ui-tabbar-h) shrink-0 items-stretch gap-1 overflow-x-auto border-b border-ui-tab-border px-2">
         {tabs.map((t) => {
           const active = t.id === activeId
           return (
@@ -145,13 +159,13 @@ export function BrowserView() {
               key={t.id}
               onClick={() => setActiveId(t.id)}
               className={cn(
-                "group flex h-8 max-w-52 min-w-32 cursor-default items-center gap-2 rounded-md px-2.5 text-sm transition-colors",
+                "group relative flex max-w-[200px] min-w-0 cursor-pointer items-center gap-1.5 px-2.5 text-[15px] whitespace-nowrap transition-colors",
                 active
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-background/60"
+                  ? "font-bold text-ui-tab-active-fg after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:bg-ui-tab-underline"
+                  : "text-ui-tab-inactive-fg hover:text-foreground"
               )}
             >
-              <GlobeIcon className="size-3.5 shrink-0 opacity-70" />
+              <GlobeIcon className="size-4 shrink-0" />
               <span className="flex-1 truncate">{t.title || "새 탭"}</span>
               <button
                 onClick={(e) => {
@@ -159,9 +173,9 @@ export function BrowserView() {
                   closeTab(t.id)
                 }}
                 aria-label="탭 닫기"
-                className="grid size-4 shrink-0 place-items-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-muted-foreground/20"
+                className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full opacity-0 transition-colors group-hover:opacity-100 hover:bg-ui-list-hover"
               >
-                <XIcon className="size-3" />
+                <XIcon className="size-3.5" />
               </button>
             </div>
           )
@@ -171,44 +185,47 @@ export function BrowserView() {
           variant="ghost"
           onClick={() => addTab()}
           aria-label="새 탭"
-          className="shrink-0"
+          className="mx-1 shrink-0 self-center rounded-lg"
         >
           <PlusIcon />
         </Button>
       </div>
 
-      {/* 주소 표시줄 */}
+      {/* 주소 표시줄 — 주소창은 상단바 검색과 같은 알약 모양으로 맞춘다. */}
       <form
         onSubmit={submitAddress}
-        className="flex items-center gap-1 border-b px-2 py-1.5"
+        className="flex h-(--ui-breadcrumb-h) shrink-0 items-center gap-1.5 border-b border-border px-3"
       >
         <Button
           type="button"
-          size="icon-sm"
+          size="icon"
           variant="ghost"
           onClick={() => nav("browser_back")}
           disabled={!activeId}
           aria-label="뒤로"
+          className="rounded-lg"
         >
           <ArrowLeftIcon />
         </Button>
         <Button
           type="button"
-          size="icon-sm"
+          size="icon"
           variant="ghost"
           onClick={() => nav("browser_forward")}
           disabled={!activeId}
           aria-label="앞으로"
+          className="rounded-lg"
         >
           <ArrowRightIcon />
         </Button>
         <Button
           type="button"
-          size="icon-sm"
+          size="icon"
           variant="ghost"
           onClick={() => nav("browser_reload")}
           disabled={!activeId}
           aria-label="새로고침"
+          className="rounded-lg"
         >
           <RotateCwIcon />
         </Button>
@@ -217,26 +234,27 @@ export function BrowserView() {
           onChange={(e) => setAddress(e.target.value)}
           placeholder="URL 을 입력하거나 검색어를 입력하세요"
           disabled={!activeId}
-          className="h-8"
+          className="ui-selectable h-8 rounded-full px-3.5 text-[15px]"
           spellCheck={false}
         />
         <Button
           type="button"
-          size="icon-sm"
+          size="icon"
           variant="ghost"
           onClick={() => nav("browser_devtools")}
           disabled={!activeId}
           aria-label="개발자도구"
           title="개발자도구 열기/닫기"
+          className="rounded-lg"
         >
           <CodeIcon />
         </Button>
       </form>
 
       {/* 웹뷰가 그려질 영역 — 네이티브 웹뷰가 이 위에 겹쳐서 렌더된다 */}
-      <div ref={contentRef} className="relative flex-1 bg-muted/20">
+      <div ref={contentRef} className="relative flex-1 bg-background">
         {(!inTauri || tabs.length === 0) && (
-          <div className="absolute inset-0 grid place-items-center p-6 text-center text-sm text-muted-foreground">
+          <div className="absolute inset-0 grid place-items-center p-6 text-center text-[15px] text-muted-foreground">
             {inTauri
               ? "‘+’ 를 눌러 새 탭을 여세요."
               : "브라우저 기능은 Tauri 앱(bun run tauri dev)에서만 동작합니다."}

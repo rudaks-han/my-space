@@ -3,7 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window"
 
 import { isTauri, trackedInvoke } from "@/lib/tauri"
 import { useLocalStorage } from "@/lib/use-local-storage"
-import { useSettings } from "@/features/settings/settings-store"
+import { useSettings } from "@/features/settings/settings-context"
 import {
   SlackContext,
   type ChannelInfo,
@@ -82,43 +82,6 @@ export function SlackProvider({ children }: { children: ReactNode }) {
     },
     [refresh]
   )
-
-  const markRead = useCallback(
-    async (channel: string, ts: string) => {
-      if (!ts) return
-      // 낙관적으로 해당 채널을 목록에서 제거해 UI 를 즉시 반영한다.
-      setChannels((prev) => prev.filter((c) => c.id !== channel))
-      try {
-        await trackedInvoke("slack_mark_read", { channel, ts })
-      } catch (e) {
-        setError(String(e))
-      } finally {
-        // 실제 상태(스레드 잔여 미읽음 등)로 다시 맞춘다.
-        void refresh()
-      }
-    },
-    [refresh]
-  )
-
-  const markAllRead = useCallback(async () => {
-    // 채널별 최신 ts(메시지는 오래된→최신 순이라 마지막이 최신)까지 읽음 처리.
-    const targets = channels
-      .map((c) => ({ id: c.id, ts: c.messages.at(-1)?.ts }))
-      .filter((t): t is { id: string; ts: string } => Boolean(t.ts))
-    if (targets.length === 0) return
-    setChannels([])
-    try {
-      await Promise.all(
-        targets.map((t) =>
-          trackedInvoke("slack_mark_read", { channel: t.id, ts: t.ts })
-        )
-      )
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      void refresh()
-    }
-  }, [channels, refresh])
 
   const saveSelected = useCallback(
     async (ids: string[]) => {
@@ -235,8 +198,6 @@ export function SlackProvider({ children }: { children: ReactNode }) {
         refresh,
         loadChannels,
         saveSelected,
-        markRead,
-        markAllRead,
         openMessage,
       }}
     >

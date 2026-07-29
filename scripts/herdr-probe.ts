@@ -31,40 +31,82 @@ const HERDR_BIN = process.env.HERDR_BIN ?? "herdr"
 const POLL_MS = 600 // watch 폴링 주기
 const READ_LINES = 160 // 덤프 시 읽을 줄 수
 
+/** herdr 응답 한 덩어리. 스키마가 고정돼 있지 않아 unknown 으로 받고 아래 헬퍼로 좁힌다. */
+interface HerdrOutput {
+  raw: string
+  json: unknown
+}
+
+/** 객체(배열 아님)일 때만 인덱싱 가능한 형태로 좁힌다. */
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return typeof v === "object" && v !== null && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null
+}
+
+/** 문자열일 때만 그대로, 아니면 null. */
+function asString(v: unknown): string | null {
+  return typeof v === "string" ? v : null
+}
+
 /** herdr CLI 를 호출하고 stdout(가능하면 JSON 파싱)을 돌려준다. */
-async function herdr(
-  args: string[]
-): Promise<{ raw: string; json: any | null }> {
+async function herdr(args: string[]): Promise<HerdrOutput> {
   try {
     const { stdout } = await execFileAsync(HERDR_BIN, args, {
       maxBuffer: 16 * 1024 * 1024,
     })
     const raw = stdout.toString()
-    let json: any = null
+    let json: unknown = null
     try {
       json = JSON.parse(raw)
     } catch {
       /* JSON 이 아니면 raw 만 사용 */
     }
     return { raw, json }
-  } catch (err: any) {
-    const raw =
-      (err?.stdout?.toString() ?? "") + (err?.stderr?.toString() ?? "")
+  } catch (err) {
+    // execFile 실패 시 stdout/stderr 가 Error 에 붙어 온다(타입 선언에는 없음).
+    const e = asRecord(err)
+    const raw = String(e?.stdout ?? "") + String(e?.stderr ?? "")
     return { raw: raw || String(err), json: null }
   }
 }
 
+/** agent/pane 목록 항목에서 프로브가 쓰는 필드만 뽑은 형태. */
+interface ProbeItem {
+  pane_id: string
+  agent: string | null
+  agent_status: string
+  cwd: string | null
+}
+
 /** result 안에서 agents/panes 배열을 최대한 관대하게 꺼낸다. */
-function extractItems(json: any): any[] {
-  const r = json?.result ?? json
-  return r?.agents ?? r?.panes ?? (Array.isArray(r) ? r : [])
+function extractItems(json: unknown): ProbeItem[] {
+  const root = asRecord(json)
+  const r = root?.result ?? json
+  const rec = asRecord(r)
+  const list = rec?.agents ?? rec?.panes ?? (Array.isArray(r) ? r : [])
+  if (!Array.isArray(list)) return []
+  return list.flatMap((entry) => {
+    const o = asRecord(entry)
+    if (!o) return []
+    return [
+      {
+        pane_id: asString(o.pane_id) ?? "?",
+        agent: asString(o.agent),
+        agent_status: asString(o.agent_status) ?? "unknown",
+        cwd: asString(o.cwd),
+      },
+    ]
+  })
 }
 
 /** read 응답에서 실제 터미널 텍스트를 꺼낸다 (result.read.text 위치). */
-function readText(out: { raw: string; json: any | null }): string {
-  const r = out.json?.result
-  const t = r?.read?.text ?? r?.text ?? (typeof r === "string" ? r : null)
-  return typeof t === "string" ? t : out.raw
+function readText(out: HerdrOutput): string {
+  const r = asRecord(out.json)?.result
+  const rec = asRecord(r)
+  const t =
+    asString(asRecord(rec?.read)?.text) ?? asString(rec?.text) ?? asString(r)
+  return t ?? out.raw
 }
 
 function ts(): string {
@@ -84,7 +126,7 @@ async function cmdList() {
   console.log(`실행 중 agent ${items.length}개:\n`)
   for (const a of items) {
     console.log(
-      `  ${String(a.pane_id).padEnd(8)} status=${String(a.agent_status).padEnd(8)} agent=${a.agent ?? "-"}  cwd=${a.cwd ?? ""}`
+      `  ${a.pane_id.padEnd(8)} status=${a.agent_status.padEnd(8)} agent=${a.agent ?? "-"}  cwd=${a.cwd ?? ""}`
     )
   }
   console.log(
@@ -179,7 +221,7 @@ async function cmdWatch() {
     const items = extractItems(json)
     for (const a of items) {
       const id = a.pane_id
-      const status = a.agent_status ?? "unknown"
+      const status = a.agent_status
       const prev = lastStatus.get(id)
       lastStatus.set(id, status)
       if (prev && prev !== status) {

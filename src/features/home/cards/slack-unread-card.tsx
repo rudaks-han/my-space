@@ -54,7 +54,7 @@ export function SlackUnreadCard({
       ) : rows.length === 0 ? (
         <HomeEmpty>안 읽은 메시지가 없습니다.</HomeEmpty>
       ) : (
-        <ul className="flex flex-col gap-1">
+        <ul className="flex flex-col gap-0.5">
           {rows.map((c) => {
             const Icon = KIND_ICON[c.kind]
             const latest = c.messages.at(-1)
@@ -65,20 +65,22 @@ export function SlackUnreadCard({
                   onClick={() => {
                     if (latest) onOpenMessage(c.id, latest.ts, latest.thread_ts)
                   }}
-                  className="flex w-full cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent"
+                  className="flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-1.5 text-left transition-colors hover:bg-ui-list-hover"
                 >
-                  <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                  <Icon className="size-4 shrink-0 text-muted-foreground" />
                   <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate text-sm font-medium">
+                    {/* 안 읽은 채널명은 Slack 처럼 굵게. */}
+                    <span className="truncate text-[15px] font-bold">
                       {c.name}
                     </span>
                     {latest && (
-                      <span className="line-clamp-1 text-xs text-muted-foreground">
+                      <span className="line-clamp-1 text-[13px] text-muted-foreground">
                         {latest.user}: {latest.text}
                       </span>
                     )}
                   </div>
-                  <span className="shrink-0 rounded-full bg-blue-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-blue-600 tabular-nums dark:text-blue-400">
+                  {/* 안 읽음 개수는 Slack 의 빨간 알약 배지. */}
+                  <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-ui-error px-1.5 text-[11px] font-bold text-white tabular-nums">
                     {c.unread}
                     {c.has_more ? "+" : ""}
                   </span>
@@ -89,7 +91,7 @@ export function SlackUnreadCard({
         </ul>
       )}
       {unread.length > rows.length && (
-        <p className="mt-2 text-center text-xs text-muted-foreground">
+        <p className="mt-1.5 text-center text-[13px] text-muted-foreground">
           외 {unread.length - rows.length}개 채널
         </p>
       )}

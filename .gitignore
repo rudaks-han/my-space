@@ -26,3 +26,7 @@ dist-ssr
 # Slack 토큰 등 민감 정보 (실수 커밋 방지)
 .secure/
 *.token
+
+# 개인 메모·편의 스크립트 (공개 저장소에 올릴 것 아님)
+수정사항.txt
+run.sh

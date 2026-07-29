@@ -1,9 +1,18 @@
+mod cc_history;
+mod chrome_cookies;
+mod claude_usage;
+mod cowork;
+mod es;
+mod flex;
 mod gcal;
-mod github;
+mod gdrive;
+mod gmail;
 mod herdr;
 mod intellij;
+mod jira;
+mod kafka;
 mod mcp;
-mod popover;
+mod pet;
 mod reminder;
 mod slack;
 
@@ -18,6 +27,10 @@ use tauri_plugin_opener::OpenerExt;
 /// 임베드 브라우저 탭 웹뷰의 라벨 접두사. 이 접두사로 만든 웹뷰는
 /// external-navigation 플러그인이 시스템 브라우저로 가로채지 않고 내부에서 이동한다.
 const BROWSER_PREFIX: &str = "browser-tab-";
+
+/// 메뉴를 새 창으로 띄울 때 쓰는 창 라벨 접두사(`view-<메뉴 id>`).
+/// 프론트엔드의 `src/lib/window-role.ts` VIEW_WINDOW_PREFIX 와 같아야 한다.
+const VIEW_WINDOW_PREFIX: &str = "view-";
 
 /// 모든 브라우저 탭이 공유하는 영속 데이터 저장소 식별자(고정 UUID).
 /// macOS(WKWebView)는 이 식별자가 있으면 `dataStoreForIdentifier` 로 안정된 위치에
@@ -80,12 +93,9 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-/// 메인 창을 표시·포커스하고, 트레이 팝오버 창은 숨긴다(트레이/커맨드 공용 헬퍼).
-fn present_main(app: &tauri::AppHandle) {
-    // 팝오버로 쓰는 `widget` 창은 숨긴다.
-    if let Some(widget) = app.get_window("widget") {
-        let _ = widget.hide();
-    }
+/// 메인 창을 표시·포커스한다(트레이/커맨드 공용 헬퍼).
+/// pet.rs 의 `pet_open_menu` 도 이걸 쓴다(펫을 눌러 특정 메뉴를 열 때).
+pub(crate) fn present_main(app: &tauri::AppHandle) {
     // 메인 창은 브라우저 탭용 자식 웹뷰를 담는 멀티웹뷰 창이라
     // get_webview_window(1:1 웹뷰 창만 반환)에는 잡히지 않는다 → get_window 을 쓴다.
     if let Some(main) = app.get_window("main") {
@@ -96,9 +106,9 @@ fn present_main(app: &tauri::AppHandle) {
 }
 
 /// 메인 창을 숨겨 트레이(메뉴바 아이콘)로 최소화한다. 트레이 아이콘은 항상 떠 있어
-/// 언제든 다시 열 수 있다(플로팅 위젯을 대체).
+/// 언제든 다시 열 수 있다.
 #[tauri::command]
-fn minimize_to_widget(app: tauri::AppHandle) -> Result<(), String> {
+fn minimize_to_tray(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(main) = app.get_window("main") {
         main.hide().map_err(|e| e.to_string())?;
     }
@@ -112,17 +122,65 @@ fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 앱을 완전히 종료한다(플로팅 위젯의 종료 버튼에서 호출).
+/// 앱을 완전히 종료한다(트레이 메뉴의 종료에서 호출).
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// 메뉴 하나를 독립 창으로 띄운다(뷰 헤더의 "새 창으로 열기").
+///
+/// 창 라벨은 `view-<메뉴 id>` 이고, 프론트엔드는 `?view=<메뉴 id>` 로 어떤 화면을 그릴지 안다
+/// (main.tsx → ViewWindowRoot). 이미 열려 있으면 새로 만들지 않고 앞으로 가져온다.
+/// 라벨 접두사는 capabilities/default.json 의 `view-*` 와 window-role.ts 의
+/// VIEW_WINDOW_PREFIX 와 맞물려 있으므로 함께 바꿔야 한다.
+#[tauri::command]
+fn open_view_window(app: tauri::AppHandle, id: String, title: String) -> Result<(), String> {
+    // 창 라벨에는 영숫자·`-`·`_` 만 쓴다(Tauri 제약). 메뉴 id 는 케밥케이스지만 방어적으로 치환한다.
+    let slug: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let label = format!("{VIEW_WINDOW_PREFIX}{slug}");
+
+    if let Some(existing) = app.get_window(&label) {
+        let _ = existing.show();
+        let _ = existing.unminimize();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
+    let url = WebviewUrl::App(format!("index.html?view={slug}").into());
+    let builder = tauri::WebviewWindowBuilder::new(&app, &label, url)
+        .title(format!("{title} — My Space"))
+        .inner_size(1100.0, 820.0)
+        .min_inner_size(520.0, 400.0)
+        // 첫 프레임의 흰 깜빡임을 피해 페이지 로드가 끝난 뒤(on_page_load) 보여 준다.
+        .visible(false);
+    // 메인 창과 같은 오버레이 타이틀바 — 뷰 헤더가 창 맨 위까지 올라가고 좌측 78px 는 신호등 자리.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+    builder.build().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// 브라우저 탭 웹뷰를 열거나(없으면 생성) 지정한 위치·크기로 이동시킨다(있으면 재배치=표시).
 /// 이미 존재하면 재이동만 하므로(navigate 안 함) 탭 전환·리사이즈 시 페이지가 다시 로드되지 않는다.
+///
+/// 자식 웹뷰는 **호출한 창**에 붙인다 — 메뉴를 새 창으로 띄우면(`view-*`) 그 창에 붙어야
+/// 좌표가 맞는다. 라벨은 프론트엔드가 창별로 구분해 넘긴다(window-role.ts 의 browserLabel).
 #[tauri::command]
 fn browser_open(
     app: tauri::AppHandle,
+    window: tauri::Window,
     label: String,
     url: String,
     x: f64,
@@ -140,9 +198,6 @@ fn browser_open(
         return Ok(());
     }
 
-    let window = app
-        .get_window("main")
-        .ok_or_else(|| "main window not found".to_string())?;
     let parsed: tauri::Url = url.parse().map_err(|_| "invalid url".to_string())?;
     // window.open / target="_blank" 로 새 창을 요청하면(예: daum 메일에서 메일 클릭)
     // 별도 OS 창을 만들지 않고 새 탭으로 열도록:
@@ -292,79 +347,6 @@ fn browser_devtools(app: tauri::AppHandle, label: String) -> Result<(), String> 
     Ok(())
 }
 
-/// GitHub 임베드 웹뷰를 만들면서, 로컬 Chrome 의 github.com 로그인 쿠키가 있으면
-/// 복호화해 주입한 뒤 대상 URL 로 이동시킨다(별도 로그인 없이 로그인 상태로 진입).
-///
-/// - 웹뷰가 이미 있으면 재배치만 하고 끝낸다(로그인·스크롤 상태 보존, 재주입 안 함).
-/// - 쿠키를 못 읽어도(미설치·미로그인·Keychain 거부) 에러가 아니라 그냥 로그인 화면으로 진입한다.
-/// - 라벨은 반드시 BROWSER_PREFIX(`browser-tab-`)로 시작해 내부 이동이 유지되게 한다.
-#[tauri::command]
-fn github_import_chrome_cookies(
-    app: tauri::AppHandle,
-    label: String,
-    url: String,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-) -> Result<(), String> {
-    // 이미 있으면 재배치만 (browser_open 과 동일한 표시 동작).
-    if let Some(webview) = app.get_webview(&label) {
-        webview
-            .set_position(LogicalPosition::new(x, y))
-            .map_err(|e| e.to_string())?;
-        webview
-            .set_size(LogicalSize::new(width, height))
-            .map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    // Chrome 쿠키 읽기는 best-effort — 실패해도 로그인 화면을 띄운다.
-    let cookies = match github::read_github_cookies() {
-        Ok(c) => c,
-        Err(e) => {
-            log::info!("Chrome github 쿠키 가져오기 생략: {e}");
-            Vec::new()
-        }
-    };
-
-    let window = app
-        .get_window("main")
-        .ok_or_else(|| "main window not found".to_string())?;
-    // 쿠키를 먼저 주입한 뒤 이동시키기 위해 about:blank 로 생성한다.
-    let blank: tauri::Url = "about:blank".parse().map_err(|_| "invalid url".to_string())?;
-    let app_for_new_window = app.clone();
-    let builder = WebviewBuilder::new(&label, WebviewUrl::External(blank))
-        .data_store_identifier(BROWSER_DATA_STORE_ID)
-        .initialization_script(NEW_TAB_SCRIPT)
-        .on_new_window(move |target_url, _features| {
-            log::info!("on_new_window → new tab: {}", target_url);
-            let _ = app_for_new_window.emit("browser:new-tab", target_url.to_string());
-            tauri::webview::NewWindowResponse::Deny
-        });
-    let webview = window
-        .add_child(
-            builder,
-            LogicalPosition::new(x, y),
-            LogicalSize::new(width, height),
-        )
-        .map_err(|e| e.to_string())?;
-    enable_back_forward_gestures(&webview);
-
-    github::inject_cookies(&webview, cookies);
-
-    // 쿠키 주입(setCookie completion 은 비동기)이 커밋될 시간을 잠깐 준 뒤 이동한다.
-    let target = url;
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        if let Ok(parsed) = target.parse::<tauri::Url>() {
-            let _ = webview.navigate(parsed);
-        }
-    });
-
-    Ok(())
-}
-
 fn external_navigation_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri::plugin::Builder::<R>::new("external-navigation")
         .on_navigation(|webview, url| {
@@ -433,19 +415,39 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(external_navigation_plugin())
         .manage(herdr::WatchState::default())
         .manage(herdr::PendingQuestions::default())
         .manage(herdr::Notices::default())
         .manage(reminder::PendingReminder::default())
+        .manage(pet::PetFeed::default())
+        .manage(pet::PetAlert::default())
+        .manage(pet::NoticeTtl::default())
         .manage(intellij::ServiceState::default())
         .manage(intellij::RunTracking::default())
         .manage(intellij::WatchProject::default())
+        .manage(intellij::SequenceState::default())
         .invoke_handler(tauri::generate_handler![
             greet,
-            minimize_to_widget,
+            minimize_to_tray,
             show_main_window,
             quit_app,
+            pet::pet_show,
+            pet::pet_hide,
+            pet::pet_alert,
+            pet::pet_resize,
+            pet::pet_set_click_through,
+            pet::pet_anchor,
+            pet::pet_read_image,
+            pet::pet_read_anim,
+            pet::pet_open_menu,
+            pet::pet_set_notice_ttl,
+            pet::pet_set_feed,
+            pet::pet_feed,
+            pet::pet_list_packages,
+            pet::pet_read_package,
+            open_view_window,
             browser_open,
             browser_navigate,
             browser_set_bounds,
@@ -455,7 +457,6 @@ pub fn run() {
             browser_forward,
             browser_reload,
             browser_devtools,
-            github_import_chrome_cookies,
             slack::slack_save_token,
             slack::slack_status,
             slack::slack_disconnect,
@@ -463,12 +464,44 @@ pub fn run() {
             slack::slack_get_selected,
             slack::slack_set_selected,
             slack::slack_unreads,
-            slack::slack_mark_read,
             slack::slack_open_message,
             gcal::gcal_status,
             gcal::gcal_disconnect,
             gcal::gcal_start_auth,
             gcal::gcal_today,
+            gcal::gcal_upcoming,
+            gcal::gcal_calendars,
+            gcal::gcal_calendar_events,
+            gcal::gcal_book_room,
+            gcal::gcal_people,
+            gcal::gcal_person_events,
+            flex::flex_coworkers,
+            flex::flex_primary,
+            flex::flex_events,
+            flex::flex_status,
+            flex::flex_save_account,
+            flex::flex_clear_account,
+            flex::flex_login_now,
+            flex::flex_open_time_off,
+            gdrive::gdrive_status,
+            gdrive::gdrive_disconnect,
+            gdrive::gdrive_start_auth,
+            gdrive::gdrive_recent,
+            gdrive::gdrive_folders,
+            gdrive::gdrive_list,
+            gmail::gmail_status,
+            gmail::gmail_disconnect,
+            gmail::gmail_start_auth,
+            gmail::gmail_messages,
+            gmail::gmail_message_body,
+            gmail::gmail_mark_read,
+            gmail::gmail_unread_count,
+            jira::jira_save_config,
+            jira::jira_status,
+            jira::jira_disconnect,
+            jira::jira_my_issues,
+            jira::jira_issue_detail,
+            jira::jira_open_issue,
             herdr::herdr_list_agents,
             herdr::herdr_list_workspaces,
             herdr::herdr_focus_workspace,
@@ -480,7 +513,6 @@ pub fn run() {
             herdr::herdr_notify,
             herdr::herdr_current_notices,
             herdr::herdr_dismiss_notice,
-            herdr::herdr_hide_popover,
             herdr::herdr_start_watch,
             herdr::herdr_stop_watch,
             reminder::reminder_fire,
@@ -494,20 +526,42 @@ pub fn run() {
             intellij::intellij_restart_service,
             intellij::intellij_running,
             intellij::intellij_watch_project,
+            intellij::intellij_start_sequence,
+            intellij::intellij_cancel_sequence,
+            intellij::intellij_sequence_status,
             intellij::intellij_mcp_status,
             intellij::intellij_logs,
-            intellij::intellij_clear_logs
+            intellij::intellij_clear_logs,
+            intellij::intellij_enable_log_sync,
+            cowork::cowork_list_specs,
+            cowork::cowork_read_spec_file,
+            cowork::cowork_search_specs,
+            cowork::cowork_read_css,
+            es::es_request,
+            kafka::kafka_connect,
+            kafka::kafka_disconnect,
+            kafka::kafka_topics,
+            kafka::kafka_partitions,
+            kafka::kafka_topic_configs,
+            kafka::kafka_fetch,
+            kafka::kafka_groups,
+            kafka::kafka_group_offsets,
+            kafka::kafka_produce,
+            claude_usage::claude_usage,
+            cc_history::cc_history_projects,
+            cc_history::cc_history_sessions,
+            cc_history::cc_history_messages
         ])
         .setup(|app| {
             // 메뉴바(작업표시줄) 트레이 아이콘. 클릭하면 바로 앱을 열지 않고 메뉴를 띄운다:
             //   - My Space 열기: 메인 창 표시
-            //   - Claude Code 알림: 대기 중인 선택 알림 팝오버를 다시 표시
+            //   - 펫 표시/숨기기: 알림 창구인 데스크톱 펫을 켜고 끈다(설정의 "상시 표시"를 뒤집는다)
             //   - 종료
             let open_i = MenuItemBuilder::with_id("open", "My Space 열기").build(app)?;
-            let claude_i = MenuItemBuilder::with_id("claude", "Claude Code 알림").build(app)?;
+            let pet_i = MenuItemBuilder::with_id("pet", "펫 표시/숨기기").build(app)?;
             let quit_i = MenuItemBuilder::with_id("quit", "종료").build(app)?;
             let menu = MenuBuilder::new(app)
-                .items(&[&open_i, &claude_i, &quit_i])
+                .items(&[&open_i, &pet_i, &quit_i])
                 .build()?;
             let mut builder = TrayIconBuilder::with_id("main-tray")
                 .tooltip("My Space")
@@ -516,7 +570,7 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => present_main(app),
-                    "claude" => popover::present_popover(app, 340.0, 420.0),
+                    "pet" => pet::request_toggle(app),
                     "quit" => app.exit(0),
                     _ => {}
                 });
@@ -525,8 +579,8 @@ pub fn run() {
             }
             builder.build(app)?;
 
-            // herdr blocked 감시를 부팅 시 시작한다(트레이 팝오버가 메인 창 없이도
-            // 질문을 띄울 수 있도록). 단, 설정에서 껐으면(~/.myspace/watch-disabled 존재)
+            // herdr blocked 감시를 부팅 시 시작한다(펫이 메인 창 없이도
+            // 질문·알림을 띄울 수 있도록). 단, 설정에서 껐으면(~/.myspace/watch-disabled 존재)
             // 자동 시작하지 않아 "꺼짐"이 재시작 후에도 유지된다.
             if !herdr::watch_disabled() {
                 herdr::herdr_start_watch(app.handle().clone());
@@ -546,8 +600,12 @@ pub fn run() {
         .on_page_load(|webview, payload| {
             let label = webview.label();
 
-            if label == "main" && matches!(payload.event(), PageLoadEvent::Finished) {
-                log::info!("main webview finished loading");
+            // 메인 창과 "새 창으로 열기"로 띄운 뷰 창은 숨긴 채로 만들고(흰 깜빡임 방지)
+            // 페이지 로드가 끝나면 보여 준다.
+            if (label == "main" || label.starts_with(VIEW_WINDOW_PREFIX))
+                && matches!(payload.event(), PageLoadEvent::Finished)
+            {
+                log::info!("{label} webview finished loading");
                 let _ = webview.window().show();
                 return;
             }
@@ -555,6 +613,9 @@ pub fn run() {
             // 브라우저 탭: 메인 프레임 로드 시작/완료 시 최종 URL 을 주소창·탭 제목에 반영.
             // on_page_load 는 메인 프레임(WKNavigationDelegate)만 트리거되므로 iframe 노이즈가 없다.
             if label.starts_with(BROWSER_PREFIX) {
+                // 임베드 웹뷰가 실제로 어디로 갔는지 남긴다 — 로그인 리다이렉트처럼
+                // "왜 이 화면이 뜨지" 하는 상황을 로그만 보고 판별할 수 있게.
+                log::info!("{label} → {}", payload.url());
                 let _ = webview.app_handle().emit(
                     "browser:navigated",
                     NavigatedPayload {

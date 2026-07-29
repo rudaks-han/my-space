@@ -1,6 +1,7 @@
 import { useCallback } from "react"
 
 import { useLocalStorage } from "@/lib/use-local-storage"
+import { browserLabel } from "@/lib/window-role"
 
 export interface BrowserTab {
   id: string
@@ -13,9 +14,12 @@ export interface BrowserTab {
 /** 새 탭 기본 페이지 */
 export const HOME_URL = "https://www.google.com"
 
-/** 탭 id → Rust 쪽 웹뷰 라벨. lib.rs 의 BROWSER_PREFIX 와 일치해야 한다. */
+/**
+ * 탭 id → Rust 쪽 웹뷰 라벨. lib.rs 의 BROWSER_PREFIX 와 일치해야 하고,
+ * 창마다 달라야 한다(메인 창과 "새 창으로 열기" 창이 같은 웹뷰를 다투지 않도록).
+ */
 export function labelFor(id: string) {
-  return `browser-tab-${id}`
+  return browserLabel(id)
 }
 
 /**

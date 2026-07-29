@@ -2,19 +2,22 @@ import { LogOutIcon } from "lucide-react"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { cn } from "@/lib/utils"
 
 import { friendlyError } from "./gcal-error"
 import { useGcalConnection } from "./use-gcal"
+
+/** Slack 흰 패널 — 10px 라운드 + 아주 옅은 그림자. */
+const PANEL =
+  "flex flex-col overflow-hidden rounded-[10px] border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
+
+/** 패널 헤더 — 회색 배경 없이 굵은 15px 제목 + 아래 구분선만. */
+const PANEL_HEADER =
+  "flex shrink-0 items-center border-b border-border px-4 py-3 text-[15px] font-semibold"
+
+/** 필터·액션 버튼 = Slack 우측 상단의 테두리 알약. */
+const PILL = "h-7 rounded-full px-3 text-[13px] font-semibold"
 
 /** OAuth 클라이언트 정보 입력·연결 폼. */
 function SetupView({
@@ -41,15 +44,13 @@ function SetupView({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Google 캘린더 연결</CardTitle>
-        <CardDescription>
+    <div className={PANEL}>
+      <div className={PANEL_HEADER}>Google 캘린더 연결</div>
+      <div className="flex flex-col gap-3 p-4 text-[15px]">
+        <p className="text-[13px] text-muted-foreground">
           오늘 일정을 보려면 Google Cloud 데스크톱 앱 OAuth 클라이언트가
           필요합니다.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4 text-sm">
+        </p>
         <ol className="flex list-decimal flex-col gap-2 pl-5 text-muted-foreground">
           <li>
             <span className="text-foreground">console.cloud.google.com</span>{" "}
@@ -58,7 +59,8 @@ function SetupView({
           <li>
             <b className="text-foreground">APIs &amp; Services → 라이브러리</b>{" "}
             에서 <b className="text-foreground">Google Calendar API</b> 사용
-            설정
+            설정 (참석자를 아이디 대신 이름으로 보려면{" "}
+            <b className="text-foreground">People API</b> 도 함께)
           </li>
           <li>
             <b className="text-foreground">OAuth 동의 화면</b> 구성 →
@@ -104,19 +106,19 @@ function SetupView({
           {busy ? "브라우저에서 로그인하세요…" : "연결"}
         </Button>
         {busy && (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[13px] text-muted-foreground">
             브라우저가 열립니다. 구글 로그인·동의를 완료하면 자동으로
             연결됩니다.
           </p>
         )}
 
         {error && (
-          <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <p className="rounded-lg bg-ui-error/15 px-3 py-2 text-[15px] text-ui-error">
             {friendlyError(error)}
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
 
@@ -130,7 +132,9 @@ export function GcalConnectionPanel() {
 
   if (status === null) {
     return (
-      <div className="text-sm text-muted-foreground">연결 상태 확인 중…</div>
+      <div className="text-[15px] text-muted-foreground">
+        연결 상태 확인 중…
+      </div>
     )
   }
 
@@ -140,29 +144,37 @@ export function GcalConnectionPanel() {
 
   // 연결됨 — 상태 배지 + 연결 해제.
   return (
-    <div className="flex flex-col gap-3">
-      <div
-        className={cn(
-          "rounded-md border px-3 py-2.5",
-          "border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30"
-        )}
-      >
+    <div className="flex flex-col gap-2">
+      <div className="rounded-[10px] border border-ui-success/40 bg-ui-success/15 px-4 py-3 shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="size-2 shrink-0 rounded-full bg-emerald-500" />
-          <span className="text-sm font-medium">연결됨</span>
-          <span className="text-sm text-muted-foreground">
+          <span className="size-2 shrink-0 rounded-full bg-ui-success" />
+          <span className="text-[15px] font-bold">연결됨</span>
+          <span className="text-[13px] text-muted-foreground">
             {status.email ?? "Google 캘린더"}
           </span>
           <div className="ml-auto flex gap-2">
-            <Button variant="ghost" size="sm" onClick={() => void disconnect()}>
-              <LogOutIcon />
+            <Button
+              variant="ghost"
+              className={PILL}
+              onClick={() => void disconnect()}
+            >
+              <LogOutIcon className="size-3.5" />
               연결 해제
             </Button>
           </div>
         </div>
       </div>
+      {/* 참석자 이름은 도메인 주소록(People API) 이 있어야 다 채워진다 — 예전 연결엔 그 권한이 없다. */}
+      {!status.can_directory && (
+        <p className="rounded-lg bg-ui-warning/15 px-3 py-2 text-[13px]">
+          참석자가 아이디(<span className="font-semibold">hgdong</span>)로
+          보이면 권한이 부족한 것입니다. Google Cloud 에서 <b>People API</b> 를
+          사용 설정한 뒤 위 <b>연결 해제</b> → 다시 연결하면 이름(
+          <span className="font-semibold">홍길동</span>)으로 표시됩니다.
+        </p>
+      )}
       {error && (
-        <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p className="rounded-lg bg-ui-error/15 px-3 py-2 text-[15px] text-ui-error">
           {friendlyError(error)}
         </p>
       )}

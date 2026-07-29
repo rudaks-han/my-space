@@ -1,14 +1,15 @@
 import type { LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
-import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { useNavigate } from "@/lib/use-navigation"
 
 /**
  * 홈 화면 카드 공통 껍데기 — 제목·아이콘·건수 배지·"전체 보기" 링크를 통일한다.
- * 카드 내용(children)만 각 카드에서 그리면 되고, menuId 를 주면 해당 메뉴로 이동하는
- * 링크가 오른쪽 위에 붙는다.
+ * Slack 패널처럼 10px 라운드 + 부드러운 그림자로 띄우고, 헤더는 배경을 칠하지 않고
+ * 1px 밑줄로만 본문과 나눈다(제목은 15px semibold, 대문자 아님).
+ * 본문(children)만 각 카드에서 그린다. menuId 를 주면 해당 메뉴로 이동하는 링크가
+ * 오른쪽 위에 붙는다.
  */
 export function HomeCard({
   icon: Icon,
@@ -37,33 +38,29 @@ export function HomeCard({
 }) {
   const navigate = useNavigate()
   return (
-    <Card
-      size="sm"
+    <div
       className={cn(
-        "gap-0",
-        tone === "alert" && "ring-2 ring-amber-500/40",
+        "flex flex-col rounded-[10px] border border-border bg-card text-card-foreground shadow-[0_1px_3px_rgba(0,0,0,0.06)]",
+        // 확인이 필요한 카드는 경고색 테두리로만 구분한다.
+        tone === "alert" && "border-ui-warning",
         className
       )}
     >
-      <div className="flex items-center gap-2 border-b px-(--card-spacing) pb-3">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
         <Icon
           className={cn(
             "size-4 shrink-0",
-            tone === "alert"
-              ? "text-amber-600 dark:text-amber-400"
-              : "text-muted-foreground"
+            tone === "alert" ? "text-ui-warning" : "text-muted-foreground"
           )}
         />
-        <span className="truncate font-heading text-sm font-medium">
-          {title}
-        </span>
+        <span className="truncate text-[15px] font-semibold">{title}</span>
         {count != null && count > 0 && (
           <span
             className={cn(
-              "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums",
+              "flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-2 text-[11px] font-bold tabular-nums",
               tone === "alert"
-                ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                : "bg-muted text-muted-foreground"
+                ? "bg-ui-warning/20 text-ui-warning"
+                : "bg-ui-badge text-ui-badge-fg"
             )}
           >
             {count}
@@ -75,21 +72,27 @@ export function HomeCard({
               <button
                 type="button"
                 onClick={() => navigate(menuId)}
-                className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground"
+                className="cursor-pointer text-[13px] font-semibold text-ui-link hover:underline"
               >
                 {moreLabel} →
               </button>
             ))}
         </div>
       </div>
-      <div className="px-(--card-spacing) pt-3">{children}</div>
-    </Card>
+      {/*
+       * 본문 여백은 8px 만 준다 — 리스트 행이 자기 px-3 를 갖고 8px 라운드 알약으로
+       * hover 되므로, Slack 사이드바처럼 알약이 카드 안쪽 8px 지점부터 시작한다.
+       */}
+      <div className="p-2">{children}</div>
+    </div>
   )
 }
 
 /** 카드 안의 "없음" 상태 문구. */
 export function HomeEmpty({ children }: { children: ReactNode }) {
   return (
-    <p className="py-6 text-center text-sm text-muted-foreground">{children}</p>
+    <p className="py-8 text-center text-[15px] text-muted-foreground">
+      {children}
+    </p>
   )
 }

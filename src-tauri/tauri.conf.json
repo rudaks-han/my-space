@@ -24,11 +24,11 @@
         "hiddenTitle": true
       },
       {
-        "label": "widget",
-        "title": "My Space",
+        "label": "pet",
+        "title": "My Space Pet",
         "url": "index.html",
-        "width": 100,
-        "height": 224,
+        "width": 140,
+        "height": 140,
         "resizable": false,
         "decorations": false,
         "transparent": true,
@@ -37,6 +37,7 @@
         "skipTaskbar": true,
         "shadow": false,
         "acceptFirstMouse": true,
+        "focus": false,
         "visible": false
       }
     ],

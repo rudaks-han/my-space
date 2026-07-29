@@ -3,16 +3,20 @@ import { ArrowLeftIcon, RotateCwIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
+import { useTabActive } from "@/lib/use-tab-active"
 import { useWebviewBounds } from "@/lib/use-webview-bounds"
+import { browserLabel } from "@/lib/window-role"
 
 /** 표시할 대시보드 주소. */
-export const COWORK_AI_URL = "https://cowork-ai-dashboard.spectra.co.kr/"
+export const COWORK_AI_URL =
+  "https://cowork-ai-dashboard.spectra.co.kr/?tab=live"
 
 /**
  * 네이티브 웹뷰 라벨. lib.rs 의 BROWSER_PREFIX(`browser-tab-`) 로 시작해야
  * 페이지 내부 링크 이동이 외부 브라우저로 가로채이지 않고 앱 안에서 열린다.
+ * 창마다 다른 라벨을 써야 한다 — 메인 창과 "새 창으로 열기" 창이 같은 웹뷰를 다투지 않도록.
  */
-const LABEL = "browser-tab-cowork-ai-dashboard"
+const LABEL = browserLabel("cowork-ai-dashboard")
 
 const inTauri = isTauri()
 
@@ -22,20 +26,30 @@ const inTauri = isTauri()
  * X-Frame-Options 제약 없음) 표시 영역 좌표를 재서 Rust 에 넘긴다.
  */
 export function CoworkAiView() {
+  // 이 뷰가 보이는 탭인지(숨은 동안 네이티브 웹뷰도 같이 숨겨야 한다).
+  const tabActive = useTabActive()
   const contentRef = useRef<HTMLDivElement>(null)
   const rect = useWebviewBounds(contentRef)
 
   // 영역이 확정되면 웹뷰를 만들고(이후에는 재배치만) 리사이즈·사이드바 토글에 따라 위치를 맞춘다.
+  // 탭이 다시 보이게 될 때도 이 effect 가 돌아 화면 밖에서 제자리로 돌아온다.
   useEffect(() => {
-    if (!inTauri || !rect) return
+    if (!inTauri || !rect || !tabActive) return
     void trackedInvoke("browser_open", {
       label: LABEL,
       url: COWORK_AI_URL,
       ...rect,
     })
-  }, [rect])
+  }, [rect, tabActive])
 
-  // 다른 메뉴로 전환하면 화면 밖으로 숨긴다(웹뷰는 살려 두어 로그인·스크롤 상태 유지).
+  // 다른 탭으로 전환하면(뷰는 마운트된 채로 남는다) 화면 밖으로 숨긴다. 네이티브 웹뷰는
+  // 창 위에 겹쳐 그려져 CSS 로 감춰지지 않으므로, 숨기지 않으면 다른 화면을 덮는다.
+  useEffect(() => {
+    if (!inTauri || tabActive) return
+    void trackedInvoke("browser_hide", { label: LABEL })
+  }, [tabActive])
+
+  // 탭을 닫으면(언마운트) 숨긴다(웹뷰는 살려 두어 로그인·스크롤 상태 유지).
   useEffect(() => {
     if (!inTauri) return
     return () => {
@@ -48,8 +62,9 @@ export function CoworkAiView() {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-lg border bg-card">
-      <div className="flex items-center gap-1 border-b px-2 py-1.5">
+    <div className="flex h-full flex-col overflow-hidden rounded-[10px] border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
+      {/* 툴바 — Slack 패널 머리말 톤(배경 칠하지 않고 아래 테두리로만 구분) */}
+      <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border px-3">
         <Button
           type="button"
           size="icon-sm"
@@ -68,15 +83,16 @@ export function CoworkAiView() {
         >
           <RotateCwIcon />
         </Button>
-        <span className="truncate px-1 text-xs text-muted-foreground">
-          {COWORK_AI_URL}
+        {/* 주소는 Slack 의 테두리 알약 칩으로 보여 준다 */}
+        <span className="ml-1 flex h-7 min-w-0 items-center rounded-full border border-border px-3 text-[13px] text-muted-foreground">
+          <span className="truncate">{COWORK_AI_URL}</span>
         </span>
       </div>
 
       {/* 웹뷰가 그려질 영역 — 네이티브 웹뷰가 이 위에 겹쳐서 렌더된다 */}
-      <div ref={contentRef} className="relative flex-1 bg-muted/20">
+      <div ref={contentRef} className="relative flex-1 bg-background">
         {!inTauri && (
-          <div className="absolute inset-0 grid place-items-center p-6 text-center text-sm text-muted-foreground">
+          <div className="absolute inset-0 grid place-items-center p-8 text-center text-[15px] text-muted-foreground">
             이 화면은 Tauri 앱(bun run tauri dev)에서만 표시됩니다.
           </div>
         )}

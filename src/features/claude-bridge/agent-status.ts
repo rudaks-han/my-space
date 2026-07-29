@@ -16,7 +16,10 @@ export interface StatusInfo {
   text: string
   /** 카드 왼쪽 스트라이프 border 색. */
   border: string
-  /** 상태 칩 배경·글자색. */
+  /**
+   * 상태 칩 클래스. Slack 의 알약 칩 그대로 — rounded-full · 11px bold · 15% 틴트 배경.
+   * 호출부는 배치 클래스(inline-flex/gap 등)만 덧붙이면 된다.
+   */
   chip: string
   /** 진행 중일 때 깜빡임. */
   pulse: boolean
@@ -28,36 +31,36 @@ export function statusInfo(status: string): StatusInfo {
     case "working":
       return {
         text: "진행 중",
-        border: "border-l-green-500",
-        chip: "bg-green-500/15 text-green-600 dark:text-green-400",
+        border: "border-l-ui-success",
+        chip: "rounded-full bg-ui-success/15 px-2 text-[11px] font-bold text-ui-success",
         pulse: true,
       }
     case "blocked":
       return {
         text: "입력 대기",
-        border: "border-l-amber-500",
-        chip: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+        border: "border-l-ui-warning",
+        chip: "rounded-full bg-ui-warning/15 px-2 text-[11px] font-bold text-ui-warning",
         pulse: false,
       }
     case "done":
       return {
         text: "완료",
-        border: "border-l-blue-500",
-        chip: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+        border: "border-l-ui-info",
+        chip: "rounded-full bg-ui-info/15 px-2 text-[11px] font-bold text-ui-info",
         pulse: false,
       }
     case "idle":
       return {
         text: "대기",
         border: "border-l-muted-foreground/40",
-        chip: "bg-muted text-muted-foreground",
+        chip: "rounded-full bg-muted px-2 text-[11px] font-bold text-muted-foreground",
         pulse: false,
       }
     default:
       return {
         text: status,
         border: "border-l-muted-foreground/30",
-        chip: "bg-muted text-muted-foreground",
+        chip: "rounded-full bg-muted px-2 text-[11px] font-bold text-muted-foreground",
         pulse: false,
       }
   }

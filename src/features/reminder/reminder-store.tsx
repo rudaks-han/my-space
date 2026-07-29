@@ -3,10 +3,12 @@ import { listen } from "@tauri-apps/api/event"
 
 import { useLocalStorage } from "@/lib/use-local-storage"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
+import { isMainWindow } from "@/lib/window-role"
 import {
   ReminderContext,
   type NewReminderInput,
   type Reminder,
+  type ReminderPatch,
 } from "./use-reminders"
 
 /** 알림 저장 키. */
@@ -26,6 +28,12 @@ function dateKey(d: Date) {
   return `${y}-${m}-${day}`
 }
 
+/** 토요일(6)·일요일(0)인지. */
+function isWeekend(d: Date) {
+  const day = d.getDay()
+  return day === 0 || day === 6
+}
+
 /** "HH:MM" → 오늘 그 시각의 Date. */
 function todayAt(time: string, now: Date) {
   const [h, m] = time.split(":").map((n) => parseInt(n, 10))
@@ -37,7 +45,7 @@ function todayAt(time: string, now: Date) {
 /** 팝오버에 표시할 부제 문구(예정 시각). */
 function reminderBody(r: Reminder): string {
   return r.repeat === "daily"
-    ? `매일 ${r.time}`
+    ? `매일 ${r.time}${r.excludeWeekends ? " (평일만)" : ""}`
     : new Date(r.at).toLocaleString("ko-KR", {
         month: "long",
         day: "numeric",
@@ -74,6 +82,7 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
       const base = {
         id: newId(),
         title,
+        excludeWeekends: false,
         enabled: true,
         firedAt: null as number | null,
         lastFired: null as string | null,
@@ -90,6 +99,7 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
           repeat: "daily",
           at: 0,
           time,
+          excludeWeekends: input.excludeWeekends ?? false,
           lastFired: passedToday ? dateKey(now) : null,
         }
       } else {
@@ -98,6 +108,53 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
       }
 
       setReminders((prev) => [reminder, ...prev])
+    },
+    [setReminders]
+  )
+
+  /**
+   * 등록된 알림의 이름·시간·주말 제외를 고친다. 시간이 바뀌면 "이미 발생함" 표시를
+   * 새 시각 기준으로 다시 계산해 재무장하고(과거 시각이면 곧 울린다), 이번 세션의
+   * 발생 가드·스누즈 예약도 지워 편집 결과가 바로 반영되게 한다.
+   */
+  const update = useCallback(
+    (id: string, patch: ReminderPatch) => {
+      const now = new Date()
+      setReminders((prev) =>
+        prev.map((r) => {
+          if (r.id !== id) return r
+          const next = { ...r }
+
+          if (patch.title !== undefined) {
+            const t = patch.title.trim()
+            if (t) next.title = t
+          }
+
+          if (r.repeat === "daily") {
+            if (patch.excludeWeekends !== undefined) {
+              next.excludeWeekends = patch.excludeWeekends
+            }
+            if (patch.time) {
+              next.time = patch.time
+              // 새 시각이 오늘 아직 안 지났으면 오늘 다시 울릴 수 있게 발생 표시를 지운다.
+              next.lastFired =
+                now >= todayAt(next.time, now) ? dateKey(now) : null
+            }
+          } else if (patch.at) {
+            next.at = new Date(patch.at).getTime()
+            next.firedAt = null // 재무장 — 새 시각에 다시 울린다.
+          }
+
+          return next
+        })
+      )
+
+      // 세션 가드/스누즈 정리(once=id, daily=id:날짜).
+      for (const key of [...firedGuard.current]) {
+        if (key === id || key.startsWith(`${id}:`))
+          firedGuard.current.delete(key)
+      }
+      snoozed.current.delete(id)
     },
     [setReminders]
   )
@@ -120,8 +177,10 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
   )
 
   // 스케줄러: 예정 시각 도달 시 팝오버 발생.
+  // 메인 창에서만 돈다 — "새 창으로 열기"로 알림 화면을 띄우면 창마다 스케줄러가 돌아
+  // 같은 알림이 두 번 발생한다(상태는 localStorage 로 창끼리 공유된다).
   useEffect(() => {
-    if (!isTauri()) return
+    if (!isTauri() || !isMainWindow) return
 
     const check = () => {
       const now = new Date()
@@ -136,6 +195,7 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
             due.push({ reminder: r, occurrence: r.id })
           }
         } else {
+          if (r.excludeWeekends && isWeekend(now)) continue
           const target = todayAt(r.time, now)
           if (r.lastFired !== todayKey && now >= target) {
             due.push({ reminder: r, occurrence: `${r.id}:${todayKey}` })
@@ -197,9 +257,9 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer)
   }, [setReminders])
 
-  // 팝오버 창의 "다시 알림"에서 온 스누즈 예약을 받는다.
+  // 팝오버 창의 "다시 알림"에서 온 스누즈 예약을 받는다(스케줄러와 같은 창에서만).
   useEffect(() => {
-    if (!isTauri()) return
+    if (!isTauri() || !isMainWindow) return
     const unlisten = listen<{ id: string; minutes: number }>(
       "reminder:snooze",
       (e) => {
@@ -213,7 +273,9 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <ReminderContext.Provider value={{ reminders, add, toggle, remove }}>
+    <ReminderContext.Provider
+      value={{ reminders, add, update, toggle, remove }}
+    >
       {children}
     </ReminderContext.Provider>
   )

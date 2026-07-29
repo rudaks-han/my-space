@@ -180,6 +180,10 @@ pub struct UnreadMessage {
     ts: String,
     /// 스레드 답글이면 부모 메시지 ts. 최상위(채널) 메시지면 None.
     thread_ts: Option<String>,
+    /// 스레드 답글일 때 부모(스레드 루트) 작성자. 화면에서 댓글 구조로 묶어 보여주기 위한 맥락.
+    parent_user: Option<String>,
+    /// 스레드 답글일 때 부모(스레드 루트) 본문(포맷된 텍스트).
+    parent_text: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -205,50 +209,6 @@ async fn api_get(token: &str, method: &str, params: &[(&str, String)]) -> Result
             .get(&url)
             .bearer_auth(token)
             .query(params)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        if resp.status().as_u16() == 429 {
-            attempts += 1;
-            if attempts > 5 {
-                return Err("rate_limited".into());
-            }
-            let wait = resp
-                .headers()
-                .get("retry-after")
-                .and_then(|h| h.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(5)
-                .min(60);
-            tokio::time::sleep(Duration::from_secs(wait)).await;
-            continue;
-        }
-
-        let v: Value = resp.json().await.map_err(|e| e.to_string())?;
-        if v.get("ok").and_then(|b| b.as_bool()) != Some(true) {
-            let err = v
-                .get("error")
-                .and_then(|e| e.as_str())
-                .unwrap_or("unknown_error");
-            return Err(err.to_string());
-        }
-        return Ok(v);
-    }
-}
-
-/// Slack Web API POST 호출(쓰기 메서드용). 토큰은 Bearer, 파라미터는 form 바디로 보낸다.
-/// `ok:false` 는 error 문자열로, 429 는 Retry-After 만큼 대기 후 재시도.
-async fn api_post(token: &str, method: &str, params: &[(&str, String)]) -> Result<Value, String> {
-    let client = http();
-    let url = format!("https://slack.com/api/{method}");
-    let mut attempts = 0u8;
-
-    loop {
-        let resp = client
-            .post(&url)
-            .bearer_auth(token)
-            .form(params)
             .send()
             .await
             .map_err(|e| e.to_string())?;
@@ -434,11 +394,43 @@ fn kind_of(c: &Value) -> &'static str {
     }
 }
 
-/// "mpdm-a--b--c-1" → "a, b, c"
+/// "mpdm-a--b--c-1" → "a, b, c" (아이디 파싱 폴백).
 fn pretty_mpim(name: &str) -> String {
     let n = name.strip_prefix("mpdm-").unwrap_or(name);
     let n = n.strip_suffix("-1").unwrap_or(n);
     n.split("--").collect::<Vec<_>>().join(", ")
+}
+
+/// 그룹 DM(mpim)의 멤버 id 를 표시 이름으로 바꿔 "가, 나, 다" 로 만든다.
+/// 채널 이름은 사용자 핸들(아이디)만 담고 있어, 멤버를 실제 이름으로 보여주려면
+/// conversations.members 로 멤버 uid 를 얻어 resolve_user 로 표시 이름을 붙인다.
+/// 실패하면 None 을 돌려 채널 이름 파싱 폴백을 쓴다.
+async fn mpim_member_names(
+    token: &str,
+    channel: &str,
+    cache: &mut HashMap<String, String>,
+) -> Option<String> {
+    if channel.is_empty() {
+        return None;
+    }
+    let v = api_get(
+        token,
+        "conversations.members",
+        &[("channel", channel.to_string())],
+    )
+    .await
+    .ok()?;
+    let members = v.get("members").and_then(|x| x.as_array())?;
+    let mut names = Vec::new();
+    for m in members {
+        if let Some(uid) = m.as_str() {
+            names.push(resolve_user(token, uid, cache).await);
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+    Some(names.join(", "))
 }
 
 /// 대화 객체(users.conversations / conversations.info 의 channel)에서 표시 이름을 만든다.
@@ -448,6 +440,10 @@ async fn convo_name(token: &str, c: &Value, cache: &mut HashMap<String, String>)
         return resolve_user(token, uid, cache).await;
     }
     if c.get("is_mpim").and_then(|x| x.as_bool()).unwrap_or(false) {
+        let id = c.get("id").and_then(|x| x.as_str()).unwrap_or("");
+        if let Some(names) = mpim_member_names(token, id, cache).await {
+            return names;
+        }
         if let Some(n) = c.get("name").and_then(|x| x.as_str()) {
             return pretty_mpim(n);
         }
@@ -637,6 +633,10 @@ pub async fn slack_unreads(app: tauri::AppHandle) -> Result<Vec<ChannelUnread>, 
 
         // (ts, uid, username 폴백, 원문, thread_ts) 를 소유값으로 모은다.
         let mut pending: Vec<(String, String, Option<String>, String, Option<String>)> = Vec::new();
+        // 스레드 부모(루트) 원문: parent_ts → (uid, username 폴백, 원문). 화면에서 답글을 부모 아래로
+        // 묶어 보여주기 위한 맥락이다. 부모는 안 읽음이 아닐 수 있으므로 pending 에는 넣지 않는다.
+        let mut thread_parents_raw: HashMap<String, (String, Option<String>, String)> =
+            HashMap::new();
         let extract = |m: &Value, thread_ts: Option<String>| {
             (
                 m.get("ts").and_then(|x| x.as_str()).unwrap_or("").to_string(),
@@ -712,10 +712,31 @@ pub async fn slack_unreads(app: tauri::AppHandle) -> Result<Vec<ChannelUnread>, 
                 .get("messages")
                 .and_then(|x| x.as_array())
                 .unwrap_or(&rempty);
+            // conversations.replies 는 부모(스레드 루트)를 항상 첫 요소로 포함하며, 인증 사용자의
+            // 스레드 읽음 위치(last_read)를 담아 준다. conversations.history 의 부모에는 이 값이
+            // 없어 채널 last_read 로 잘못 폴백됐고(→ 스레드를 읽어도 안 읽음이 안 사라짐), 여기서
+            // replies 부모의 last_read 를 권위값으로 다시 잡는다(없으면 기존 thread_read 로 폴백).
+            let parent_msg = rmsgs
+                .iter()
+                .find(|r| r.get("ts").and_then(|x| x.as_str()) == Some(parent_ts.as_str()));
+            let thread_read_acc = parent_msg
+                .and_then(|p| p.get("last_read").and_then(|x| x.as_str()))
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(thread_read);
+            // 부모(스레드 루트) 원문을 맥락용으로 보관(안 읽음 여부와 무관).
+            if let Some(p) = parent_msg {
+                thread_parents_raw.entry(parent_ts.clone()).or_insert_with(|| {
+                    (
+                        p.get("user").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        p.get("username").and_then(|x| x.as_str()).map(String::from),
+                        message_text(p),
+                    )
+                });
+            }
             for r in rmsgs.iter() {
                 let rts = r.get("ts").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                // 부모 자신 제외 + 이 스레드 기준 안 읽음(ts > thread_read) + 이미 수집된 건 제외.
-                if rts.is_empty() || rts == parent_ts || ts_f(r) <= thread_read {
+                // 부모 자신 제외 + 이 스레드 기준 안 읽음(ts > thread_read_acc) + 이미 수집된 건 제외.
+                if rts.is_empty() || rts == parent_ts || ts_f(r) <= thread_read_acc {
                     continue;
                 }
                 // 시스템/멤버십 이벤트·내 답글 제외(is_unread 는 채널 기준이라 여기선 직접 검사).
@@ -751,6 +772,8 @@ pub async fn slack_unreads(app: tauri::AppHandle) -> Result<Vec<ChannelUnread>, 
             pending.drain(0..(pending.len() - PREVIEW_LIMIT));
         }
 
+        // 스레드 부모 표시값(작성자·본문) 캐시: parent_ts → (user, text). 한 번만 해석한다.
+        let mut parent_display: HashMap<String, (String, String)> = HashMap::new();
         let mut messages: Vec<UnreadMessage> = Vec::new();
         for (ts, uid, uname, text_raw, thread_ts) in &pending {
             let text = format_message(&token, text_raw, &mut cache, &mut gcache).await;
@@ -759,11 +782,35 @@ pub async fn slack_unreads(app: tauri::AppHandle) -> Result<Vec<ChannelUnread>, 
             } else {
                 resolve_user(&token, uid, &mut cache).await
             };
+
+            // 스레드 답글이면 부모(루트) 작성자·본문을 함께 실어 화면에서 댓글 구조로 묶는다.
+            let (parent_user, parent_text) = if let Some(pts) = thread_ts {
+                if !parent_display.contains_key(pts) {
+                    if let Some((puid, puname, praw)) = thread_parents_raw.get(pts).cloned() {
+                        let pt = format_message(&token, &praw, &mut cache, &mut gcache).await;
+                        let pu = if puid.is_empty() {
+                            puname.unwrap_or_else(|| "봇".to_string())
+                        } else {
+                            resolve_user(&token, &puid, &mut cache).await
+                        };
+                        parent_display.insert(pts.clone(), (pu, pt));
+                    }
+                }
+                match parent_display.get(pts) {
+                    Some((pu, pt)) => (Some(pu.clone()), Some(pt.clone())),
+                    None => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+
             messages.push(UnreadMessage {
                 user,
                 text,
                 ts: ts.clone(),
                 thread_ts: thread_ts.clone(),
+                parent_user,
+                parent_text,
             });
         }
 
@@ -783,31 +830,6 @@ pub async fn slack_unreads(app: tauri::AppHandle) -> Result<Vec<ChannelUnread>, 
         return Err("missing_scope".into());
     }
     Ok(result)
-}
-
-/// 채널을 `ts` 시점까지 읽음 처리한다(conversations.mark).
-/// `ts` 는 보통 그 채널에서 가장 최신인 안 읽은 메시지의 ts 로, 이 값까지 last_read 가 이동해
-/// 최상위(채널) 미읽음이 사라진다.
-///
-/// ⚠️ 스레드(댓글) 읽음 상태는 채널 last_read 와 별개라서 conversations.mark 로는 해제되지 않는다.
-///    공개 API 에 스레드 읽음 처리 메서드가 없으므로, 스레드 답글은 Slack 앱에서 여는 방식으로 처리한다.
-#[tauri::command]
-pub async fn slack_mark_read(
-    app: tauri::AppHandle,
-    channel: String,
-    ts: String,
-) -> Result<(), String> {
-    let token = read_token(&app).ok_or("no_token")?;
-    if channel.is_empty() || ts.is_empty() {
-        return Err("empty_args".into());
-    }
-    api_post(
-        &token,
-        "conversations.mark",
-        &[("channel", channel), ("ts", ts)],
-    )
-    .await?;
-    Ok(())
 }
 
 /// Slack 데스크톱 앱을 해당 채널(가능하면 특정 메시지)로 연다.

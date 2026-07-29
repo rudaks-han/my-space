@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "macOS Apple Silicon"
+            platform: "macos-latest"
+            args: "--target aarch64-apple-darwin"
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Build and publish
+        id: tauri
+        uses: tauri-apps/tauri-action@action-v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 자동 업데이트 아티팩트(.app.tar.gz + .sig, latest.json)에 서명하기 위한 키.
+          # GitHub 저장소 Settings → Secrets and variables → Actions 에 등록해야 한다.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: v__VERSION__
+          releaseBody: See the assets to download this version.
+          releaseDraft: true
+          prerelease: false
+          generateReleaseNotes: true
+          retryAttempts: 2
+          args: ${{ matrix.args }}
+          assetNamePattern: "[name]-[version]-[platform]-[arch][ext]"
+          # 업데이터가 읽는 latest.json 을 생성·업로드한다(자동 업데이트 필수).
+          includeUpdaterJson: true
+
+      - name: Release summary
+        if: steps.tauri.outputs.releaseHtmlUrl != ''
+        run: |
+          {
+            echo "## Tauri Release"
+            echo ""
+            echo "- Platform: \`${{ matrix.name }}\`"
+            echo "- Version: \`${{ steps.tauri.outputs.appVersion }}\`"
+            echo "- Release: ${{ steps.tauri.outputs.releaseHtmlUrl }}"
+            echo "- Artifacts: \`${{ steps.tauri.outputs.artifactPaths }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

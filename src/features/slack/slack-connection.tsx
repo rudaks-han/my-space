@@ -2,22 +2,25 @@ import { CheckIcon, CopyIcon, LogOutIcon } from "lucide-react"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { cn } from "@/lib/utils"
 
 import { friendlyError } from "./slack-errors"
 import { useSlack } from "./use-slack"
 
 const SCOPES =
   "channels:read,groups:read,im:read,mpim:read,channels:history,groups:history,im:history,mpim:history,users:read,usergroups:read"
+
+/** Slack 흰 패널 — 10px 라운드 + 아주 옅은 그림자. */
+const PANEL =
+  "flex flex-col overflow-hidden rounded-[10px] border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
+
+/** 패널 헤더 — 회색 배경 없이 굵은 15px 제목 + 아래 구분선만. */
+const PANEL_HEADER =
+  "flex shrink-0 items-center border-b border-border px-4 py-3 text-[15px] font-semibold"
+
+/** 필터·액션 버튼 = Slack 우측 상단의 테두리 알약. */
+const PILL = "h-7 rounded-full px-3 text-[13px] font-semibold"
 
 /** 토큰 입력·연결 폼(최초 연결 / 권한 갱신 재연결 공용). */
 function SetupView({
@@ -53,18 +56,16 @@ function SetupView({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          {onBack ? "Slack 권한 갱신 / 재연결" : "Slack 연결"}
-        </CardTitle>
-        <CardDescription>
+    <div className={PANEL}>
+      <div className={PANEL_HEADER}>
+        {onBack ? "Slack 권한 갱신 / 재연결" : "Slack 연결"}
+      </div>
+      <div className="flex flex-col gap-3 p-4 text-[15px]">
+        <p className="text-[13px] text-muted-foreground">
           {onBack
             ? "그룹 멘션 이름(@제품개발본부 등)을 표시하려면 아래 스코프(특히 usergroups:read)를 추가해 Reinstall 후 새 토큰으로 다시 연결하세요."
             : "안 읽은 메시지를 보려면 Slack 사용자 토큰(xoxp-)이 필요합니다."}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4 text-sm">
+        </p>
         <ol className="flex list-decimal flex-col gap-2 pl-5 text-muted-foreground">
           <li>
             <span className="text-foreground">api.slack.com/apps</span> →{" "}
@@ -76,17 +77,17 @@ function SetupView({
             <b className="text-foreground">User Token Scopes</b> 에 아래 스코프
             모두 추가:
             <div className="mt-2 flex items-start gap-2">
-              <code className="flex-1 rounded-md bg-muted px-2 py-1.5 text-xs break-all">
+              <code className="flex-1 rounded-lg border border-border bg-muted px-2 py-1.5 font-mono text-[13px] break-all">
                 {SCOPES.replaceAll(",", ", ")}
               </code>
               <Button
                 variant="outline"
-                size="icon"
+                size="icon-sm"
                 onClick={copyScopes}
                 aria-label="스코프 복사"
               >
                 {copied ? (
-                  <CheckIcon className="text-green-600" />
+                  <CheckIcon className="text-ui-success" />
                 ) : (
                   <CopyIcon />
                 )}
@@ -130,12 +131,12 @@ function SetupView({
         </div>
 
         {error && (
-          <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <p className="rounded-lg bg-ui-error/15 px-3 py-2 text-[15px] text-ui-error">
             {friendlyError(error)}
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
 
@@ -150,7 +151,9 @@ export function SlackConnectionPanel() {
 
   if (status === null) {
     return (
-      <div className="text-sm text-muted-foreground">연결 상태 확인 중…</div>
+      <div className="text-[15px] text-muted-foreground">
+        연결 상태 확인 중…
+      </div>
     )
   }
 
@@ -170,38 +173,37 @@ export function SlackConnectionPanel() {
 
   // 연결됨 — 상태 배지 + 재연결/연결 해제.
   return (
-    <div className="flex flex-col gap-3">
-      <div
-        className={cn(
-          "rounded-md border px-3 py-2.5",
-          "border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30"
-        )}
-      >
+    <div className="flex flex-col gap-2">
+      <div className="rounded-[10px] border border-ui-success/40 bg-ui-success/15 px-4 py-3 shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="size-2 shrink-0 rounded-full bg-emerald-500" />
-          <span className="text-sm font-medium">연결됨</span>
-          <span className="text-sm text-muted-foreground">
+          <span className="size-2 shrink-0 rounded-full bg-ui-success" />
+          <span className="text-[15px] font-bold">연결됨</span>
+          <span className="text-[13px] text-muted-foreground">
             {status.team ?? "Slack"}
             {status.user ? ` · ${status.user}` : ""}
           </span>
           <div className="ml-auto flex gap-2">
             <Button
               variant="outline"
-              size="sm"
+              className={PILL}
               onClick={() => setReconnect(true)}
               title="권한(스코프)을 추가하거나 새 토큰으로 다시 연결"
             >
               재연결
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => void disconnect()}>
-              <LogOutIcon />
+            <Button
+              variant="ghost"
+              className={PILL}
+              onClick={() => void disconnect()}
+            >
+              <LogOutIcon className="size-3.5" />
               연결 해제
             </Button>
           </div>
         </div>
       </div>
       {error && (
-        <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p className="rounded-lg bg-ui-error/15 px-3 py-2 text-[15px] text-ui-error">
           {friendlyError(error)}
         </p>
       )}

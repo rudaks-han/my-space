@@ -53,37 +53,45 @@ export function ReminderCard({
       {rows.length === 0 && fired.length === 0 ? (
         <HomeEmpty>예정된 알림이 없습니다.</HomeEmpty>
       ) : (
-        <ul className="flex flex-col gap-1">
+        <ul className="flex flex-col gap-0.5">
           {fired.map((r) => (
             <li
               key={`fired-${r.id}`}
-              className="flex items-center gap-2 rounded-lg bg-rose-500/5 px-2 py-1.5"
+              className="flex min-h-9 items-center gap-3 rounded-lg bg-ui-error/15 px-3 py-1.5"
             >
-              <span className="w-16 shrink-0 text-xs font-medium text-rose-600 tabular-nums dark:text-rose-400">
+              <span className="w-24 shrink-0 text-[13px] font-semibold text-ui-error tabular-nums">
                 {fmtClock(r.firedAt!)}
               </span>
-              <span className="min-w-0 flex-1 truncate text-sm">{r.title}</span>
-              <span className="shrink-0 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+              <span className="min-w-0 flex-1 truncate text-[15px] font-bold">
+                {r.title}
+              </span>
+              <span className="flex h-5 shrink-0 items-center rounded-full bg-ui-error/15 px-2 text-[11px] font-bold text-ui-error">
                 울림
               </span>
             </li>
           ))}
           {rows.map(({ r, at }) => (
-            <li key={r.id} className="flex items-center gap-2 px-2 py-1.5">
+            <li
+              key={r.id}
+              className="flex min-h-9 items-center gap-3 rounded-lg px-3 py-1.5 transition-colors hover:bg-ui-list-hover"
+            >
               <span
                 className={cn(
-                  "w-16 shrink-0 text-xs font-medium tabular-nums",
+                  "w-24 shrink-0 text-[13px] tabular-nums",
+                  // 한 시간 안에 울릴 알림은 Slack 그린으로 굵게 당겨 놓는다.
                   at - now < 60 * 60_000
-                    ? "text-primary"
+                    ? "font-bold text-primary"
                     : "text-muted-foreground"
                 )}
               >
                 {whenText(at, now)}
               </span>
-              <span className="min-w-0 flex-1 truncate text-sm">{r.title}</span>
+              <span className="min-w-0 flex-1 truncate text-[15px]">
+                {r.title}
+              </span>
               {r.repeat === "daily" && (
                 <span className="shrink-0" title="매일 반복">
-                  <RepeatIcon className="size-3 text-muted-foreground" />
+                  <RepeatIcon className="size-4 text-muted-foreground" />
                 </span>
               )}
             </li>
@@ -91,7 +99,7 @@ export function ReminderCard({
         </ul>
       )}
       {upcoming.length > rows.length && (
-        <p className="mt-2 text-center text-xs text-muted-foreground">
+        <p className="mt-1.5 text-center text-[13px] text-muted-foreground">
           외 {upcoming.length - rows.length}건
         </p>
       )}

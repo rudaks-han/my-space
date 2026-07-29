@@ -12,6 +12,10 @@ export interface UnreadMessage {
   ts: string
   /** 스레드 답글이면 부모 메시지 ts. 최상위 메시지면 null. */
   thread_ts: string | null
+  /** 스레드 답글일 때 부모(스레드 루트) 작성자. 댓글 구조로 묶어 보여주기 위한 맥락. */
+  parent_user?: string | null
+  /** 스레드 답글일 때 부모(스레드 루트) 본문. */
+  parent_text?: string | null
 }
 
 export type ChannelKind = "channel" | "private" | "mpim" | "im"
@@ -48,10 +52,6 @@ export interface SlackContextValue {
   refresh: () => Promise<void>
   loadChannels: () => Promise<void>
   saveSelected: (ids: string[]) => Promise<void>
-  /** 채널을 ts 시점까지 읽음 처리한다(conversations.mark). 최상위 미읽음만 사라진다(스레드 제외). */
-  markRead: (channel: string, ts: string) => Promise<void>
-  /** 현재 보이는 모든 채널을 각자의 최신 ts 까지 읽음 처리한다. */
-  markAllRead: () => Promise<void>
   /** 안 읽은 메시지를 클릭하면 Slack 앱을 해당 채널·메시지(스레드면 스레드)로 연다. */
   openMessage: (
     channel: string,

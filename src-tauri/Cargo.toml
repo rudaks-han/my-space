@@ -30,6 +30,8 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 # 작업 상태 변화(입력 대기·작업 완료) 시 macOS 시스템 알림을 띄우는 데 사용.
 tauri-plugin-notification = "2"
+# 네이티브 파일 열기/저장 다이얼로그(프론트 @tauri-apps/plugin-dialog).
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Slack/Google API 호출용 HTTP 클라이언트. macOS 는 native-tls(Secure Transport)를 써서 OpenSSL 불필요.
@@ -40,16 +42,26 @@ tokio = { version = "1", features = ["time", "sync"] }
 chrono = "0.4"
 # OAuth 인증 URL 파라미터 인코딩/디코딩.
 urlencoding = "2"
+# Gmail 메시지 본문(payload.body.data)은 base64url 로 인코딩돼 있어 디코딩에 사용.
+base64 = "0.22"
 # IntelliJ 실행 설정(.idea/runConfigurations/*.xml) 파싱용 경량 read-only XML 파서.
 roxmltree = "0.20"
 
-# ── GitHub 자동 로그인: 로컬 Chrome 의 github.com 쿠키를 읽어 복호화해 임베드 웹뷰에 주입 ──
+# ── Kafka 뷰어 ──
+# Kafka 는 HTTP 가 아니라 TCP 바이너리 프로토콜이라 웹뷰에서 직접 붙을 수 없다.
+# librdkafka(C) 바인딩을 번들 소스에서 빌드한다 — 첫 컴파일만 수 분, 이후 증분.
+# 사내 브로커가 PLAINTEXT 라 ssl/gssapi 는 끄고(OpenSSL 의존 회피),
+# 프로듀서가 압축해 넣은 메시지를 읽으려면 코덱이 필요해 gzip(libz)/zstd 만 켠다
+# (snappy·lz4 는 librdkafka 에 기본 내장).
+rdkafka = { version = "0.37", default-features = false, features = ["libz", "zstd"] }
+
+# ── Flex 로그인: 자격증명 로컬 암호화 + Chrome 의 flex.team 쿠키 재사용(chrome_cookies.rs) ──
 # Chrome 쿠키 SQLite DB 읽기(시스템 SQLite 의존 없이 번들 컴파일).
 rusqlite = { version = "0.31", features = ["bundled"] }
-# 쿠키 값 복호화: AES-128-CBC (Chrome "v10" 형식).
+# 저장 값 암·복호화 + Chrome 쿠키 복호화: AES-128-CBC.
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc", "block-padding"] }
-# Keychain 비밀번호 → AES 키 유도: PBKDF2-HMAC-SHA1, salt="saltysalt", 1003회.
+# 비밀값 → AES 키/IV 유도: PBKDF2-HMAC-SHA1.
 pbkdf2 = "0.12"
 sha1 = "0.10"
 
@@ -59,3 +71,7 @@ sha1 = "0.10"
 objc = "0.2"
 # IntelliJ 서비스 종료 시 프로세스 그룹 전체에 시그널(kill(-pgid))을 보내는 데 사용.
 libc = "0.2"
+
+# Flex 로그인 통합 테스트(#[ignore], 자격증명 환경변수 필요)에서 async 함수를 돌리는 데 사용.
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "time"] }

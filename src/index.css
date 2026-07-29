@@ -2,12 +2,27 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
+/* 본문 폰트(설정 → Appearance → Font). 오프라인 데스크톱이라 CDN 대신 번들한다.
+ * 스택 정의는 src/lib/fonts.ts, 실제 적용은 --ui-font 변수. */
+@import "@fontsource/lato/400.css";
+@import "@fontsource/lato/700.css";
+@import "@fontsource/lato/900.css";
+@import "@fontsource/noto-sans-kr/400.css";
+@import "@fontsource/noto-sans-kr/500.css";
+@import "@fontsource/noto-sans-kr/700.css";
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
+@import "@kfonts/nanum-square/index.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+    /*
+     * Slack 은 Lato 계열을 쓰지만 새 폰트 의존성은 추가하지 않는다.
+     * 시스템 폰트를 먼저 두고, 없을 때 이미 설치된 Inter Variable 로 떨어지게 한다.
+     */
     --font-heading: var(--font-sans);
     --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter Variable', system-ui, sans-serif;
+    --font-mono: 'SF Mono', ui-monospace, Menlo, Monaco, 'Courier New', monospace;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -39,6 +54,67 @@
     --color-card: var(--card);
     --color-foreground: var(--foreground);
     --color-background: var(--background);
+    /*
+     * CC History Viewer 전용 액센트 팔레트(원본 cc-history-viewer 이식).
+     * 이 뷰에서만 bg-brand/text-blue/border-cyan 같은 유틸리티로 쓰인다.
+     */
+    --color-brand: var(--cc-brand);
+    --color-brand-light: var(--cc-brand-light);
+    --color-blue: var(--cc-blue);
+    --color-green: var(--cc-green);
+    --color-yellow: var(--cc-yellow);
+    --color-orange: var(--cc-orange);
+    --color-red: var(--cc-red);
+    --color-purple: var(--cc-purple);
+    --color-cyan: var(--cc-cyan);
+    --color-gray: var(--cc-gray);
+    /* 셸 전용 색 → bg-ui-chrome, text-ui-tab-inactive-fg 처럼 유틸리티로 쓴다. */
+    /* 크롬(상단바 + 좌측 레일) 계열 — 테마 프리셋이 공급한다. */
+    --color-ui-chrome: var(--ui-chrome);
+    --color-ui-chrome-fg: var(--ui-chrome-fg);
+    --color-ui-chrome-muted-fg: var(--ui-chrome-muted-fg);
+    --color-ui-chrome-hover: var(--ui-chrome-hover);
+    --color-ui-chrome-active: var(--ui-chrome-active);
+    /* 활성 내비 알약(Slack 의 와인색 선택) — 프리셋이 공급한다. */
+    --color-ui-selection: var(--ui-selection);
+    --color-ui-selection-fg: var(--ui-selection-fg);
+    /* 멘션·강조 칩 */
+    --color-ui-mention: var(--ui-mention);
+    --color-ui-mention-fg: var(--ui-mention-fg);
+    --color-ui-highlight: var(--ui-highlight);
+    --color-ui-highlight-fg: var(--ui-highlight-fg);
+    /* 활성 탭 2px 밑줄 */
+    --color-ui-tab-underline: var(--ui-tab-underline);
+    --color-ui-titlebar: var(--ui-titlebar);
+    --color-ui-titlebar-fg: var(--ui-titlebar-fg);
+    --color-ui-activitybar: var(--ui-activitybar);
+    --color-ui-activitybar-fg: var(--ui-activitybar-fg);
+    --color-ui-activitybar-inactive-fg: var(--ui-activitybar-inactive-fg);
+    --color-ui-activitybar-active-border: var(--ui-activitybar-active-border);
+    --color-ui-section-header-fg: var(--ui-section-header-fg);
+    --color-ui-list-hover: var(--ui-list-hover);
+    --color-ui-list-active: var(--ui-list-active);
+    --color-ui-list-active-fg: var(--ui-list-active-fg);
+    --color-ui-list-inactive: var(--ui-list-inactive);
+    --color-ui-tab-active-bg: var(--ui-tab-active-bg);
+    --color-ui-tab-active-fg: var(--ui-tab-active-fg);
+    --color-ui-tab-inactive-bg: var(--ui-tab-inactive-bg);
+    --color-ui-tab-inactive-fg: var(--ui-tab-inactive-fg);
+    --color-ui-tab-active-border-top: var(--ui-tab-active-border-top);
+    --color-ui-tab-border: var(--ui-tab-border);
+    --color-ui-statusbar: var(--ui-statusbar);
+    --color-ui-statusbar-fg: var(--ui-statusbar-fg);
+    --color-ui-statusbar-hover: var(--ui-statusbar-hover);
+    --color-ui-badge: var(--ui-badge);
+    --color-ui-badge-fg: var(--ui-badge-fg);
+    --color-ui-widget: var(--ui-widget);
+    --color-ui-widget-border: var(--ui-widget-border);
+    --color-ui-link: var(--ui-link);
+    --color-ui-error: var(--ui-error);
+    --color-ui-warning: var(--ui-warning);
+    --color-ui-info: var(--ui-info);
+    --color-ui-success: var(--ui-success);
+    --color-ui-scrollbar: var(--ui-scrollbar);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -49,78 +125,210 @@
 }
 
 :root {
-    /* Slack 톤: 콘텐츠는 순백, 바깥/사이드바는 오버진(가지색), 액션은 Slack 그린. */
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.22 0.006 340);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.22 0.006 340);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.22 0.006 340);
-    /* Slack green #007a5a */
-    --primary: oklch(0.52 0.11 165);
-    --primary-foreground: oklch(0.985 0.005 165);
-    --secondary: oklch(0.965 0.004 330);
-    --secondary-foreground: oklch(0.3 0.02 340);
-    --muted: oklch(0.965 0.004 330);
-    --muted-foreground: oklch(0.55 0.012 340);
-    --accent: oklch(0.955 0.014 328);
-    --accent-foreground: oklch(0.32 0.09 328);
-    /* Slack mention red #E01E5A */
-    --destructive: oklch(0.575 0.21 8);
-    --border: oklch(0.9 0.005 330);
-    --input: oklch(0.9 0.005 330);
-    --ring: oklch(0.52 0.11 165);
-    /* Slack 브랜드 컬러: 오버진 / 그린 / 블루 / 옐로 / 레드 */
-    --chart-1: oklch(0.42 0.14 328);
-    --chart-2: oklch(0.68 0.14 162);
-    --chart-3: oklch(0.72 0.12 224);
-    --chart-4: oklch(0.8 0.13 85);
-    --chart-5: oklch(0.6 0.2 10);
+    /* CC History Viewer 액센트(라이트) — 원본 cc-history-viewer 값 그대로. */
+    --cc-brand: #c96442;
+    --cc-brand-light: #d97757;
+    --cc-blue: hsl(217 60% 45%);
+    --cc-green: hsl(142 45% 38%);
+    --cc-yellow: hsl(38 65% 42%);
+    --cc-orange: hsl(21 65% 48%);
+    --cc-red: hsl(343 55% 42%);
+    --cc-purple: hsl(267 50% 50%);
+    --cc-cyan: hsl(187 50% 38%);
+    --cc-gray: #87867f;
+    /* Slack Light — 콘텐츠는 순백, 본문은 거의 검정(#1D1C1D), 버튼은 Slack 그린. */
+    --background: #FFFFFF;
+    --foreground: #1D1C1D;
+    --card: #FFFFFF;
+    --card-foreground: #1D1C1D;
+    --popover: #FFFFFF;
+    --popover-foreground: #1D1C1D;
+    --primary: #007A5A;
+    --primary-foreground: #FFFFFF;
+    --secondary: #F6F6F6;
+    --secondary-foreground: #1D1C1D;
+    --muted: #F6F6F6;
+    --muted-foreground: #616061;
+    /* 와인색 10% 틴트 — 선택 알약의 옅은 버전. */
+    --accent: #F4E7EC;
+    --accent-foreground: #8B1D41;
+    --destructive: #E01E5A;
+    --border: #E0E0E0;
+    --input: #C9C9C9;
+    --ring: #1264A3;
+    /* Slack 브랜드 4색 + 자주. */
+    --chart-1: #36C5F0;
+    --chart-2: #2EB67D;
+    --chart-3: #ECB22E;
+    --chart-4: #E01E5A;
+    --chart-5: #4A154B;
+    /* Slack 은 8px 라운드가 기본이다. */
     --radius: 0.5rem;
-    /* 오버진 사이드바 (라이트/다크 공통) */
-    --sidebar: oklch(0.245 0.105 328);
-    --sidebar-foreground: oklch(0.93 0.012 330);
-    --sidebar-primary: oklch(0.56 0.13 248);
-    --sidebar-primary-foreground: oklch(0.985 0.005 250);
-    --sidebar-accent: oklch(1 0 0 / 0.14);
-    --sidebar-accent-foreground: oklch(0.985 0.005 330);
-    --sidebar-border: oklch(1 0 0 / 0.1);
-    --sidebar-ring: oklch(0.56 0.13 248);
+    /* Slack 사이드바는 크롬 위에 얹힌 흰 패널이다. */
+    --sidebar: #FFFFFF;
+    --sidebar-foreground: #1D1C1D;
+    --sidebar-primary: #8B1D41;
+    --sidebar-primary-foreground: #FFFFFF;
+    --sidebar-accent: #8B1D41;
+    --sidebar-accent-foreground: #FFFFFF;
+    --sidebar-border: #E0E0E0;
+    --sidebar-ring: #1264A3;
+
+    /* ─── 셸 전용 색 (Slack Light) ─── */
+    /*
+     * 크롬(상단바 + 좌측 레일)과 선택 알약은 테마 프리셋(themes.ts)이 공급한다.
+     * 여기 값은 slack 프리셋과 같은 폴백이다. 크롬은 브랜드 정색을 진하게 깔고 글자를
+     * 흰색으로 올리므로, 파생색(hover/active/muted-fg)도 흰색 알파가 된다.
+     */
+    --ui-chrome: #4A154B;
+    --ui-chrome-fg: #FFFFFF;
+    --ui-section-header-fg: #1D1C1D;
+    --ui-list-hover: #F6F6F6;
+    /* 활성 알약 글자색은 프리셋의 selectionFg 를 따라간다 — Raycast 처럼 밝은 포인트색
+       위에서는 흰 글자의 대비가 부족해 어두운 글자를 써야 한다. */
+    --ui-list-active-fg: var(--ui-selection-fg);
+    --ui-list-inactive: #F0F0F0;
+    /* Slack 탭은 배경색으로 구분하지 않고 2px 밑줄로만 구분한다. */
+    --ui-tab-active-bg: #FFFFFF;
+    --ui-tab-active-fg: #1D1C1D;
+    --ui-tab-inactive-bg: #FFFFFF;
+    --ui-tab-inactive-fg: #616061;
+    --ui-tab-underline: #1D1C1D;
+    --ui-tab-border: #E0E0E0;
+    /* 개수 배지도 프리셋 포인트색을 따라간다. */
+    --ui-badge: var(--ui-selection);
+    --ui-badge-fg: var(--ui-selection-fg);
+    --ui-widget: #FFFFFF;
+    --ui-widget-border: #DDDDDD;
+    --ui-mention: #E8F5FA;
+    --ui-mention-fg: #1264A3;
+    --ui-highlight: #FFF6D6;
+    --ui-highlight-fg: #1D1C1D;
+    --ui-link: #1264A3;
+    --ui-error: #E01E5A;
+    --ui-warning: #ECB22E;
+    --ui-info: #36C5F0;
+    --ui-success: #2EB67D;
+    --ui-scrollbar: #1D1C1D40;
+
+    /*
+     * 선택 알약(와인색)은 라이트/다크가 같다 → :root 에 한 번만 정의한다.
+     * 프리셋이 --ui-selection 을 덮어쓰면 활성 내비 행도 함께 따라간다.
+     */
+    --ui-selection: #8B1D41;
+    --ui-selection-fg: #FFFFFF;
+
+    /*
+     * 크롬 파생색은 hex 를 박지 않고 --ui-chrome-fg 에서 color-mix 로 뽑는다.
+     * 프리셋이 크롬 색만 바꿔도 hover/활성 타일/비활성 글자가 자동으로 따라오게 하려는 것.
+     * 모드별 값이 없으므로 :root 에만 한 번 정의한다(.dark 는 그대로 상속).
+     */
+    --ui-chrome-muted-fg: color-mix(in srgb, var(--ui-chrome-fg) 70%, transparent);
+    --ui-chrome-hover: color-mix(in srgb, var(--ui-chrome-fg) 10%, transparent);
+    --ui-chrome-active: color-mix(in srgb, var(--ui-chrome-fg) 18%, transparent);
+
+    /*
+     * 상단바 · 레일 · 상태바 · 활성 행은 전부 크롬/선택 색을 참조한다 → 프리셋 하나로 같이 바뀐다.
+     * (파란 상태바는 폐지했다. 이제 상태바도 크롬과 같은 색이다.)
+     */
+    --ui-titlebar: var(--ui-chrome);
+    --ui-titlebar-fg: var(--ui-chrome-fg);
+    --ui-activitybar: var(--ui-chrome);
+    --ui-activitybar-fg: var(--ui-chrome-fg);
+    --ui-activitybar-inactive-fg: var(--ui-chrome-muted-fg);
+    /* 좌측 인디케이터는 이제 쓰지 않지만 참조가 남아 있어 값은 유지한다. */
+    --ui-activitybar-active-border: var(--ui-selection);
+    --ui-list-active: var(--ui-selection);
+    --ui-statusbar: var(--ui-chrome);
+    --ui-statusbar-fg: var(--ui-chrome-fg);
+    --ui-statusbar-hover: var(--ui-chrome-hover);
+    /* Slack 탭은 상단 테두리를 쓰지 않는다. */
+    --ui-tab-active-border-top: transparent;
+
+    /* ─── 셸 치수 (모드 공통) ─── */
+    --ui-titlebar-h: 40px;
+    --ui-activitybar-w: 64px; /* 레일: 아이콘 + 그 아래 11px 라벨 */
+    --ui-tabbar-h: 42px; /* 밑줄 탭 행 */
+    --ui-breadcrumb-h: 52px; /* 뷰 헤더(굵은 18px 제목) */
+    --ui-statusbar-h: 26px;
+    --ui-row-h: 28px; /* 사이드바 내비 한 줄 */
+    --ui-sidebar-header-h: 52px; /* 워크스페이스명 헤더 */
+    --ui-panel-radius: 10px; /* 크롬 위에 얹힌 흰 패널의 좌상단 라운드 */
 }
 
 .dark {
-    --background: oklch(0.17 0.008 340);
-    --foreground: oklch(0.95 0.004 330);
-    --card: oklch(0.205 0.008 340);
-    --card-foreground: oklch(0.95 0.004 330);
-    --popover: oklch(0.205 0.008 340);
-    --popover-foreground: oklch(0.95 0.004 330);
-    --primary: oklch(0.62 0.12 163);
-    --primary-foreground: oklch(0.15 0.02 165);
-    --secondary: oklch(0.26 0.008 340);
-    --secondary-foreground: oklch(0.95 0.004 330);
-    --muted: oklch(0.26 0.008 340);
-    --muted-foreground: oklch(0.7 0.012 330);
-    --accent: oklch(0.3 0.03 328);
-    --accent-foreground: oklch(0.92 0.02 328);
-    --destructive: oklch(0.62 0.2 8);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 14%);
-    --ring: oklch(0.62 0.12 163);
-    --chart-1: oklch(0.6 0.14 328);
-    --chart-2: oklch(0.68 0.14 162);
-    --chart-3: oklch(0.72 0.12 224);
-    --chart-4: oklch(0.8 0.13 85);
-    --chart-5: oklch(0.66 0.19 10);
-    /* 오버진 사이드바는 다크에서도 유지 */
-    --sidebar: oklch(0.23 0.1 328);
-    --sidebar-foreground: oklch(0.92 0.012 330);
-    --sidebar-primary: oklch(0.6 0.13 248);
-    --sidebar-primary-foreground: oklch(0.985 0.005 250);
-    --sidebar-accent: oklch(1 0 0 / 0.14);
-    --sidebar-accent-foreground: oklch(0.985 0.005 330);
-    --sidebar-border: oklch(1 0 0 / 0.1);
-    --sidebar-ring: oklch(0.6 0.13 248);
+    /* CC History Viewer 액센트(다크) — 원본 cc-history-viewer 값 그대로. */
+    --cc-brand: #d97757;
+    --cc-brand-light: #d97757;
+    --cc-blue: hsl(217 70% 68%);
+    --cc-green: hsl(142 55% 62%);
+    --cc-yellow: hsl(38 70% 70%);
+    --cc-orange: hsl(21 70% 65%);
+    --cc-red: hsl(343 60% 65%);
+    --cc-purple: hsl(267 60% 72%);
+    --cc-cyan: hsl(187 60% 58%);
+    --cc-gray: #b0aea5;
+    /* Slack Dark — 콘텐츠 #1A1D21, 카드/팝업 #222529, 본문 #D1D2D3. */
+    --background: #1A1D21;
+    --foreground: #D1D2D3;
+    --card: #222529;
+    --card-foreground: #D1D2D3;
+    --popover: #222529;
+    --popover-foreground: #D1D2D3;
+    --primary: #148567;
+    --primary-foreground: #FFFFFF;
+    --secondary: #27242C;
+    --secondary-foreground: #D1D2D3;
+    --muted: #27242C;
+    --muted-foreground: #ABABAD;
+    --accent: #3A2430;
+    --accent-foreground: #F0C4D3;
+    --destructive: #E01E5A;
+    --border: #35373B;
+    --input: #565856;
+    --ring: #1D9BD1;
+    --chart-1: #36C5F0;
+    --chart-2: #2EB67D;
+    --chart-3: #ECB22E;
+    --chart-4: #E01E5A;
+    --chart-5: #A97FAA;
+    --sidebar: #1A1D21;
+    --sidebar-foreground: #D1D2D3;
+    --sidebar-primary: #8B1D41;
+    --sidebar-primary-foreground: #FFFFFF;
+    --sidebar-accent: #8B1D41;
+    --sidebar-accent-foreground: #FFFFFF;
+    --sidebar-border: #35373B;
+    --sidebar-ring: #1D9BD1;
+
+    /* ─── 셸 전용 색 (Slack Dark) ─── */
+    /* 크롬 2색만 다시 지정하면 파생색·상단바·레일·상태바가 함께 따라온다. */
+    --ui-chrome: #3A1039;
+    --ui-chrome-fg: #FFFFFF;
+    --ui-section-header-fg: #D1D2D3;
+    --ui-list-hover: #27242C;
+    --ui-list-active-fg: var(--ui-selection-fg);
+    --ui-list-inactive: #2C2D30;
+    --ui-tab-active-bg: #1A1D21;
+    --ui-tab-active-fg: #FFFFFF;
+    --ui-tab-inactive-bg: #1A1D21;
+    --ui-tab-inactive-fg: #ABABAD;
+    --ui-tab-underline: #D1D2D3;
+    --ui-tab-border: #35373B;
+    --ui-badge: var(--ui-selection);
+    --ui-badge-fg: var(--ui-selection-fg);
+    --ui-widget: #222529;
+    --ui-widget-border: #35373B;
+    --ui-mention: #1E3A4C;
+    --ui-mention-fg: #8FD0F0;
+    --ui-highlight: #4A3F1A;
+    --ui-highlight-fg: #F5E6A8;
+    --ui-link: #1D9BD1;
+    --ui-error: #E01E5A;
+    --ui-warning: #ECB22E;
+    --ui-info: #36C5F0;
+    --ui-success: #2EB67D;
+    --ui-scrollbar: #FFFFFF33;
 }
 
 @layer base {
@@ -129,12 +337,30 @@
     }
   body {
     @apply bg-background text-foreground;
+    /* Slack 행간. 13px 시절의 촘촘한 22px 행을 대체한다. */
+    line-height: 1.46667;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     }
   html {
-    @apply font-sans;
+    /* 본문 폰트는 --ui-font(설정 → Appearance → Font)가 결정한다. 이 변수가
+     * 없을 때의 폴백이 곧 기본값 = Lato 다. theme-preset-provider 가 첫 페인트 전에
+     * 이 변수를 주입하므로 폴백은 JS 주입 전 첫 프레임에만 쓰인다.
+     * (font-sans 는 @theme inline 이라 변수 대신 값이 인라인돼 런타임 교체가 안 되므로
+     *  html 에서 직접 font-family 를 지정한다.) */
+    font-family: var(
+      --ui-font,
+      'Lato',
+      'Noto Sans KR',
+      -apple-system,
+      BlinkMacSystemFont,
+      'SF Pro Text',
+      system-ui,
+      sans-serif
+    );
+    /* Slack 본문 크기. Tailwind 의 rem 유틸리티도 전부 15px 기준으로 커진다. */
+    font-size: 15px;
     }
 }
 
@@ -148,13 +374,10 @@ body {
   overflow: hidden;
 }
 
-/* Scope the desktop scroll shell to the generated root container only. */
+/* 셸(상단바·레일·사이드바·콘텐츠)이 스크롤을 직접 관리한다 → 바깥 컨테이너는 스크롤하지 않는다. */
 [data-ui-scroll-container] {
-  height: 100vh;
-  height: 100dvh;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior-y: none;
+  height: 100%;
+  overflow: hidden;
 }
 
 /* Vite mounts into #root, so it needs to inherit the full-height desktop shell. */
@@ -162,62 +385,236 @@ body {
   height: 100%;
 }
 
-/* 플로팅 위젯 창은 투명 배경이어야 캐릭터만 둥둥 떠 보인다. */
-html.widget-window,
-html.widget-window body,
-html.widget-window #root {
+/* 오버레이 스크롤바: 트랙 없음 + 가는 알약 썸(Slack 은 모서리를 둥글게 쓴다). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-scrollbar) transparent;
+}
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ui-scrollbar);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ui-scrollbar) 100%, white 15%);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ── 데스크톱 펫(캐릭터 창 `pet`) ─────────────────────────────────────────
+   캐릭터와 말풍선만 화면에 떠 보여야 하므로 창 배경은 투명이고, 움직임은 전부 여기
+   CSS 에 있다. 기분 클래스(.pet-mood-*)는 pet-character.tsx 가 캐릭터 래퍼에 붙인다. */
+html.pet-window,
+html.pet-window body,
+html.pet-window #root {
   background: transparent !important;
 }
 
-/* 플로팅 캐릭터: 은은한 상하 부유 + 바닥 그림자, 호버 시 살짝 확대. */
-.widget-character {
-  filter: drop-shadow(0 6px 9px rgba(0, 0, 0, 0.28));
-  animation: widget-float 4.5s ease-in-out infinite;
-  transition: transform 0.2s ease;
-  transform-origin: bottom center;
-}
-.widget-character:hover {
-  transform: scale(1.06);
-  animation-play-state: paused;
-}
-.widget-character:active {
-  transform: scale(0.97);
+/* Petdex 스프라이트 캐릭터 — 그림 자체가 프레임으로 움직이므로 CSS 애니메이션은 걸지 않는다
+   (겹치면 어지럽다). 바닥에 붙어 보이도록 그림자만 준다. */
+.pet-sprite {
+  filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.28));
+  image-rendering: auto;
 }
 
-@keyframes widget-float {
+/* 움직이지 않는 그림(이미지 한 장) — 기분에 따라 호흡/까딱/폴짝/흔들림을 CSS 로 준다.
+   그림 자체가 움직이는 종류(스프라이트·GIF)에는 붙이지 않는다(pet-character.tsx). */
+.pet-figure {
+  filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.28));
+  transform-origin: bottom center;
+}
+/* 동작 없음 = 자는 중 — 아주 느리고 깊은 숨. */
+.pet-mood-idle .pet-figure {
+  animation: pet-breathe 6.4s ease-in-out infinite;
+}
+/* 동작 중 — 일하는 리듬으로 까딱거린다. */
+.pet-mood-running .pet-figure {
+  animation: pet-bob 1.15s ease-in-out infinite;
+}
+/* 바쁨 — 더 빠르게, 좌우로도 흔들린다. */
+.pet-mood-busy .pet-figure {
+  animation: pet-hustle 0.62s ease-in-out infinite;
+}
+/* 대기 중 — 대부분 가만히 있다가 주기적으로 한 번 흔든다(아래 pet-shake 주석 참고). */
+.pet-mood-waiting .pet-figure {
+  animation: pet-shake 3.2s ease-in-out infinite;
+}
+
+@keyframes pet-breathe {
   0%,
   100% {
-    translate: 0 0;
+    transform: translateY(0) scale(1, 1);
   }
   50% {
-    translate: 0 -5px;
+    transform: translateY(-3px) scale(1.015, 0.985);
   }
+}
+@keyframes pet-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+/* 바쁨 — 까딱임에 좌우 기울기를 섞어 정신없어 보이게. */
+@keyframes pet-hustle {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(-5px) rotate(3deg);
+  }
+}
+/* 입력 대기·알림은 답할 때까지 이어지므로 계속 떨면 방해만 된다 —
+   한 번 흔들고 대부분의 시간은 가만히 있어 주기적으로 눈에만 걸리게 한다. */
+@keyframes pet-shake {
+  0%,
+  24%,
+  100% {
+    transform: rotate(0deg);
+  }
+  4%,
+  12%,
+  20% {
+    transform: rotate(-5deg);
+  }
+  8%,
+  16% {
+    transform: rotate(5deg);
+  }
+}
+
+/* 자는 중 표시(Zzz) — 위로 떠오르며 흐려진다. 스프라이트 규격에는 잠자는 동작이 없어서
+   이 배지가 "동작 없음 = 자는 중"을 알리는 유일한 단서다(pet-character.tsx MoodMark). */
+.pet-zzz {
+  animation: pet-zzz 2.8s ease-in-out infinite;
+}
+@keyframes pet-zzz {
+  0% {
+    opacity: 0;
+    transform: translate(0, 4px) scale(0.85);
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(5px, -10px) scale(1.1);
+  }
+}
+
+/* 진행 중 표시(…) — 점 세 개가 차례로 밝아진다. */
+.pet-dot {
+  animation: pet-dot 1.2s ease-in-out infinite;
+}
+.pet-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.pet-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes pet-dot {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 빠른 이동 다이얼 — 아래에서 위로 하나씩 튀어 오른다(항목별 지연은 inline style).
+   backwards 가 없으면 지연 동안 최종 상태로 먼저 보여 계단 효과가 사라진다. */
+.pet-dial-item {
+  animation: pet-dial-in 0.18s ease-out backwards;
+}
+@keyframes pet-dial-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 말풍선 — 뜰 때만 살짝 튀어 오른다. */
+.pet-bubble {
+  animation: pet-bubble-in 0.22s ease-out;
+}
+@keyframes pet-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Claude Code 진행 중 카드의 얇은 상단 바 — 왼쪽에서 오른쪽으로 흐르는 불확정 진행 표시. */
+@keyframes claude-run-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+.claude-run-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 25%;
+  border-radius: inherit;
+  background: currentColor;
+  animation: claude-run-bar 1.4s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .widget-character {
+  .pet-figure,
+  .pet-dot,
+  .pet-zzz,
+  .pet-bubble,
+  .pet-dial-item {
     animation: none;
+  }
+  .claude-run-bar::after {
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
   }
 }
 
 @layer base {
-  /* Desktop UIs often feel cleaner with accidental text selection disabled by default. */
+  /* 화면 내용은 기본적으로 드래그 선택·복사가 되도록 한다(설정·목록 등 모든 뷰).
+     크롬(상단바/레일/상태바/탭/사이드바)만 개별적으로 select-none 을 되돌린다. */
   body {
-    @apply select-none;
-  }
-
-  /* Keep editing and code surfaces selectable so inputs and diagnostics still work normally. */
-  input,
-  textarea,
-  [contenteditable="true"],
-  pre,
-  code {
     @apply select-text;
   }
 }
 
 @layer utilities {
-  /* Opt back into selection for any generated UI surface that should behave like regular text. */
+  /* 크롬·네비게이션 등 선택되면 안 되는 표면을 명시적으로 되돌리는 헬퍼. */
+  .ui-unselectable {
+    @apply select-none;
+  }
+  /* 예전 코드 호환용 — 이제 기본이 select-text 라 사실상 no-op 이지만 남겨 둔다. */
   .ui-selectable {
     @apply select-text;
   }

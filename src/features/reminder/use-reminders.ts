@@ -11,6 +11,8 @@ export interface Reminder {
   at: number
   /** repeat="daily": 예정 시각 "HH:MM"(24시간제). */
   time: string
+  /** repeat="daily": 주말(토·일)에는 발생하지 않는다. */
+  excludeWeekends: boolean
   /** 켜짐/꺼짐. 꺼지면 발생하지 않는다. */
   enabled: boolean
   /** repeat="once": 발생 시각(중복 방지). null 이면 아직 미발생. */
@@ -27,11 +29,29 @@ export interface NewReminderInput {
   at?: string
   /** daily: "HH:MM". */
   time?: string
+  /** daily: 주말 제외 여부. */
+  excludeWeekends?: boolean
+}
+
+/**
+ * 등록된 알림에서 고칠 수 있는 필드. 지정한 값만 바뀐다(반복 종류는 바꾸지 않는다).
+ * 시간(at/time)을 바꾸면 발생 여부가 새 시각 기준으로 다시 계산돼 재무장된다.
+ */
+export interface ReminderPatch {
+  /** 알림 이름. */
+  title?: string
+  /** once: datetime-local 값. */
+  at?: string
+  /** daily: "HH:MM". */
+  time?: string
+  /** daily: 주말 제외 여부. */
+  excludeWeekends?: boolean
 }
 
 export interface ReminderContextValue {
   reminders: Reminder[]
   add: (input: NewReminderInput) => void
+  update: (id: string, patch: ReminderPatch) => void
   toggle: (id: string) => void
   remove: (id: string) => void
 }

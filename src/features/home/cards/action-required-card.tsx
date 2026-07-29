@@ -3,7 +3,6 @@ import {
   AtSignIcon,
   BellRingIcon,
   CalendarClockIcon,
-  CheckCircle2Icon,
   PauseCircleIcon,
   type LucideIcon,
 } from "lucide-react"
@@ -31,7 +30,7 @@ const SOON_MIN = 15
 interface ActionItem {
   id: string
   icon: LucideIcon
-  /** 왼쪽 스트라이프 + 아이콘 색. */
+  /** 아이콘 타일 색. */
   tone: "amber" | "blue" | "violet" | "rose"
   title: string
   sub: ReactNode
@@ -39,30 +38,26 @@ interface ActionItem {
   onAction: () => void
 }
 
+/**
+ * 항목 톤 → --ui-* 색 토큰. 하드코딩 팔레트를 쓰지 않고
+ * warning/info/error 토큰과 보라 계열 chart-5 만 쓴다.
+ * 행마다 테두리를 두르는 대신(Slack 은 안 한다) 아이콘을 옅은 틴트 타일에 넣어 톤을 드러낸다.
+ */
 const TONE = {
-  amber: {
-    border: "border-l-amber-500",
-    icon: "text-amber-600 dark:text-amber-400",
-  },
-  blue: {
-    border: "border-l-blue-500",
-    icon: "text-blue-600 dark:text-blue-400",
-  },
-  violet: {
-    border: "border-l-violet-500",
-    icon: "text-violet-600 dark:text-violet-400",
-  },
-  rose: {
-    border: "border-l-rose-500",
-    icon: "text-rose-600 dark:text-rose-400",
-  },
+  amber: "bg-ui-warning/15 text-ui-warning",
+  blue: "bg-ui-info/15 text-ui-info",
+  violet: "bg-chart-5/15 text-chart-5",
+  rose: "bg-ui-error/15 text-ui-error",
 }
 
 /**
- * "지금 확인 필요" — 내 응답을 기다리는 것만 모아 홈 최상단에 보여준다.
+ * "지금 바로 확인" — 내 응답·참여를 기다리는 것만 모아 홈 상단에 보여준다.
  * 우선순위: Claude 입력 대기 → 진행 중·곧 시작할 일정 → 나에게 온 Slack 메시지(DM·그룹DM)
  * → 최근에 울린 1회성 알림. 모두 시간이 지나면 자연히 사라지는 항목들만 넣는다
  * (읽음 처리 개념이 없는 항목을 넣으면 영구히 남아 카드가 무의미해진다).
+ *
+ * 기다리는 항목이 하나도 없으면 카드 자체를 렌더하지 않는다(빈 카드가 화면을 어지럽히지
+ * 않도록) — 이 카드가 보인다는 것 자체가 "지금 손댈 게 있다" 는 신호다.
  */
 export function ActionRequiredCard({
   workspaces,
@@ -166,53 +161,47 @@ export function ActionRequiredCard({
     })
   }
 
-  const empty = items.length === 0
+  // 기다리는 게 없으면 카드를 아예 그리지 않는다(빈 상태 숨김).
+  if (items.length === 0) return null
 
   return (
     <HomeCard
-      icon={empty ? CheckCircle2Icon : AlertCircleIcon}
-      title="지금 확인 필요"
+      icon={AlertCircleIcon}
+      title="지금 바로 확인"
       count={items.length}
-      tone={empty ? "default" : "alert"}
+      tone="alert"
     >
-      {empty ? (
-        <p className="py-4 text-center text-sm text-muted-foreground">
-          확인할 항목이 없습니다 ✨
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {items.map((it) => {
-            const tone = TONE[it.tone]
-            return (
-              <li
-                key={it.id}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg border border-l-4 bg-muted/30 px-3 py-2",
-                  tone.border
-                )}
-              >
-                <it.icon className={cn("size-4 shrink-0", tone.icon)} />
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-sm font-medium">
-                    {it.title}
-                  </span>
-                  <span className="line-clamp-1 text-xs text-muted-foreground">
-                    {it.sub}
-                  </span>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={it.onAction}
-                >
-                  {it.actionLabel}
-                </Button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
+      <ul className="flex flex-col gap-0.5">
+        {items.map((it) => (
+          <li
+            key={it.id}
+            className="flex min-h-9 items-center gap-3 rounded-lg px-3 py-1.5 transition-colors hover:bg-ui-list-hover"
+          >
+            <span
+              className={cn(
+                "flex size-7 shrink-0 items-center justify-center rounded-lg",
+                TONE[it.tone]
+              )}
+            >
+              <it.icon className="size-4" />
+            </span>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-[15px] font-bold">{it.title}</span>
+              <span className="line-clamp-1 text-[13px] text-muted-foreground">
+                {it.sub}
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0 rounded-full px-3 text-[13px]"
+              onClick={it.onAction}
+            >
+              {it.actionLabel}
+            </Button>
+          </li>
+        ))}
+      </ul>
     </HomeCard>
   )
 }

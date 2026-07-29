@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
 
 import { trackedInvoke, isTauri } from "@/lib/tauri"
-import { useSettings } from "@/features/settings/settings-store"
+import { useSettings } from "@/features/settings/settings-context"
 
 /** herdr 로 실행 중인 agent 한 개 (Rust HerdrAgent 와 대응). */
 export interface HerdrAgent {
@@ -78,14 +78,18 @@ export function useHerdr() {
   const watching = useSettings().settings.claudeCode.watchEnabled
   const [error, setError] = useState<string | null>(null)
 
+  // setState 는 모두 await 뒤에서만 호출한다(effect 에서 바로 불려도 동기 setState 가
+  // 되지 않도록 — react-hooks/set-state-in-effect).
   const refresh = useCallback(async () => {
     if (!isTauri()) return
-    setError(null)
     try {
-      setAgents(await trackedInvoke<HerdrAgent[]>("herdr_list_agents"))
-      setWorkspaces(
-        await trackedInvoke<HerdrWorkspace[]>("herdr_list_workspaces")
+      const nextAgents = await trackedInvoke<HerdrAgent[]>("herdr_list_agents")
+      const nextWorkspaces = await trackedInvoke<HerdrWorkspace[]>(
+        "herdr_list_workspaces"
       )
+      setAgents(nextAgents)
+      setWorkspaces(nextWorkspaces)
+      setError(null)
     } catch (e) {
       setError(String(e))
     }
@@ -119,16 +123,19 @@ export function useHerdr() {
     []
   )
 
-  // 최초 로드 + 이벤트 구독(감시 중이면 800ms 마다 갱신됨).
+  // 이벤트 구독(감시 중이면 800ms 마다 갱신됨) + 최초 로드.
   useEffect(() => {
     if (!isTauri()) return
-    void refresh()
     const unAgents = listen<HerdrAgent[]>("herdr:agents", (e) => {
       setAgents(e.payload)
     })
     const unWs = listen<HerdrWorkspace[]>("herdr:workspaces", (e) => {
       setWorkspaces(e.payload)
     })
+    // 구독이 붙은 뒤에 최초 스냅샷을 읽는다. 순서를 이렇게 두면 (a) 구독 등록과 최초
+    // 조회 사이에 이벤트가 떠서 갱신을 놓치는 일이 없고, (b) effect 본문에서 동기로
+    // setState 하지 않는다(react-hooks/set-state-in-effect).
+    void Promise.all([unAgents, unWs]).then(() => refresh())
     return () => {
       void unAgents.then((f) => f())
       void unWs.then((f) => f())

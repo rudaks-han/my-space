@@ -11,32 +11,19 @@ import {
   type StickyNote,
 } from "./use-todos"
 
-/** 포스트잇 색상 → 실제 Tailwind 클래스(라이트/다크 모두 대응). */
-const PALETTE: Record<StickyColor, { card: string; swatch: string }> = {
-  yellow: {
-    card: "bg-yellow-100 border-yellow-300 dark:bg-yellow-400/10 dark:border-yellow-400/30",
-    swatch: "bg-yellow-300 dark:bg-yellow-400",
-  },
-  pink: {
-    card: "bg-pink-100 border-pink-300 dark:bg-pink-400/10 dark:border-pink-400/30",
-    swatch: "bg-pink-300 dark:bg-pink-400",
-  },
-  green: {
-    card: "bg-green-100 border-green-300 dark:bg-green-400/10 dark:border-green-400/30",
-    swatch: "bg-green-300 dark:bg-green-400",
-  },
-  blue: {
-    card: "bg-blue-100 border-blue-300 dark:bg-blue-400/10 dark:border-blue-400/30",
-    swatch: "bg-blue-300 dark:bg-blue-400",
-  },
-  purple: {
-    card: "bg-purple-100 border-purple-300 dark:bg-purple-400/10 dark:border-purple-400/30",
-    swatch: "bg-purple-300 dark:bg-purple-400",
-  },
-  gray: {
-    card: "bg-gray-100 border-gray-300 dark:bg-gray-400/10 dark:border-gray-400/30",
-    swatch: "bg-gray-300 dark:bg-gray-400",
-  },
+/**
+ * 포스트잇 색상 → 강조색(CSS 변수).
+ * 팔레트 하드코딩(#FDE68A 등) 대신 테마 차트 토큰을 써서 프리셋/다크 모드를 따라가게 한다.
+ * 카드는 이 색을 `--sticky-accent` 로 내려 주고, 배경/테두리/hover 는 모두
+ * color-mix 로 옅게 섞어 쓴다(원색을 그대로 깔면 본문 대비가 무너진다).
+ */
+const ACCENT: Record<StickyColor, string> = {
+  yellow: "var(--chart-3)",
+  pink: "var(--chart-4)",
+  green: "var(--chart-2)",
+  blue: "var(--chart-1)",
+  purple: "var(--chart-5)",
+  gray: "var(--muted-foreground)",
 }
 
 const COLOR_LABEL: Record<StickyColor, string> = {
@@ -74,39 +61,46 @@ function StickyCard({ note, api }: { note: StickyNote; api: Api }) {
 
   return (
     <div
-      className={cn(
-        "flex flex-col gap-3 rounded-xl border p-3 shadow-sm",
-        PALETTE[note.color].card
-      )}
+      style={{ "--sticky-accent": ACCENT[note.color] } as React.CSSProperties}
+      className="flex min-w-0 flex-col rounded-[10px] border border-[color-mix(in_oklab,var(--sticky-accent)_28%,var(--border))] bg-[color-mix(in_oklab,var(--sticky-accent)_12%,var(--card))] shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
     >
-      <div className="flex items-center gap-2">
+      {/* 헤더 — Slack 패널 헤더 톤(굵은 15px 제목 + 배경색 없음). */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-[color-mix(in_oklab,var(--sticky-accent)_22%,var(--border))] px-4 py-3">
+        <span className="size-2.5 shrink-0 rounded-full bg-(--sticky-accent)" />
         <input
           value={note.title}
           onChange={(e) => api.setTitle(note.id, e.target.value)}
           placeholder="제목 없음"
-          className="min-w-0 flex-1 bg-transparent text-sm font-semibold placeholder:text-muted-foreground/70 focus:outline-none"
+          className="min-w-0 flex-1 bg-transparent text-[15px] font-bold placeholder:font-normal placeholder:text-muted-foreground focus:outline-none"
         />
-        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-          {note.todos.length > 0 && `${remaining}/${note.todos.length}`}
-        </span>
+        {note.todos.length > 0 && (
+          <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--sticky-accent)_20%,transparent)] px-2 text-[11px] font-bold text-muted-foreground tabular-nums">
+            {remaining}/{note.todos.length}
+          </span>
+        )}
         <Button
           size="icon-sm"
           variant="ghost"
           onClick={() => api.removeNote(note.id)}
           aria-label="포스트잇 삭제"
           title="포스트잇 삭제"
+          className="text-muted-foreground hover:text-foreground"
         >
-          <Trash2Icon />
+          <Trash2Icon className="size-4" />
         </Button>
       </div>
 
-      <ul className="flex flex-col gap-1">
+      {/* 할 일 목록 — Slack 리스트 행(36px, 8px 라운드, 행 테두리 없음). */}
+      <ul className="flex flex-col gap-0.5 p-2">
         {note.todos.map((t) => (
-          <li key={t.id} className="group flex items-start gap-2">
+          <li
+            key={t.id}
+            className="group flex min-h-9 items-start gap-2.5 rounded-lg px-3 py-1.5 transition-colors hover:bg-[color-mix(in_oklab,var(--sticky-accent)_16%,transparent)]"
+          >
             <Checkbox
               checked={t.done}
               onCheckedChange={() => api.toggleTodo(note.id, t.id)}
-              className="mt-0.5 bg-background/60"
+              className="mt-[3px] shrink-0"
             />
             {editingId === t.id ? (
               <input
@@ -121,12 +115,14 @@ function StickyCard({ note, api }: { note: StickyNote; api: Api }) {
                     setEditingText("")
                   }
                 }}
-                className="min-w-0 flex-1 border-b border-foreground/20 bg-transparent text-sm focus:outline-none"
+                className="min-w-0 flex-1 rounded-lg border border-input bg-background px-2 py-0.5 text-[15px] focus:border-ring focus:outline-none"
               />
             ) : (
               <span
                 className={cn(
-                  "flex-1 cursor-text text-sm break-words",
+                  // min-w-0 + wrap-anywhere 가 없으면 공백 없는 긴 문자열이
+                  // flex 항목의 min-content 를 밀어 카드 밖으로 삐져나간다.
+                  "min-w-0 flex-1 cursor-text py-0.5 text-[15px] wrap-anywhere",
                   t.done && "text-muted-foreground line-through"
                 )}
                 onDoubleClick={() => {
@@ -142,30 +138,36 @@ function StickyCard({ note, api }: { note: StickyNote; api: Api }) {
               type="button"
               onClick={() => api.removeTodo(note.id, t.id)}
               aria-label="할 일 삭제"
-              className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+              className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-[color-mix(in_oklab,var(--sticky-accent)_28%,transparent)] hover:text-foreground"
             >
-              <XIcon className="size-3.5" />
+              <XIcon className="size-4" />
             </button>
           </li>
         ))}
         {note.todos.length === 0 && (
-          <li className="py-1 text-xs text-muted-foreground">
+          <li className="flex min-h-9 items-center px-3 text-[15px] text-muted-foreground">
             아래에 할 일을 추가하세요.
           </li>
         )}
+
+        <li>
+          <form
+            onSubmit={submitTodo}
+            className="flex min-h-9 items-center gap-2.5 rounded-lg px-3 py-1.5 transition-colors focus-within:bg-[color-mix(in_oklab,var(--sticky-accent)_16%,transparent)]"
+          >
+            <PlusIcon className="size-4 shrink-0 text-muted-foreground" />
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="할 일 추가 후 Enter"
+              className="min-w-0 flex-1 bg-transparent text-[15px] placeholder:text-muted-foreground focus:outline-none"
+            />
+          </form>
+        </li>
       </ul>
 
-      <form onSubmit={submitTodo} className="flex items-center gap-1.5">
-        <PlusIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="할 일 추가 후 Enter"
-          className="min-w-0 flex-1 bg-transparent text-sm placeholder:text-muted-foreground/70 focus:outline-none"
-        />
-      </form>
-
-      <div className="flex items-center gap-1.5 border-t border-foreground/10 pt-2">
+      {/* 색 선택 — Slack 은 원형 점을 쓴다. 고른 색만 파란 포커스 링으로 표시한다. */}
+      <div className="flex items-center gap-2.5 border-t border-[color-mix(in_oklab,var(--sticky-accent)_22%,var(--border))] px-4 py-3">
         {STICKY_COLORS.map((c) => (
           <button
             key={c}
@@ -173,12 +175,11 @@ function StickyCard({ note, api }: { note: StickyNote; api: Api }) {
             onClick={() => api.setColor(note.id, c)}
             aria-label={`${COLOR_LABEL[c]}으로 변경`}
             title={COLOR_LABEL[c]}
+            style={{ backgroundColor: ACCENT[c] }}
             className={cn(
-              "size-4 rounded-full ring-offset-1 transition",
-              PALETTE[c].swatch,
-              note.color === c
-                ? "ring-2 ring-foreground/50 ring-offset-transparent"
-                : "hover:scale-110"
+              "size-4 cursor-pointer rounded-full transition-transform hover:scale-110",
+              note.color === c &&
+                "outline-2 outline-offset-2 outline-ring outline-solid"
             )}
           />
         ))}
@@ -192,29 +193,25 @@ export function TodoView() {
   const { notes, addNote } = api
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col">
-          <h2 className="text-lg font-semibold">할 일</h2>
-          <p className="text-sm text-muted-foreground">
-            포스트잇 {notes.length}개
-          </p>
-        </div>
-        <Button onClick={addNote}>
+    <div className="flex w-full flex-col gap-3">
+      {/* 뷰 툴바 — 제목은 위쪽 뷰 헤더가 이미 보여 주므로 개수 메타와 액션만 둔다. */}
+      <div className="flex shrink-0 items-center gap-2">
+        <span className="text-[13px] text-muted-foreground tabular-nums">
+          포스트잇 {notes.length}개
+        </span>
+        <Button size="sm" className="ml-auto" onClick={addNote}>
           <PlusIcon />
           포스트잇 추가
         </Button>
       </div>
 
       {notes.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-20 text-center text-muted-foreground">
-          <StickyNoteIcon className="size-8 opacity-60" />
-          <p className="text-sm">
-            아직 포스트잇이 없습니다. “포스트잇 추가”로 시작하세요.
-          </p>
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center text-[15px] text-muted-foreground">
+          <StickyNoteIcon className="size-6" />
+          아직 포스트잇이 없습니다. “포스트잇 추가”로 시작하세요.
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {notes.map((note) => (
             <StickyCard key={note.id} note={note} api={api} />
           ))}

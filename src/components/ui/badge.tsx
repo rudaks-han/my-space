@@ -4,21 +4,23 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
+/*
+ * Slack 배지: 20px 높이의 알약(rounded-full), 11px/bold 글자.
+ * 개수 배지·칩은 Slack 에서 모두 알약이므로 원형을 기본값으로 둔다.
+ */
 const badgeVariants = cva(
-  "group/badge inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-4xl border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-all focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3!",
+  "group/badge inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 text-[11px] font-bold whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring focus-visible:outline-solid has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 aria-invalid:border-destructive [&>svg]:pointer-events-none [&>svg]:size-3!",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground [a]:hover:bg-primary/80",
+        default: "bg-ui-badge text-ui-badge-fg [a]:hover:bg-ui-badge/90",
         secondary:
           "bg-secondary text-secondary-foreground [a]:hover:bg-secondary/80",
-        destructive:
-          "bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
+        destructive: "bg-ui-error text-white [a]:hover:bg-ui-error/90",
         outline:
-          "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
-        ghost:
-          "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
-        link: "text-primary underline-offset-4 hover:underline",
+          "border-border text-foreground [a]:hover:bg-ui-list-hover [a]:hover:text-foreground",
+        ghost: "hover:bg-ui-list-hover hover:text-foreground",
+        link: "text-ui-link underline-offset-2 hover:underline",
       },
     },
     defaultVariants: {
@@ -49,4 +51,6 @@ function Badge({
   })
 }
 
-export { Badge, badgeVariants }
+// badgeVariants 는 이 파일 안에서만 쓰므로 export 하지 않는다
+// (컴포넌트 파일이 컴포넌트 외의 값을 export 하면 fast refresh 가 깨진다).
+export { Badge }

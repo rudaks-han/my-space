@@ -1,21 +1,18 @@
 //! 알림(reminder) — 프론트엔드가 특정 시간에 도달했다고 판단하면 이 커맨드를 호출해
-//! 트레이(메뉴바) 아이콘 아래에 알림 팝오버(`widget` 창)를 띄운다.
+//! 데스크톱 펫의 말풍선으로 알림을 띄운다.
 //!
 //! 알림 데이터·스케줄 판단은 프론트엔드(localStorage + 인터벌)가 담당하고,
-//! Rust 는 "지금 이 내용을 팝오버로 보여줘/닫아"만 처리한다.
-//! herdr 질문 팝오버와 같은 `widget` 창을 공유하므로 위치 로직은 popover 모듈을 쓴다.
+//! Rust 는 "지금 이 내용을 보여줘/닫아"만 처리한다. 내용은 `reminder:*` 이벤트로 모든 창에
+//! 방출되고(펫 창이 `use-pet-mood.ts` 에서 받는다), 펫이 꺼져 있을 수 있으므로
+//! `pet::set_alert` 로 "알릴 게 있다"고 표시해 잠깐 나타나게 한다.
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
-use crate::popover;
+use crate::pet;
 
-/// 알림 팝오버 창 크기.
-const POPOVER_W: f64 = 320.0;
-const POPOVER_H: f64 = 248.0;
-
-/// 팝오버에 표시할 알림 한 건.
+/// 펫 말풍선에 표시할 알림 한 건.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ReminderPayload {
     /// 프론트엔드 알림 id(중복 발생 방지·닫기 매칭용).
@@ -25,23 +22,24 @@ pub struct ReminderPayload {
     pub body: String,
 }
 
-/// 현재 팝오버에 떠 있는 알림. 위젯 웹뷰가 마운트 시 조회하므로(콜드 로드로 이벤트를
-/// 놓쳐도) 여기서 내용을 채운다.
+/// 지금 떠 있는 알림. 펫 창이 마운트 시 조회하므로(콜드 로드로 이벤트를 놓쳐도)
+/// 여기서 내용을 채운다.
 #[derive(Default)]
 pub struct PendingReminder(pub Mutex<Option<ReminderPayload>>);
 
-/// 알림을 팝오버로 띄운다(프론트 스케줄러가 예정 시각에 호출).
+/// 알림을 펫 말풍선으로 띄운다(프론트 스케줄러가 예정 시각에 호출).
 #[tauri::command]
 pub fn reminder_fire(app: tauri::AppHandle, id: String, title: String, body: String) {
     let payload = ReminderPayload { id, title, body };
     if let Ok(mut g) = app.state::<PendingReminder>().0.lock() {
         *g = Some(payload.clone());
     }
-    popover::present_popover(&app, POPOVER_W, POPOVER_H);
+    // 펫을 꺼 뒀어도 알림은 보여야 한다 — 확인·스누즈로 정리될 때까지 띄운다.
+    pet::set_alert(&app, pet::AlertSource::Reminder, true);
     let _ = app.emit("reminder:fire", payload);
 }
 
-/// 현재 대기 중인 알림(위젯 웹뷰가 마운트 시 조회).
+/// 현재 대기 중인 알림(펫 창이 마운트 시 조회).
 #[tauri::command]
 pub fn reminder_current(app: tauri::AppHandle) -> Option<ReminderPayload> {
     app.state::<PendingReminder>()
@@ -51,13 +49,13 @@ pub fn reminder_current(app: tauri::AppHandle) -> Option<ReminderPayload> {
         .and_then(|g| g.clone())
 }
 
-/// 알림 팝오버를 닫는다(확인 클릭 시 프론트에서 호출).
+/// 알림을 닫는다(펫 말풍선의 "확인" 클릭 시 호출).
 #[tauri::command]
 pub fn reminder_dismiss(app: tauri::AppHandle) {
     if let Ok(mut g) = app.state::<PendingReminder>().0.lock() {
         *g = None;
     }
-    popover::hide_popover(&app);
+    pet::set_alert(&app, pet::AlertSource::Reminder, false);
     let _ = app.emit("reminder:dismiss", ());
 }
 

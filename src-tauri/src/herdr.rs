@@ -22,13 +22,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 
-use crate::popover;
+use crate::pet;
 
 /// blocked 폴링 주기.
 const POLL_MS: u64 = 800;
-/// 트레이 팝오버 창 크기.
-const POPOVER_W: f64 = 340.0;
-const POPOVER_H: f64 = 420.0;
 
 /// 실행 중인 herdr agent 한 개.
 #[derive(Clone, Serialize)]
@@ -134,21 +131,18 @@ impl Default for WatchState {
     }
 }
 
-/// 현재 대기 중인 질문(트레이 팝오버가 표시). 위젯 웹뷰가 마운트 시 이걸 조회하므로,
+/// 현재 대기 중인 질문(펫 말풍선이 표시). 펫 창이 마운트 시 이걸 조회하므로,
 /// 이벤트를 놓쳐도(웹뷰 콜드 로드) 팝오버 내용이 채워진다.
 /// 현재 대기 중인 질문들(pane 별). 여러 워크스페이스가 동시에 AskUserQuestion 을 띄울 수
-/// 있으므로 리스트로 보관한다. 위젯 웹뷰가 마운트 시 조회하고, 워처가 변경 시 갱신한다.
+/// 있으므로 리스트로 보관한다. 펫 창이 마운트 시 조회하고, 워처가 변경 시 갱신한다.
 #[derive(Default)]
 pub struct PendingQuestions(pub Mutex<Vec<AskQuestion>>);
 
-/// herdr 질문 팝오버를 띄운다(공용 팝오버 로직에 크기만 지정). 응답이 필요하므로 focus 를 준다.
-fn present_popover(app: &tauri::AppHandle) {
-    popover::present_popover(app, POPOVER_W, POPOVER_H);
-}
-
-/// 알림 전용으로 팝오버를 띄운다(지나가는 알림이라 focus 는 뺏지 않는다).
-fn present_notice_popover(app: &tauri::AppHandle) {
-    popover::present_popover_ex(app, POPOVER_W, POPOVER_H, false);
+/// 펫에게 "Claude Code 쪽에 알릴 게 있다/없다"를 전한다. 펫을 꺼 뒀으면 그동안만
+/// 임시로 나타난다(pet.rs 의 PetAlert). 예전 팝오버와 달리 focus 를 뺏지 않는다 —
+/// 응답이 필요한 질문도 사용자가 터미널에서 직접 답하므로 창을 앞으로 끌어올 이유가 없다.
+fn set_pet_alert(app: &tauri::AppHandle, active: bool) {
+    pet::set_alert(app, pet::AlertSource::Herdr, active);
 }
 
 /// 활성 알림 목록을 반환하고, 만료된 것(대기 알림)은 제거한다. 만료 None(완료 알림)은 유지.
@@ -164,10 +158,6 @@ fn prune_notices(app: &tauri::AppHandle) -> Vec<HerdrNotice> {
     g.iter().map(|(n, _)| n.clone()).collect()
 }
 
-/// 팝오버 창을 숨긴다.
-fn hide_popover(app: &tauri::AppHandle) {
-    popover::hide_popover(app);
-}
 
 /// herdr 실행 파일 경로. Finder 실행 앱은 PATH 에 ~/.local/bin 이 없을 수 있어 직접 확인.
 fn herdr_bin() -> String {
@@ -846,13 +836,10 @@ pub fn herdr_list_workspaces() -> Result<Vec<HerdrWorkspace>, String> {
 
 /// 해당 워크스페이스로 herdr 를 이동(focus)하고 터미널 창을 앞으로 가져온다.
 #[tauri::command]
-pub fn herdr_focus_workspace(
-    app: tauri::AppHandle,
-    session: String,
-    workspace_id: String,
-) -> Result<(), String> {
+pub fn herdr_focus_workspace(session: String, workspace_id: String) -> Result<(), String> {
     run_herdr(Some(&session), &["workspace", "focus", &workspace_id])?;
-    hide_popover(&app);
+    // 펫을 여기서 직접 숨기지는 않는다 — 다른 작업의 알림이 남아 있을 수 있고,
+    // 정리 판단은 감시 루프(set_pet_alert)가 한 곳에서 한다.
     // Kaku pane/탭 선택 + OS 앱 활성화(다른 Space 면 macOS 가 전환). 아래 헬퍼 doc 참고.
     focus_terminal_for_session(&session);
     Ok(())
@@ -1150,19 +1137,15 @@ fn kaku_activate_session_pane(_session: &str) -> bool {
 /// 해당 pane(workspace)으로 herdr 를 이동(focus)시키고 호스트 터미널 창을 앞으로 가져온다.
 /// 사용자가 알림 항목을 클릭하면 그 워크스페이스로 전환해 터미널에서 직접 선택하게 한다.
 #[tauri::command]
-pub fn herdr_focus_pane(
-    app: tauri::AppHandle,
-    session: String,
-    pane_id: String,
-) -> Result<(), String> {
+pub fn herdr_focus_pane(session: String, pane_id: String) -> Result<(), String> {
     run_herdr(Some(&session), &["agent", "focus", &pane_id])?; // herdr 내부 pane 전환
-    hide_popover(&app); // 우리 팝오버는 치우고
+    // 펫 정리는 감시 루프가 맡는다(herdr_focus_workspace 와 같은 이유).
     // Kaku pane/탭 선택 + OS 앱 활성화(다른 Space 면 macOS 가 전환). 아래 헬퍼 doc 참고.
     focus_terminal_for_session(&session);
     Ok(())
 }
 
-/// 현재 대기 중인 질문 목록(위젯 웹뷰가 마운트 시 조회).
+/// 현재 대기 중인 질문 목록(펫 창이 마운트 시 조회).
 #[tauri::command]
 pub fn herdr_current_questions(app: tauri::AppHandle) -> Vec<AskQuestion> {
     app.state::<PendingQuestions>()
@@ -1172,15 +1155,10 @@ pub fn herdr_current_questions(app: tauri::AppHandle) -> Vec<AskQuestion> {
         .unwrap_or_default()
 }
 
-/// 팝오버 창을 숨긴다(닫기 버튼 — 질문 상태는 유지, 변화가 생기면 다시 표시됨).
-#[tauri::command]
-pub fn herdr_hide_popover(app: tauri::AppHandle) {
-    hide_popover(&app);
-}
-
-/// 입력 대기/작업 완료 알림을 트레이 팝오버에 잠깐 띄운다(메인 창 감지 로직이 호출).
-/// 알림을 저장하고 팝오버를 (focus 없이) 표시한 뒤, 활성 목록을 위젯에 방출한다.
-/// 만료(NOTICE_TTL_MS)는 감시 루프가 정리하며, 만료되고 대기 질문도 없으면 팝오버가 닫힌다.
+/// 입력 대기/작업 완료 알림을 펫 말풍선에 잠깐 띄운다(메인 창 감지 로직이 호출).
+/// 알림을 저장하고 펫에 알린 뒤, 활성 목록을 모든 창에 방출한다.
+/// 만료(NOTICE_TTL_MS)는 감시 루프가 정리하며, 만료되고 대기 질문도 없으면 알림이 꺼진다
+/// (펫을 설정에서 켜 뒀다면 캐릭터는 그대로 남고 말풍선만 사라진다).
 #[tauri::command]
 pub fn herdr_notify(
     app: tauri::AppHandle,
@@ -1219,16 +1197,22 @@ pub fn herdr_notify(
         g.push((notice, expiry));
         g.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>()
     };
-    // 도착 순간 팝오버를 잠깐 자동으로 띄운다(그 뒤엔 자동으로 강제 표시하지 않음 → 완료 알림이
-    // 계속 저장돼 있어도 팝오버가 영구히 열려 있지 않다. 트레이 메뉴로 다시 열면 저장된 알림이 보임).
+    // 도착 순간부터 설정된 시간(설정 → 데스크톱 펫 → 알림 표시 시간)만큼 알린다.
+    // 0(항상 표시)이면 시각으로 끊지 않고 None 을 넣는다 — 감시 루프가 "알림이 남아 있는
+    // 동안"으로 해석한다(아래 notice_active 참고).
     if let Ok(mut u) = state.present_until.lock() {
-        *u = Some(now + std::time::Duration::from_millis(NOTICE_TTL_MS));
+        let secs = pet::notice_ttl_secs(&app);
+        *u = if secs == 0 {
+            None
+        } else {
+            Some(now + std::time::Duration::from_secs(secs))
+        };
     }
-    present_notice_popover(&app);
+    set_pet_alert(&app, true);
     let _ = app.emit("herdr:notices", list);
 }
 
-/// 알림 하나를 목록에서 제거한다(위젯에서 "이동"으로 처리했을 때 등). 남은 목록을 방출한다.
+/// 알림 하나를 목록에서 제거한다(말풍선에서 "이동"으로 처리했을 때 등). 남은 목록을 방출한다.
 #[tauri::command]
 pub fn herdr_dismiss_notice(app: tauri::AppHandle, id: String) {
     let state = app.state::<Notices>();
@@ -1242,7 +1226,7 @@ pub fn herdr_dismiss_notice(app: tauri::AppHandle, id: String) {
     let _ = app.emit("herdr:notices", list);
 }
 
-/// 현재 활성 알림 목록(위젯 웹뷰가 마운트 시 조회).
+/// 현재 활성 알림 목록(펫 창이 마운트 시 조회).
 #[tauri::command]
 pub fn herdr_current_notices(app: tauri::AppHandle) -> Vec<HerdrNotice> {
     prune_notices(&app)
@@ -1355,7 +1339,7 @@ pub fn herdr_start_watch(app: tauri::AppHandle) {
                 }
             }
 
-            // 알림(입력 대기/작업 완료) 만료 정리 + 변경 시 위젯에 방출. (완료 알림은 만료 None 이라 유지됨)
+            // 알림(입력 대기/작업 완료) 만료 정리 + 변경 시 모든 창에 방출. (완료 알림은 만료 None 이라 유지됨)
             let notices = prune_notices(&app);
             let notice_sig: Vec<String> = notices.iter().map(|n| n.id.clone()).collect();
             if notice_sig != prev_notice_sig {
@@ -1363,34 +1347,31 @@ pub fn herdr_start_watch(app: tauri::AppHandle) {
                 let _ = app.emit("herdr:notices", notices.clone());
             }
 
-            // 팝오버 자동 표시 = 대기 질문 있음 OR 알림 자동표시 창(present_until) 안. 변화가 있을 때만 show/hide.
-            // (완료 알림이 목록에 남아 있어도 present_until 이 지나면 팝오버는 닫힌다 → 트레이 메뉴로 다시 열면 보임)
+            // 자동 표시 = 대기 질문 있음 OR 알림 표시 시간 안. 변화가 있을 때만 show/hide.
+            // (완료 알림이 목록에 남아 있어도 시간이 지나면 닫힌다 → 트레이 메뉴로 다시 볼 수 있다)
             let has_questions = app
                 .state::<PendingQuestions>()
                 .0
                 .lock()
                 .map(|g| !g.is_empty())
                 .unwrap_or(false);
-            let notice_active = app
-                .state::<Notices>()
-                .present_until
-                .lock()
-                .ok()
-                .and_then(|u| *u)
-                .map_or(false, |t| std::time::Instant::now() < t);
+            let notice_active = if pet::notice_ttl_secs(&app) == 0 {
+                // "항상 표시" — 시각으로 끊지 않고 알림이 남아 있는 동안 계속 띄운다.
+                // 이때 herdr_notify 는 present_until 을 None 으로 두므로 시각을 볼 수 없다
+                // (None 을 그대로 시각 비교에 넣으면 false 가 되어 아예 안 뜬다).
+                !notices.is_empty()
+            } else {
+                app.state::<Notices>()
+                    .present_until
+                    .lock()
+                    .ok()
+                    .and_then(|u| *u)
+                    .map_or(false, |t| std::time::Instant::now() < t)
+            };
             let want_visible = has_questions || notice_active;
             if want_visible != prev_visible {
                 prev_visible = want_visible;
-                if want_visible {
-                    // 질문은 응답이 필요하니 focus, 알림만이면 focus 를 뺏지 않는다.
-                    if has_questions {
-                        present_popover(&app);
-                    } else {
-                        present_notice_popover(&app);
-                    }
-                } else {
-                    hide_popover(&app);
-                }
+                set_pet_alert(&app, want_visible);
             }
 
             std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
