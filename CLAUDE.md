@@ -18,6 +18,7 @@ Run from repo root. `bun` and `cargo` must be on PATH (`export PATH="$HOME/.bun/
 bun install            # once
 bun run tauri dev      # dev mode — opens the app window, hot-reloads (Ctrl+C to quit)
 bun run tauri build    # production build → src-tauri/target/release/bundle/ (.dmg + .app)
+./install.sh           # 위를 감싼 배포용 래퍼 — PATH 준비 + .dmg 위치 안내 (--universal / --install / --help)
 bun run build          # frontend only: tsc -b + vite build (the type-safety gate)
 bun run typecheck      # tsc --noEmit
 bun run lint           # eslint
