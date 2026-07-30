@@ -74,7 +74,6 @@ done
 # 안 주면 target/release/ 밑에 놓는다. 나중에 .dmg 를 찾으려면 이 차이를 알아야 한다.
 if $UNIVERSAL; then
   TRIPLE="universal-apple-darwin"
-  BUILD_ARGS=(--target "$TRIPLE")
   for t in x86_64-apple-darwin aarch64-apple-darwin; do
     if ! rustup target list --installed 2>/dev/null | grep -qx "$t"; then
       echo "→ rust 타겟 설치: $t"
@@ -83,7 +82,6 @@ if $UNIVERSAL; then
   done
 else
   TRIPLE=""
-  BUILD_ARGS=()
 fi
 
 BUNDLE_DIR="src-tauri/target${TRIPLE:+/$TRIPLE}/release/bundle"
@@ -99,19 +97,30 @@ fi
 
 # ── 빌드 ─────────────────────────────────────────────────────────────────────
 # 첫 실행이면 rdkafka 컴파일로 수 분 걸린다.
-bun run tauri build "${BUILD_ARGS[@]}"
+# 배열로 인자를 모으지 않는 이유: macOS 기본 bash 는 3.2 라 `set -u` 아래에서
+# 빈 배열을 "${ARR[@]}" 로 펼치면 unbound variable 로 죽는다(4.4 부터 고쳐졌다).
+if [ -n "$TRIPLE" ]; then
+  bun run tauri build --target "$TRIPLE"
+else
+  bun run tauri build
+fi
 
 # ── 산출물 확인 ──────────────────────────────────────────────────────────────
-DMG=$(find "$BUNDLE_DIR/dmg" -maxdepth 1 -name '*.dmg' 2>/dev/null | head -1)
-APP=$(find "$BUNDLE_DIR/macos" -maxdepth 1 -name '*.app' 2>/dev/null | head -1)
+# `|| true` 가 필요하다: 번들 디렉터리가 아예 없으면 find 가 실패하는데, pipefail 이
+# 그 상태를 파이프라인 밖으로 올리고 set -e 가 아래 안내를 찍기도 전에 스크립트를
+# 끝내 버린다 — 실패 원인이 화면에 한 줄도 남지 않는다.
+DMG=$(find "$BUNDLE_DIR/dmg" -maxdepth 1 -name '*.dmg' 2>/dev/null | head -1 || true)
+APP=$(find "$BUNDLE_DIR/macos" -maxdepth 1 -name '*.app' 2>/dev/null | head -1 || true)
 
 echo
 if [ -n "$DMG" ]; then
   echo "✓ 설치파일: $DMG"
   echo "  크기: $(du -h "$DMG" | cut -f1)"
 else
-  echo "✗ .dmg 를 찾지 못했습니다." >&2
-  [ -n "$APP" ] && echo "  (.app 은 만들어졌습니다: $APP — 위 ⚠️ 샌드박스 항목 참고)" >&2
+  echo "✗ .dmg 를 찾지 못했습니다: $BUNDLE_DIR/dmg" >&2
+  if [ -n "$APP" ]; then
+    echo "  (.app 은 만들어졌습니다: $APP — 위 ⚠️ 샌드박스 항목 참고)" >&2
+  fi
   exit 1
 fi
 
