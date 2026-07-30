@@ -15,9 +15,12 @@
 #     제대로 서명하려면 Apple Developer Program 가입 후 APPLE_* 환경변수가
 #     필요하다 — .github/workflows/release.yml 참고.
 #
-# ⚠️ 샌드박스(예: 에이전트 도구) 안에서는 .dmg 단계가 실패한다.
-#    bundle_dmg.sh 가 /Volumes 에 마운트하는데 그게 막히기 때문이다
-#    ("hdiutil: create failed - 작업이 허용되지 않음"). 일반 터미널에서 실행할 것.
+# ⚠️ "hdiutil: create failed - 작업이 허용되지 않음" 으로 .dmg 단계가 실패한다면
+#    터미널 앱의 TCC 권한 문제다. bundle_dmg.sh 는 임시 볼륨을 /Volumes 에 마운트해
+#    앱을 복사하는데, 이동식 볼륨 접근 권한이 없으면 그 쓰기가 EPERM 으로 막힌다
+#    (읽기·목록은 되고 쓰기만 막혀서 원인이 잘 안 보인다).
+#    시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한에 터미널 앱을
+#    추가하고 그 앱을 재시작하면 된다. 아래 사전 점검이 빌드 전에 미리 걸러 준다.
 #
 # 사용:
 #   ./install.sh              # 현재 아키텍처용 .dmg 생성
@@ -89,6 +92,57 @@ BUNDLE_DIR="src-tauri/target${TRIPLE:+/$TRIPLE}/release/bundle"
 
 VERSION=$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 echo "── My Space $VERSION 설치파일 빌드 ${TRIPLE:+($TRIPLE) }──"
+
+# ── 사전 점검: 마운트된 볼륨에 쓸 수 있는가 ──────────────────────────────────
+# tauri 의 bundle_dmg.sh 는 `hdiutil create -srcfolder` 로 임시 볼륨을 /Volumes 에
+# 마운트한 뒤 앱을 그 안으로 복사한다. 터미널 앱에 "이동식 볼륨" 접근 권한(TCC)이
+# 없으면 이 복사가 Operation not permitted 로 죽는다. 읽기·목록은 되고 쓰기만 막히며,
+# 실패는 rust 빌드가 다 끝난 뒤에야 나오므로 1초짜리 탐침으로 먼저 걸러 낸다.
+VOL="MySpaceBuildCheck"
+PROBE_DIR=$(mktemp -d)
+PROBE_OK=unknown
+if hdiutil create -size 1m -fs HFS+ -volname "$VOL" "$PROBE_DIR/probe.dmg" >/dev/null 2>&1 &&
+  hdiutil attach "$PROBE_DIR/probe.dmg" -nobrowse >/dev/null 2>&1; then
+  if touch "/Volumes/$VOL/probe" 2>/dev/null; then
+    PROBE_OK=yes
+  else
+    PROBE_OK=no
+  fi
+  hdiutil detach "/Volumes/$VOL" -quiet >/dev/null 2>&1 || true
+fi
+rm -rf "$PROBE_DIR"
+
+if [ "$PROBE_OK" = no ]; then
+  # 권한을 받아야 하는 것은 셸이 아니라 그 셸을 띄운 터미널 *앱* 이다(TCC 는 앱 단위).
+  # 조상을 거슬러 올라가며 .app 번들 안의 실행 파일을 처음 만나는 지점을 찾는다.
+  TERM_APP=""
+  probe_pid=$$
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    probe_pid=$(ps -o ppid= -p "$probe_pid" 2>/dev/null | tr -d ' ')
+    [ -z "$probe_pid" ] && break
+    [ "$probe_pid" -le 1 ] 2>/dev/null && break
+    probe_cmd=$(ps -o comm= -p "$probe_pid" 2>/dev/null || true)
+    case "$probe_cmd" in
+      */*.app/Contents/MacOS/*)
+        TERM_APP=${probe_cmd%%.app/Contents/MacOS/*}.app
+        break
+        ;;
+    esac
+  done
+  cat >&2 <<MSG
+✗ 마운트된 디스크 이미지에 쓸 수 없습니다 (Operation not permitted).
+  이대로 빌드하면 몇 분 뒤 bundle_dmg.sh 단계에서 실패합니다. 먼저 권한을 주세요.
+
+  시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한
+    → 지금 쓰는 터미널 앱을 추가하고 켜기 → 그 앱을 완전히 종료 후 다시 실행
+${TERM_APP:+"
+  이 셸을 띄운 앱: $TERM_APP"}
+
+  권한을 주기 싫다면 GitHub Actions 로 빌드하세요 — 태그를 밀면 릴리스에
+  .dmg 가 올라옵니다(.github/workflows/release.yml). CI 러너에는 이 제약이 없습니다.
+MSG
+  exit 1
+fi
 
 # ── 의존성 ───────────────────────────────────────────────────────────────────
 if [ ! -d node_modules ]; then
