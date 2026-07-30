@@ -19,6 +19,7 @@ bun install            # once
 bun run tauri dev      # dev mode — opens the app window, hot-reloads (Ctrl+C to quit)
 bun run tauri build    # production build → src-tauri/target/release/bundle/ (.dmg + .app)
 ./install.sh           # 위를 감싼 배포용 래퍼 — PATH·서명키 준비 + .dmg 굽기 (--universal / --install / --help)
+./patch-version.sh     # 릴리스 한 번 — 버전 올림 → 커밋·태그·푸시 → CI 감시 → 초안 퍼블리시 (--minor / --dry-run / --help)
 bun run build          # frontend only: tsc -b + vite build (the type-safety gate)
 bun run typecheck      # tsc --noEmit
 bun run lint           # eslint
@@ -81,11 +82,17 @@ Distribution target is **macOS Apple Silicon only** (no OS code signing/notariza
 
 **How it works:** `App.tsx` calls `checkForUpdates()` (`src/lib/updater.ts`) once on startup. It reads `latest.json` from the endpoint in `tauri.conf.json` → `plugins.updater.endpoints` (`.../releases/latest/download/latest.json`), compares versions against `tauri.conf.json` `version`, and if newer prompts via a sonner toast → downloads → `relaunch()`. Updater artifacts are signed with a minisign key; the **public** key lives in `tauri.conf.json` `plugins.updater.pubkey`.
 
-**Release steps:**
-1. Bump `version` in `src-tauri/tauri.conf.json` (this is the version the updater compares; keep `Cargo.toml` in sync).
-2. Commit, then push a matching tag: `git tag v0.1.1 && git push origin v0.1.1`.
-3. `.github/workflows/release.yml` builds on `macos-latest` (aarch64) via `tauri-action`, signs artifacts, and creates a **draft** release with the `.dmg`, `.app.tar.gz`, `.sig`, and `latest.json`.
-4. **Publish the draft** on GitHub — the updater's `releases/latest/download/` endpoint only serves published (non-draft) releases.
+**Releasing is one command: `./patch-version.sh`** (`--minor` / `--major` / `--set x.y.z`, `--dry-run` to see the plan). Commit your work first, then run it. It bumps the version, commits, tags, pushes, watches the Actions run, publishes the draft, and then **verifies `latest.json` actually serves the new version** — that last check is the only proof users can update. Flags exist to stop partway (`--no-wait`, `--no-publish`, `--include-dirty`, `--skip-check`).
+
+What it automates, and why each step is load-bearing:
+1. The version lives in **four** files — `src-tauri/tauri.conf.json` (the one the updater compares), `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` (the `my-space` package block — stale here and cargo rewrites it mid-build, dirtying the tree), and `package.json`. The build succeeds when they disagree, so hand-editing goes wrong silently. The script writes all four and re-reads them to confirm.
+2. `release.yml` triggers on **`v*` tags only** — pushing a commit to `main` does nothing.
+3. `.github/workflows/release.yml` builds `macos-latest` aarch64 via `tauri-action`, signs, and creates a **draft** release with the `.dmg`, `.app.tar.gz`, `.sig`, and `latest.json`.
+4. **The draft must be published** (`gh release edit <tag> --draft=false --latest`) — `releases/latest/download/` does not serve drafts. Skipping this is invisible: the endpoint 404s and the app's startup check fails *silently* (`checkForUpdates(silent = true)` shows nothing). This is exactly what happened to `v0.0.1` — CI succeeded and uploaded all four assets to a draft that was never published, so the endpoint has 404'd since.
+
+Draft-then-publish is kept deliberately over `releaseDraft: false`: assets upload to the draft and go public in one step, so there's no window where `latest.json` announces a version whose `.app.tar.gz` hasn't finished uploading.
+
+Two things to know about how updates reach users: the updater installs the **`.app.tar.gz`**, not the `.dmg` (the app replaces its own bundle and relaunches — no re-install, no `xattr` dance; that's first-install only), and the check runs **only at app startup**, so a tray-resident app that nobody restarts won't notice a release. Also, CI builds **aarch64 only** — `latest.json` has no `darwin-x86_64` entry, so Intel users never update.
 
 **Required GitHub secrets** (Settings → Secrets and variables → Actions): `TAURI_SIGNING_PRIVATE_KEY` (contents of `~/.tauri/myspace-updater.key`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (empty for the current key). ⚠️ The private key is **not** in the repo — losing it breaks the update chain for installed apps.
 
