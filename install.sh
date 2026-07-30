@@ -10,9 +10,10 @@
 #     (CLAUDE.md 의 "Commands" 절과 같은 준비를 스크립트가 대신한다.)
 #   - 첫 컴파일은 rdkafka 가 librdkafka(C)를 번들 소스에서 빌드해 수 분 걸린다.
 #     이후에는 증분이라 훨씬 빠르다.
-#   - 서명은 하지 않는다(adhoc). 받은 사람은 첫 실행에서 Gatekeeper 를 만나므로
-#     "우클릭 → 열기" 를 안내해야 한다. 제대로 서명하려면 Apple Developer Program
-#     가입 후 APPLE_* 환경변수가 필요하다 — .github/workflows/release.yml 참고.
+#   - 서명은 하지 않는다(adhoc). macOS 15 부터 "우클릭 → 열기" 우회가 사라져서,
+#     받은 사람은 quarantine 속성을 직접 지워야 앱이 열린다(설치가이드.md).
+#     제대로 서명하려면 Apple Developer Program 가입 후 APPLE_* 환경변수가
+#     필요하다 — .github/workflows/release.yml 참고.
 #
 # ⚠️ 샌드박스(예: 에이전트 도구) 안에서는 .dmg 단계가 실패한다.
 #    bundle_dmg.sh 가 /Volumes 에 마운트하는데 그게 막히기 때문이다
@@ -125,7 +126,10 @@ else
 fi
 
 echo
-echo "  받은 사람은 첫 실행 시 우클릭 → 열기 로 Gatekeeper 를 통과해야 합니다(미서명)."
+echo "  미서명(adhoc)이라 받은 사람은 설치 후 아래 한 줄을 실행해야 열립니다."
+echo "  (macOS 15 부터 '우클릭 → 열기' 우회는 없어졌습니다 — 설치가이드.md 참고)"
+echo
+echo "    xattr -dr com.apple.quarantine \"/Applications/My Space.app\""
 
 if $INSTALL_AFTER && [ -n "$APP" ]; then
   echo
