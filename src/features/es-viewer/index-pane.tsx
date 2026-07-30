@@ -5,6 +5,7 @@ import {
   ArrowUpIcon,
   ChevronDownIcon,
   ChevronsUpDownIcon,
+  EraserIcon,
   RotateCcwIcon,
   SearchIcon,
   Trash2Icon,
@@ -98,6 +99,8 @@ export function IndexPane({
   const [colsOpen, setColsOpen] = useState(false)
   const [modal, setModal] = useState<ModalState | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [clearConfirm, setClearConfirm] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null)
 
   const colsBtnRef = useRef<HTMLDivElement>(null)
@@ -385,6 +388,24 @@ export function IndexPane({
       toast.error(`_${kind} 조회 실패: ` + errText(err))
     }
   }
+  /** 인덱스는 남기고 문서만 전부 삭제. 문서 수가 많으면 오래 걸려 진행 표시를 둔다. */
+  const doClearIndex = async () => {
+    setClearConfirm(false)
+    setClearing(true)
+    try {
+      const res = await client.deleteAllDocs(index)
+      const deleted = typeof res.deleted === "number" ? res.deleted : 0
+      setSelected(new Set())
+      toast.success(`${fmtNum(deleted)}개 문서를 삭제했습니다.`)
+      await runSearch(0)
+      onDocsChanged()
+    } catch (err) {
+      toast.error("데이터 삭제 실패: " + errText(err))
+    } finally {
+      setClearing(false)
+    }
+  }
+
   const doDeleteIndex = async () => {
     setDeleteConfirm(false)
     try {
@@ -474,6 +495,16 @@ export function IndexPane({
               </button>
             ))}
           </div>
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={clearing}
+            onClick={() => setClearConfirm(true)}
+            className="text-ui-error"
+          >
+            <EraserIcon />
+            {clearing ? "삭제 중…" : "모든 데이터 삭제"}
+          </Button>
           <Button
             variant="outline"
             size="xs"
@@ -783,6 +814,21 @@ export function IndexPane({
           editable={modal.editable}
           onClose={() => setModal(null)}
         />
+      )}
+
+      {clearConfirm && (
+        <ConfirmDialog
+          title="모든 데이터 삭제"
+          confirmLabel="전체 삭제"
+          requireText={index}
+          onCancel={() => setClearConfirm(false)}
+          onConfirm={doClearIndex}
+        >
+          이 작업은 <strong>되돌릴 수 없습니다.</strong> 인덱스{" "}
+          <strong className="text-ui-error">{index}</strong> 안의 모든 문서
+          {meta?.["docs.count"] ? ` (${fmtNum(meta["docs.count"])}개)` : ""} 가
+          삭제됩니다. 인덱스 자체와 매핑·설정은 그대로 유지됩니다.
+        </ConfirmDialog>
       )}
 
       {deleteConfirm && (

@@ -206,6 +206,18 @@ export class EsClient {
     return this.request("DELETE", `/${encodeURIComponent(index)}`)
   }
 
+  /**
+   * 인덱스는 남기고 모든 문서만 삭제 (_delete_by_query + match_all) — 되돌릴 수 없음.
+   * 매핑/설정은 그대로 유지된다.
+   */
+  deleteAllDocs(index: string) {
+    return this.request<{ deleted?: number }>(
+      "POST",
+      `/${encodeURIComponent(index)}/_delete_by_query?refresh=true&conflicts=proceed`,
+      { query: { match_all: {} } }
+    )
+  }
+
   /** 선택한 문서들 삭제 (_delete_by_query, _id 기준) — 되돌릴 수 없음 */
   deleteByIds(index: string, ids: string[]) {
     return this.request<{ deleted?: number }>(

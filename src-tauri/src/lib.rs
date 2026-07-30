@@ -32,6 +32,17 @@ const BROWSER_PREFIX: &str = "browser-tab-";
 /// 프론트엔드의 `src/lib/window-role.ts` VIEW_WINDOW_PREFIX 와 같아야 한다.
 const VIEW_WINDOW_PREFIX: &str = "view-";
 
+/// 로그인 항목(자동 실행)으로 켜졌을 때 붙는 실행 인자.
+/// `tauri_plugin_autostart::init` 에 넘기는 값과 같아야 한다 — 이 인자가 있으면
+/// 메인 창을 띄우지 않고 트레이에만 올린다(부팅할 때마다 창이 튀어나오지 않게).
+const AUTOSTART_FLAG: &str = "--autostart";
+
+/// 이번 실행이 로그인 항목에서 시작된 것인지. 인자는 실행 중 바뀌지 않으므로 한 번만 읽는다.
+fn launched_at_login() -> bool {
+    static AT_LOGIN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AT_LOGIN.get_or_init(|| std::env::args().any(|a| a == AUTOSTART_FLAG))
+}
+
 /// 모든 브라우저 탭이 공유하는 영속 데이터 저장소 식별자(고정 UUID).
 /// macOS(WKWebView)는 이 식별자가 있으면 `dataStoreForIdentifier` 로 안정된 위치에
 /// 쿠키·localStorage·세션을 저장하므로, 앱을 재시작해도 로그인 상태가 유지된다
@@ -416,6 +427,13 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        // 로그인 시 자동 실행. macOS 는 LaunchAgent(플리스트) 방식을 쓴다 — AppleScript 방식은
+        // "System Events 제어" 권한 프롬프트를 띄우므로 쓰지 않는다.
+        // 등록되는 실행 인자에 AUTOSTART_FLAG 를 넣어, 부팅으로 켜졌는지 프로세스가 알 수 있게 한다.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![AUTOSTART_FLAG]),
+        ))
         .plugin(external_navigation_plugin())
         .manage(herdr::WatchState::default())
         .manage(herdr::PendingQuestions::default())
@@ -606,6 +624,13 @@ pub fn run() {
                 && matches!(payload.event(), PageLoadEvent::Finished)
             {
                 log::info!("{label} webview finished loading");
+                // 로그인 항목으로 켜진 첫 실행에서는 메인 창을 띄우지 않고 트레이에만 올린다.
+                // 웹뷰는 (숨은 채로) 이미 로드됐으므로 감시·알림·펫은 그대로 돌고,
+                // 트레이 메뉴의 "My Space 열기"(present_main)로 언제든 꺼낼 수 있다.
+                if label == "main" && launched_at_login() {
+                    log::info!("자동 실행(--autostart)이라 메인 창을 숨긴 채로 시작합니다");
+                    return;
+                }
                 let _ = webview.window().show();
                 return;
             }

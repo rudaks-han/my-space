@@ -13,6 +13,7 @@ import {
   PaletteIcon,
   RotateCwIcon,
   ServerIcon,
+  SlidersHorizontalIcon,
   SquareKanbanIcon,
   type LucideIcon,
 } from "lucide-react"
@@ -24,6 +25,11 @@ import { isTauri, trackedInvoke } from "@/lib/tauri"
 import { useIsDark } from "@/components/theme-provider"
 import { useThemePreset } from "@/components/theme-preset-provider"
 import { useSettings } from "./settings-context"
+import {
+  AUTOSTART_SUPPORTED,
+  applyAutoStart,
+  useAutoStartState,
+} from "./use-autostart"
 import { SlackConnectionPanel } from "@/features/slack/slack-connection"
 import { GcalConnectionPanel } from "@/features/gcal/gcal-connection"
 import { GdriveConnectionPanel } from "@/features/gdrive/gdrive-connection"
@@ -334,6 +340,48 @@ function SlackThemeCard({
 }
 
 /** Appearance(폰트 + 테마 프리셋 + Slack 사이드바 테마) 설정 화면. */
+/** 일반 카테고리 설정 화면 — 지금은 로그인 시 자동 실행 하나. */
+function GeneralSettingsPanel() {
+  const { settings, setGeneral } = useSettings()
+  const { registered, refresh } = useAutoStartState()
+  const autoStart = settings.general.autoStart
+
+  // 설정값을 바꾼 뒤 OS 등록까지 끝나고 나서 실제 상태를 다시 읽는다.
+  // (App.tsx 의 useAutoStartSync 도 같은 일을 하지만 언제 끝나는지 여기선 알 수 없다.
+  //  applyAutoStart 는 여러 번 불러도 같은 결과라 겹쳐 돌아도 문제없다.)
+  const toggle = (next: boolean) => {
+    setGeneral({ autoStart: next })
+    void applyAutoStart(next).then(refresh)
+  }
+
+  return (
+    <div className="flex flex-col">
+      <PanelHeader
+        title="일반"
+        description="앱을 언제 시작할지 등 앱 전반의 동작을 설정합니다."
+      />
+      <div className="mt-2">
+        <SettingRow
+          title="로그인 시 자동 실행"
+          description="macOS 에 로그인하면 My Space 를 자동으로 실행합니다. 이때는 창을 띄우지 않고 메뉴바 트레이 아이콘으로만 올라오므로, 작업 감시·알림·펫은 돌면서 화면을 가리지는 않습니다(트레이 메뉴의 'My Space 열기' 로 창을 꺼냅니다)."
+          checked={autoStart}
+          onChange={toggle}
+        />
+        {/* 등록은 조용히 실패할 수 있어서 OS 쪽 실제 상태를 보여 준다. */}
+        <p className="mt-2 text-[13px] text-muted-foreground">
+          {!AUTOSTART_SUPPORTED
+            ? "개발 모드에서는 실제 등록을 하지 않습니다(빌드된 앱에서만 적용)."
+            : registered === null
+              ? "시스템 등록 상태를 확인하지 못했습니다."
+              : registered
+                ? "시스템 로그인 항목에 등록되어 있습니다."
+                : "시스템 로그인 항목에 등록되어 있지 않습니다."}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function AppearanceSettingsPanel() {
   const {
     presets,
@@ -1103,6 +1151,12 @@ interface SettingsCategory {
  * 왼쪽 카테고리 목록과 오른쪽 화면에 자동 반영된다.
  */
 const CATEGORIES: SettingsCategory[] = [
+  {
+    id: "general",
+    label: "일반",
+    icon: SlidersHorizontalIcon,
+    panel: <GeneralSettingsPanel />,
+  },
   {
     id: "appearance",
     label: "Appearance",

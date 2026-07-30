@@ -11,6 +11,18 @@ import {
  * 컴포넌트 파일이 컴포넌트 외의 값을 export 하면 fast refresh 가 깨지므로 여기로 분리했다.
  */
 
+/** 앱 전반(특정 기능에 속하지 않는) 설정. */
+export interface GeneralSettings {
+  /**
+   * 로그인(macOS 시작) 시 앱을 자동 실행한다. 기본값 켜짐 — 이 앱은 트레이에 상주해
+   * 작업 감시·알림을 돌리는 것이 주 목적이라, 켜 두지 않으면 그 기능이 무의미해진다.
+   *
+   * 실제 등록은 OS 쪽(macOS: `~/Library/LaunchAgents` 플리스트)이고 이 값은 **의도**만
+   * 담는다. 둘을 맞추는 일은 `use-autostart.ts` 가 앱 시작 시·토글 시 한다.
+   */
+  autoStart: boolean
+}
+
 /** Claude Code 관련 설정. */
 export interface ClaudeCodeSettings {
   /**
@@ -139,6 +151,7 @@ export interface PetSettings {
  * DEFAULT_SETTINGS 에 기본값을, settings-view.tsx 의 CATEGORIES 에 화면을 추가한다.
  */
 export interface AppSettings {
+  general: GeneralSettings
   claudeCode: ClaudeCodeSettings
   slack: SlackSettings
   gmail: GmailSettings
@@ -148,6 +161,9 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  general: {
+    autoStart: true,
+  },
   claudeCode: {
     watchEnabled: true,
     notifyOnBlocked: true,
@@ -199,6 +215,7 @@ export function withDefaults(
   stored: Partial<AppSettings> | null | undefined
 ): AppSettings {
   return {
+    general: { ...DEFAULT_SETTINGS.general, ...(stored?.general ?? {}) },
     claudeCode: {
       ...DEFAULT_SETTINGS.claudeCode,
       ...(stored?.claudeCode ?? {}),
@@ -233,6 +250,8 @@ function migratePet(pet: PetSettings): PetSettings {
 
 export interface SettingsContextValue {
   settings: AppSettings
+  /** 앱 전반 설정 일부를 갱신한다. */
+  setGeneral: (patch: Partial<GeneralSettings>) => void
   /** Claude Code 설정 일부를 갱신한다. */
   setClaudeCode: (patch: Partial<ClaudeCodeSettings>) => void
   /** Slack 설정 일부를 갱신한다. */

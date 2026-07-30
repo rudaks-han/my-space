@@ -32,6 +32,8 @@ tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
 # 네이티브 파일 열기/저장 다이얼로그(프론트 @tauri-apps/plugin-dialog).
 tauri-plugin-dialog = "2"
+# 로그인 시 자동 실행(macOS 는 ~/Library/LaunchAgents 플리스트 방식 — 권한 프롬프트 없음).
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Slack/Google API 호출용 HTTP 클라이언트. macOS 는 native-tls(Secure Transport)를 써서 OpenSSL 불필요.

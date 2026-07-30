@@ -9,6 +9,7 @@ import {
   type ClaudeCodeSettings,
   type CoworkSettings,
   type FlexSettings,
+  type GeneralSettings,
   type GmailSettings,
   type PetSettings,
   type SlackSettings,
@@ -28,6 +29,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   )
 
   const settings = useMemo(() => withDefaults(raw), [raw])
+
+  const setGeneral = useCallback(
+    (patch: Partial<GeneralSettings>) => {
+      setRaw((prev) => {
+        const base = withDefaults(prev)
+        return { ...base, general: { ...base.general, ...patch } }
+      })
+    },
+    [setRaw]
+  )
 
   const setClaudeCode = useCallback(
     (patch: Partial<ClaudeCodeSettings>) => {
@@ -92,6 +103,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       settings,
+      setGeneral,
       setClaudeCode,
       setSlack,
       setGmail,
@@ -99,7 +111,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setCowork,
       setPet,
     }),
-    [settings, setClaudeCode, setSlack, setGmail, setFlex, setCowork, setPet]
+    [
+      settings,
+      setGeneral,
+      setClaudeCode,
+      setSlack,
+      setGmail,
+      setFlex,
+      setCowork,
+      setPet,
+    ]
   )
 
   return (

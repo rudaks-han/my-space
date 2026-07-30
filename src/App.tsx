@@ -20,10 +20,21 @@ import { ClaudeNotifier } from "@/features/claude-bridge/claude-notifier"
 import { ClaudeActivityProvider } from "@/features/claude-bridge/claude-activity-store"
 import { PetController } from "@/features/pet/pet-controller"
 import { PetFeedPublisher } from "@/features/pet/pet-feed-publisher"
+import { useAutoStartSync } from "@/features/settings/use-autostart"
 import { TabActiveProvider } from "@/lib/tab-active-store"
 import { checkForUpdates } from "@/lib/updater"
 import { cn } from "@/lib/utils"
 import { viewElement } from "@/lib/view-info"
+
+/**
+ * 설정의 "로그인 시 자동 실행"을 OS 등록 상태에 맞추기만 하는 껍데기.
+ * 설정을 읽어야 해서 SettingsProvider 안에 있어야 하고(App 자신은 그 밖이다),
+ * App 은 메인 창에서만 렌더되므로 창 구분은 따로 하지 않는다.
+ */
+function AutoStartSync() {
+  useAutoStartSync()
+  return null
+}
 
 export default function App() {
   // 열린 탭·활성 탭(활성 탭 id 는 기존 myspace.activeMenu 키를 그대로 쓴다).
@@ -87,6 +98,8 @@ export default function App() {
             <GmailProvider>
               <ClaudeActivityProvider>
                 <ClaudeNotifier />
+                {/* 설정의 "로그인 시 자동 실행" 을 OS 로그인 항목에 반영한다. */}
+                <AutoStartSync />
                 {/* 설정의 "상시 표시" 에 맞춰 데스크톱 펫 창을 띄운다/숨긴다. */}
                 <PetController />
                 {/* 이미 폴링해 둔 Slack·Gmail 안읽음 건수를 펫이 볼 수 있게 적어 둔다. */}

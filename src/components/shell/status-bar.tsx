@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react"
+import { getVersion } from "@tauri-apps/api/app"
 import type { LucideIcon } from "lucide-react"
 import {
   BellIcon,
@@ -12,6 +14,7 @@ import { ClaudeBrandIcon } from "@/components/brand-icons"
 import {
   useClaudeUsage,
   type ClaudeUsage,
+  type UsageWindow,
 } from "@/features/claude-bridge/use-claude-usage"
 import { useHerdr } from "@/features/claude-bridge/use-herdr"
 import { reminderNextAt } from "@/features/home/home-utils"
@@ -20,10 +23,28 @@ import { useReminders } from "@/features/reminder/use-reminders"
 import { useSlack } from "@/features/slack/use-slack"
 import { useStickies } from "@/features/todo/use-todos"
 import { SETTINGS_ID } from "@/lib/use-open-tabs"
+import { isTauri } from "@/lib/tauri"
 import { cn } from "@/lib/utils"
 
-/** 앱 버전 표시(릴리스 시 tauri.conf.json 의 version 과 함께 올린다). */
-const APP_VERSION = "v0.1.0"
+/**
+ * 앱 버전 — **하드코딩하지 않는다.** `getVersion()` 이 tauri.conf.json 의 `version` 을
+ * 그대로 돌려주므로, 릴리스 때 거기만 올리면 상태바도 따라온다(예전엔 별도 상수라
+ * 실제 설치 버전과 어긋났다). 브라우저 등 Tauri 밖에서는 표시하지 않는다.
+ */
+function useAppVersion(): string | null {
+  const [version, setVersion] = useState<string | null>(null)
+  useEffect(() => {
+    if (!isTauri()) return
+    let alive = true
+    getVersion()
+      .then((v) => alive && setVersion(v))
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
+  return version
+}
 
 /** 개수 강조 색 — Slack 팔레트(안읽음 빨강 / 진행 초록 / 대기 노랑). */
 type StatusTone = "error" | "success" | "warning"
@@ -133,19 +154,46 @@ function fmtRemainingKo(iso: string | null, now: number): string | null {
 }
 
 /**
- * Claude Code 남은 사용량 — 5시간 세션·주간(week) 사용률을 게이지 + 퍼센트로,
- * 뒤에 초기화까지 남은 시간을 괄호로 덧붙인다(`45% 5h (2h 12m)`).
- * 게이지는 둘 중 더 높은(한계에 가까운) 쪽을 나타내고, 초기화 시각은 툴팁에 있다.
- * 자격증명이 없거나 두 창 모두 비면 아무것도 그리지 않는다.
+ * 사용량 창 하나 — 자기 사용률만큼 채운 게이지 + `65% 5h (1h 14m)` 텍스트.
+ * 게이지 색은 **그 창의** 사용률로 정한다(5h·주간이 서로 다른 색일 수 있다).
+ */
+function UsageSegment({
+  label,
+  win,
+  now,
+}: {
+  label: string
+  win: UsageWindow
+  now: number
+}) {
+  const left = fmtRemaining(win.resets_at, now)
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="h-1.5 w-8 overflow-hidden rounded-full bg-ui-chrome-active">
+        <span
+          className={cn("block h-full rounded-full", usageBarClass(win.utilization))}
+          style={{ width: `${Math.min(win.utilization, 100)}%` }}
+        />
+      </span>
+      <span className="tabular-nums">
+        {Math.round(win.utilization)}% {label}
+        {left && ` (${left})`}
+      </span>
+    </span>
+  )
+}
+
+/**
+ * Claude Code 남은 사용량 — 5시간 세션·주간(week) 사용률을 **각각** 게이지 + 퍼센트로
+ * 나란히 그린다(`65% 5h (1h 14m) · 81% week (2d 12h)`). 하나의 바로 합치면 더 높은 창의
+ * 값이 낮은 창의 숫자 옆에 붙어 오해를 부르므로(예: 바는 81%, 숫자는 65%), 창마다 자기
+ * 바를 갖는다. 초기화 시각은 툴팁에 있고, 자격증명이 없거나 두 창 모두 비면 그리지 않는다.
  */
 function UsageMeter({ usage, now }: { usage: ClaudeUsage; now: number }) {
   const five = usage.five_hour
   const week = usage.seven_day
   if (!five && !week) return null
 
-  const peak = Math.max(five?.utilization ?? 0, week?.utilization ?? 0)
-  const fiveLeft = five && fmtRemaining(five.resets_at, now)
-  const weekLeft = week && fmtRemaining(week.resets_at, now)
   const parts = [
     five &&
       [
@@ -173,19 +221,9 @@ function UsageMeter({ usage, now }: { usage: ClaudeUsage; now: number }) {
     >
       {/* Claude 브랜드 로고(주황 선버스트) — 메뉴 아이콘과 같은 애셋을 재사용. */}
       <ClaudeBrandIcon className="size-3.5 shrink-0" />
-      <span className="h-1.5 w-12 overflow-hidden rounded-full bg-ui-chrome-active">
-        <span
-          className={cn("block h-full rounded-full", usageBarClass(peak))}
-          style={{ width: `${Math.min(peak, 100)}%` }}
-        />
-      </span>
-      <span className="tabular-nums">
-        {five && `${Math.round(five.utilization)}% 5h`}
-        {fiveLeft && ` (${fiveLeft})`}
-        {five && week && " · "}
-        {week && `${Math.round(week.utilization)}% week`}
-        {weekLeft && ` (${weekLeft})`}
-      </span>
+      {five && <UsageSegment label="5h" win={five} now={now} />}
+      {five && week && <span className="text-ui-chrome-muted-fg">·</span>}
+      {week && <UsageSegment label="week" win={week} now={now} />}
     </span>
   )
 }
@@ -209,6 +247,7 @@ export function StatusBar({ onOpen }: StatusBarProps) {
   const { notes } = useStickies()
   const { reminders } = useReminders()
   const { usage } = useClaudeUsage()
+  const appVersion = useAppVersion()
 
   const unread = channels.reduce((sum, c) => sum + c.unread, 0)
   const working = workspaces.filter((w) => w.agent_status === "working").length
@@ -264,9 +303,11 @@ export function StatusBar({ onOpen }: StatusBarProps) {
           ariaLabel={`예정된 알림 ${activeReminders}건`}
           onClick={() => onOpen("reminder")}
         />
-        <span className="flex h-full cursor-default items-center px-2">
-          {APP_VERSION}
-        </span>
+        {appVersion && (
+          <span className="flex h-full cursor-default items-center px-2">
+            v{appVersion}
+          </span>
+        )}
         <StatusItem
           icon={SettingsIcon}
           ariaLabel="설정"
