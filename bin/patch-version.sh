@@ -354,13 +354,17 @@ fi
 
 # ── CI 대기 ──────────────────────────────────────────────────────────────────
 # 태그 푸시로 생긴 실행은 headBranch 가 태그 이름이다. 등록까지 몇 초 걸리므로 잠깐 찾는다.
+# headSha 까지 봐야 한다: 같은 태그를 지우고 다시 밀면(실패한 릴리스를 고칠 때가 그렇다)
+# 옛 실행도 headBranch 가 같아서, 태그 이름만으로 고르면 **이미 실패한 옛 실행**을 집어
+# 방금 시작한 빌드를 실패로 보고한다. 태그는 방금 만든 HEAD 를 가리키므로 sha 로 구분한다.
+HEAD_SHA=$(git rev-parse HEAD)
 echo
 echo "→ Actions 실행을 찾는 중…"
 RUN_ID=""
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
   RUN_ID=$(gh run list --workflow=Release --limit 20 \
-    --json databaseId,headBranch \
-    --jq "[.[] | select(.headBranch == \"$TAG\")] | first | .databaseId" 2>/dev/null || true)
+    --json databaseId,headBranch,headSha \
+    --jq "[.[] | select(.headBranch == \"$TAG\" and .headSha == \"$HEAD_SHA\")] | first | .databaseId" 2>/dev/null || true)
   case "$RUN_ID" in
     "" | null) RUN_ID="" ;;
     *) break ;;
