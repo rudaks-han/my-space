@@ -2504,7 +2504,7 @@ dependencies = [
 
 [[package]]
 name = "my-space"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "aes",
  "base64 0.22.1",
