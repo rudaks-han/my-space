@@ -5,9 +5,11 @@ import {
   MoreHorizontalIcon,
 } from "lucide-react"
 
+import { useSettings } from "@/features/settings/settings-context"
 import { useLocalStorage } from "@/lib/use-local-storage"
 import { useMenuOrder } from "@/lib/use-menu-order"
 import { cn } from "@/lib/utils"
+import { unsupportedReason } from "@/menus"
 
 /** 사이드바 폭(px) — 저장 키와 허용 범위. */
 const WIDTH_KEY = "myspace.sidebarWidth"
@@ -53,12 +55,24 @@ interface SideBarProps {
  * 우측 끝 4px 는 폭 조절 핸들이다(폭도 localStorage 에 저장).
  */
 export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
-  const { groups, moveItem } = useMenuOrder()
+  const { groups: allGroups, moveItem } = useMenuOrder()
+  const { settings } = useSettings()
   const [width, setWidth] = useLocalStorage<number>(WIDTH_KEY, DEFAULT_WIDTH)
   const [sections, setSections] = useLocalStorage<Record<string, boolean>>(
     SECTIONS_KEY,
     {}
   )
+
+  // 설정 → 메뉴 설정에서 끈 그룹·메뉴는 트리에서 뺀다. 항목이 하나도 남지 않은 그룹은
+  // 제목만 남아 빈 섹션이 되므로 그룹째 감춘다.
+  const { hiddenGroups, hiddenItems } = settings.menus
+  const groups = allGroups
+    .filter((g) => !hiddenGroups.includes(g.id))
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((m) => !hiddenItems.includes(m.id)),
+    }))
+    .filter((g) => g.items.length > 0)
 
   // 드래그 중인 항목과 그룹, 드롭 대상 표시용 상태. groupId 로 같은 그룹 안에서만 재정렬.
   // dropAt.before = 대상 항목의 위쪽 절반(= 그 앞에 넣기), false = 아래쪽 절반(= 뒤에 넣기).
@@ -199,6 +213,10 @@ export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
                   group.items.map((m) => {
                     const Icon = m.icon
                     const isDragging = dragId === m.id
+                    // 이 OS 에서 못 쓰는 메뉴: 아이콘·이름만 흐리게 하고 "사용불가" 칩을
+                    // 붙인다. 행 전체에 opacity 를 주면 활성 상태(와인색 알약)일 때
+                    // 칩까지 같이 옅어져 읽기 어려워진다.
+                    const blocked = unsupportedReason(m)
                     // 같은 그룹의 다른 항목 위에 있을 때만 삽입 위치를 그린다.
                     const drop =
                       dragGroup === group.id &&
@@ -235,9 +253,27 @@ export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
                               : "before:-bottom-px")
                         )}
                       >
-                        <Icon className="size-4 shrink-0" />
-                        <span className="truncate">{m.title}</span>
-                        {m.badge}
+                        <Icon
+                          className={cn(
+                            "size-4 shrink-0",
+                            blocked && "opacity-55"
+                          )}
+                        />
+                        <span className={cn("truncate", blocked && "opacity-55")}>
+                          {m.title}
+                        </span>
+                        {/* 사용불가일 때는 안 읽음 배지 자리를 칩이 가져간다 — 어차피
+                            데이터가 오지 않으므로 둘을 같이 띄울 이유가 없다. */}
+                        {blocked ? (
+                          <span
+                            title={blocked}
+                            className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-px text-[11px] font-bold text-muted-foreground"
+                          >
+                            사용불가
+                          </span>
+                        ) : (
+                          m.badge
+                        )}
                       </div>
                     )
                   })}

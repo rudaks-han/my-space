@@ -31,6 +31,7 @@ export function PetController() {
   const { settings, setPet } = useSettings()
   const { enabled, scale } = settings.pet
   const noticeSeconds = settings.pet.noticeSeconds ?? 12
+  const claudeNotify = settings.pet.notify.claude
   // 세로비는 그리는 쪽과 **같은 판단**에서 가져온다 — 스프라이트 프레임은 세로로 길고
   // (192×208) 이미지 종류는 정사각이라, 여기서 따로 계산하면 첫 표시에서 위가 잘린다.
   const aspect = petArt(settings.pet).aspect
@@ -75,6 +76,17 @@ export function PetController() {
     if (!isTauri() || !isMainWindow) return
     void trackedInvoke("pet_set_notice_ttl", { seconds: noticeSeconds })
   }, [noticeSeconds])
+
+  /*
+   * Claude Code 알림을 받을지도 Rust 에 알려 준다. herdr 알림은 Rust 가 만들므로,
+   * 프론트엔드에서만 걸러 내면 **말풍선은 비어 있는데 펫이 불쑥 나타난다**(꺼 둔 상태에서
+   * 알림이 오면 Rust 가 표시 축을 올린다). Gmail·Slack·캘린더는 반대로 프론트엔드가
+   * 만들어 보내는 알림이라, 꺼 두면 애초에 오지 않아 Rust 가 알 필요가 없다.
+   */
+  useEffect(() => {
+    if (!isTauri() || !isMainWindow) return
+    void trackedInvoke("pet_set_claude_alert", { enabled: claudeNotify })
+  }, [claudeNotify])
 
   useEffect(() => {
     if (!isTauri() || !isMainWindow) return

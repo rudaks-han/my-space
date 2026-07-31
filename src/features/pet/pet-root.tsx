@@ -33,14 +33,20 @@ const SAVE_DEBOUNCE_MS = 250
  *    Slack·Gmail 건수는 여기가 아니라 다이얼 뱃지가 맡는다 — 성격이 다른 정보를 한 목록에
  *    섞으면 무엇을 보는 화면인지 흐려진다.
  *
- * 숨기려면 설정에서 "상시 표시"를 끈다 — 펫 위에 닫기 버튼은 두지 않는다
- * (캐릭터를 가리고, 드래그·클릭과 손이 겹친다).
+ * 숨기려면 설정에서 "상시 표시"를 끈다 — 펫(창) 자체에는 닫기 버튼을 두지 않는다
+ * (캐릭터를 가리고, 드래그·클릭과 손이 겹친다). 알림 카드의 X 는 그 알림 한 건만 치우는
+ * 것으로, 창을 숨기지 않는다.
  */
 export function PetRoot() {
   const { settings } = useSettings()
   const pet = settings.pet
   // 알림 유지 시간은 설정에서 — 0 이면 치울 때까지 남는다.
-  const state = usePetMood(Math.max(0, pet.noticeSeconds ?? 12) * 1000)
+  // Claude Code 알림은 여기서도 걸러야 한다: 상시 표시로 떠 있는 펫은 Rust 의 알림 축과
+  // 무관하게 herdr 이벤트를 계속 받으므로, 설정에서 꺼도 말풍선은 그대로 뜬다.
+  const state = usePetMood({
+    noticeMs: Math.max(0, pet.noticeSeconds ?? 12) * 1000,
+    claudeNotices: pet.notify.claude,
+  })
   const size = petCharacterSize(pet.scale)
   const boxRef = useRef<HTMLDivElement>(null)
   /** 크기 재적용 함수 — `pet:shown` 리스너가 다른 effect 에서 부를 수 있게 ref 로 들고 있다. */

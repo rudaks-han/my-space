@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { BellRingIcon, SparklesIcon } from "lucide-react"
+import { BellIcon, BellRingIcon, SparklesIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import type { PetAlert, PetMood } from "./use-pet-mood"
@@ -162,6 +162,11 @@ function MoodMark({
       alert === "reminder" ? (
         <Badge className="bg-ui-error">
           <BellRingIcon className="size-3.5" />
+        </Badge>
+      ) : alert === "app" ? (
+        // Gmail·Slack·캘린더 — 볼 것이 생겼다(작업이 멈춘 게 아니라서 warning 이 아니다).
+        <Badge className="bg-ui-info">
+          <BellIcon className="size-3.5" />
         </Badge>
       ) : alert === "done" ? (
         <Badge className="bg-ui-info">

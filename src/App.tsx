@@ -22,6 +22,7 @@ import { ClaudeNotifier } from "@/features/claude-bridge/claude-notifier"
 import { ClaudeActivityProvider } from "@/features/claude-bridge/claude-activity-store"
 import { PetController } from "@/features/pet/pet-controller"
 import { PetFeedPublisher } from "@/features/pet/pet-feed-publisher"
+import { PetNotifyPublisher } from "@/features/pet/pet-notify-publisher"
 import { useAutoStartSync } from "@/features/settings/use-autostart"
 import { TabActiveProvider } from "@/lib/tab-active-store"
 import { checkForUpdates } from "@/lib/updater"
@@ -40,7 +41,8 @@ function AutoStartSync() {
 
 export default function App() {
   // 열린 탭·활성 탭(활성 탭 id 는 기존 myspace.activeMenu 키를 그대로 쓴다).
-  const { openIds, activeId, open, close, setActive, move } = useOpenTabs()
+  const { openIds, activeId, open, close, closeAll, setActive, move } =
+    useOpenTabs()
   // 사이드바에 어떤 컨테이너를 띄울지와 접힘 여부(셸 레이아웃 상태).
   const [container, setContainer] = useState<ActivityContainerId>("explorer")
   const [collapsed, setCollapsed] = useState(false)
@@ -101,6 +103,8 @@ export default function App() {
                   <PetController />
                   {/* 이미 폴링해 둔 Slack·Gmail 안읽음 건수를 펫이 볼 수 있게 적어 둔다. */}
                   <PetFeedPublisher />
+                  {/* 설정에서 켠 알림(Gmail·Slack·캘린더)을 펫 말풍선으로 띄운다. */}
+                  <PetNotifyPublisher />
                   {/* 홈 화면 카드의 "전체 보기 →" 가 해당 메뉴 탭을 열게 한다. */}
                   <NavigationProvider onNavigate={open}>
                     {/* 로그인 안 됐으면 셸 대신 로그인 폼을 띄운다. */}
@@ -134,6 +138,7 @@ export default function App() {
                               activeId={activeId}
                               onSelect={setActive}
                               onClose={close}
+                              onCloseAll={closeAll}
                               onMove={move}
                             />
                             {/* 열린 탭들을 겹쳐 두고 활성 탭만 보인다. display:none 대신

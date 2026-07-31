@@ -1,17 +1,22 @@
-import { BellRingIcon } from "lucide-react"
+import { BellRingIcon, XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { ClaudeBrandIcon } from "@/components/brand-icons"
+import {
+  ClaudeBrandIcon,
+  GmailBrandIcon,
+  GoogleCalendarBrandIcon,
+  SlackBrandIcon,
+} from "@/components/brand-icons"
 import { trackedInvoke } from "@/lib/tauri"
 import type { PetNotice, PetNoticeAction } from "./use-pet-mood"
 
 /**
- * 한 번에 쌓아 보여 줄 알림 개수. 동시에 대여섯 개가 걸리는 일은 드물지만,
- * 제한이 없으면 말풍선이 화면 높이를 채우고 그만큼 뒤 창의 클릭도 막는다
- * (펫 창은 내용 크기만큼 잡히므로 목록 길이가 곧 가려지는 면적이다).
+ * 한 번에 쌓아 보여 줄 알림 개수. 제한이 없으면 말풍선이 화면 높이를 채우고
+ * 그만큼 뒤 창의 클릭도 막는다(펫 창은 내용 크기만큼 잡히므로 목록 길이가 곧
+ * 가려지는 면적이다). 카드 하나가 3줄까지 되므로 둘이면 이미 캐릭터보다 크다 —
  * 넘치는 건 마지막 줄에 개수로 알리고 My Space 창에서 보게 한다.
  */
-const MAX_VISIBLE = 4
+const MAX_VISIBLE = 2
 
 /** 말풍선 폭 — 이 값이 없으면 문장 길이에 따라 창이 화면을 가로지른다. */
 const BUBBLE_W = "w-[248px]"
@@ -55,8 +60,9 @@ export function PetBubble({ notices }: { notices: PetNotice[] }) {
 /**
  * 알림 한 줄.
  *
- * 카드 몸통이 버튼이고 그 **아래에 버튼 줄이 따로** 붙는 구조다(버튼 안에 버튼을 넣을 수
- * 없어서). 버튼 줄은 선택이 필요한 알림 — 지금은 리마인더(확인·다시 알림)만 갖는다.
+ * 카드 몸통이 버튼이고 그 **아래에 버튼 줄이, 위에 닫기(X)가 따로** 붙는 구조다
+ * (버튼 안에 버튼을 넣을 수 없어서 X 는 몸통 위에 겹쳐 놓는 형제 요소다).
+ * 버튼 줄은 선택이 필요한 알림 — 지금은 리마인더(확인·다시 알림)만 갖는다.
  */
 function NoticeCard({
   notice,
@@ -65,7 +71,8 @@ function NoticeCard({
   notice: PetNotice
   withTail: boolean
 }) {
-  const { source, sourceName, chip, title, detail, action, actions } = notice
+  const { source, sourceName, chip, title, detail, action, actions, dismiss } =
+    notice
 
   return (
     <div className="relative flex flex-col rounded-[10px] bg-background text-left shadow-[0_4px_16px_rgba(0,0,0,0.16)]">
@@ -78,7 +85,9 @@ function NoticeCard({
         }
         className={cn(
           "flex cursor-pointer flex-col rounded-t-[10px] px-2.5 py-2 text-left transition-colors hover:bg-ui-list-hover",
-          actions.length === 0 && "rounded-b-[10px]"
+          actions.length === 0 && "rounded-b-[10px]",
+          // X 자리를 비워 둔다 — 겹쳐 놓은 요소라 여백을 안 주면 상태 칩이 그 밑으로 들어간다.
+          dismiss && "pr-7"
         )}
       >
         <span className="flex min-w-0 items-center gap-1.5">
@@ -105,10 +114,29 @@ function NoticeCard({
         )}
       </button>
 
+      {dismiss && <DismissButton onClick={dismiss} />}
+
       {actions.length > 0 && <ActionRow actions={actions} />}
 
       {withTail && <Tail />}
     </div>
+  )
+}
+
+/**
+ * 카드 오른쪽 위 닫기. 카드 몸통(버튼) 위에 겹쳐 놓는다 — 버튼 안에 버튼을 넣을 수 없고,
+ * 머리말 줄 안에 끼워 넣으면 상태 칩과 자리를 다투다 긴 이름에서 밀려난다.
+ */
+function DismissButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="알림 닫기"
+      onClick={onClick}
+      className="absolute top-1 right-1 flex size-5 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-ui-list-hover hover:text-foreground"
+    >
+      <XIcon className="size-3.5" />
+    </button>
   )
 }
 
@@ -135,12 +163,23 @@ function ActionRow({ actions }: { actions: PetNoticeAction[] }) {
   )
 }
 
-/** 출처 아이콘 — Claude 는 실제 브랜드 로고, 리마인더는 벨. */
+/**
+ * 출처 아이콘 — 서비스 알림은 사이드바와 같은 브랜드 로고를 쓴다(어디서 온 알림인지
+ * 글자를 읽지 않아도 알게). 리마인더만 서비스가 아니라 벨이다.
+ */
 function SourceIcon({ source }: { source: PetNotice["source"] }) {
-  if (source === "reminder") {
-    return <BellRingIcon className="size-3.5 shrink-0 text-ui-error" />
+  switch (source) {
+    case "reminder":
+      return <BellRingIcon className="size-3.5 shrink-0 text-ui-error" />
+    case "gmail":
+      return <GmailBrandIcon className="size-3.5 shrink-0" />
+    case "slack":
+      return <SlackBrandIcon className="size-3.5 shrink-0" />
+    case "gcal":
+      return <GoogleCalendarBrandIcon className="size-3.5 shrink-0" />
+    default:
+      return <ClaudeBrandIcon className="size-3.5 shrink-0" />
   }
-  return <ClaudeBrandIcon className="size-3.5 shrink-0" />
 }
 
 /** 아래(캐릭터)를 향한 말풍선 꼬리 — 배경색 사각형을 45° 돌려 붙인다. */

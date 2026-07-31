@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event"
 import { useLocalStorage } from "@/lib/use-local-storage"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
 import { isMainWindow } from "@/lib/window-role"
+import { useSettings } from "@/features/settings/settings-context"
 import {
   ReminderContext,
   type NewReminderInput,
@@ -62,12 +63,28 @@ function reminderBody(r: Reminder): string {
  */
 export function ReminderProvider({ children }: { children: ReactNode }) {
   const [reminders, setReminders] = useLocalStorage<Reminder[]>(STORAGE_KEY, [])
+  /**
+   * 알림을 펫 말풍선으로 띄울지(설정 → 데스크톱 펫 → 받을 알림).
+   *
+   * 여기서 끊는 이유: 펫은 앱의 유일한 알림 창구이고 그 표시 여부를 Rust 가 판단하므로
+   * (`pet::set_alert`), 띄운 다음 펫 쪽에서 걸러 내면 **말풍선이 빈 펫이 불쑥 나타난다.**
+   * 스케줄러가 메인 창에 있어 설정을 바로 읽을 수 있으니 발생 자체를 막는 것이 맞다.
+   *
+   * 예정 시각 도달 표시(`firedAt`/`lastFired`)는 그대로 남긴다 — 알림을 껐다 켰을 때
+   * 그동안 지나간 알림이 한꺼번에 쏟아지지 않게.
+   */
+  const notifyEnabled = useSettings().settings.pet.notify.reminder
 
   // 항상 최신 목록을 가리키는 ref — 인터벌을 재생성하지 않고 최신 값을 읽는다.
   const remindersRef = useRef(reminders)
   useEffect(() => {
     remindersRef.current = reminders
   }, [reminders])
+  // 알림 설정도 같은 이유로 ref 로 읽는다(끄고 켤 때마다 인터벌을 다시 만들지 않도록).
+  const notifyRef = useRef(notifyEnabled)
+  useEffect(() => {
+    notifyRef.current = notifyEnabled
+  }, [notifyEnabled])
   // 이번 세션에서 이미 발생 처리한 건(스냅샷 지연으로 인한 중복 발생 방지).
   const firedGuard = useRef<Set<string>>(new Set())
   // 다시 알림(스누즈) 예약: 알림 id → 다시 띄울 시각(epoch ms). 팝오버 창에서 온다.
@@ -221,6 +238,9 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
         })
       )
 
+      // 알림을 꺼 뒀으면 도달 표시만 남기고 띄우지는 않는다.
+      if (!notifyRef.current) return
+
       // 팝오버 발생(여러 건이면 마지막 것이 최종 표시).
       for (const { reminder: r } of fresh) {
         void trackedInvoke("reminder_fire", {
@@ -234,6 +254,7 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
     // 다시 알림 예약분: 시각이 되면 다시 띄운다. 단, 그 사이 알림이 삭제/비활성화됐다면
     // 예약을 취소한다(원본 상태를 존중 — 삭제된 알림이 다시 뜨지 않도록).
     const checkSnoozed = () => {
+      if (!notifyRef.current) return
       const now = Date.now()
       for (const [id, at] of snoozed.current) {
         if (now < at) continue
@@ -256,6 +277,18 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
     }, TICK_MS)
     return () => clearInterval(timer)
   }, [setReminders])
+
+  /*
+   * 알림을 끄는 순간 이미 떠 있던 알림도 치운다. 설정을 껐는데 말풍선이 그대로 남아
+   * "확인"을 눌러야 사라지면 설정이 먹지 않은 것으로 보이고, 그 알림 때문에 펫이
+   * 계속 떠 있게 된다(Rust 의 표시 축이 내려가지 않는다).
+   */
+  useEffect(() => {
+    if (!isTauri() || !isMainWindow || notifyEnabled) return
+    void trackedInvoke("reminder_dismiss").catch(() => {
+      // 떠 있는 알림이 없으면 아무 일도 아니다.
+    })
+  }, [notifyEnabled])
 
   // 팝오버 창의 "다시 알림"에서 온 스누즈 예약을 받는다(스케줄러와 같은 창에서만).
   useEffect(() => {

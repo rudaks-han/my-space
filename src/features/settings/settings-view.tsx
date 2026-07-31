@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react"
 import {
+  BellIcon,
   BotIcon,
   CalendarIcon,
   CatIcon,
@@ -7,6 +8,7 @@ import {
   DownloadIcon,
   FileTextIcon,
   HardDriveIcon,
+  ListTreeIcon,
   LogOutIcon,
   MailIcon,
   MessageSquareIcon,
@@ -22,11 +24,22 @@ import {
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  ClaudeBrandIcon,
+  GmailBrandIcon,
+  GoogleCalendarBrandIcon,
+  SlackBrandIcon,
+} from "@/components/brand-icons"
 import { cn } from "@/lib/utils"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
 import { useIsDark } from "@/components/theme-provider"
 import { useThemePreset } from "@/components/theme-preset-provider"
-import { useSettings } from "./settings-context"
+import {
+  useSettings,
+  watchBackendLabel,
+  type ClaudeWatchTerminal,
+} from "./settings-context"
+import { MenuSettingsPanel } from "./menu-settings"
 import { useAuth } from "@/features/auth/auth-context"
 import {
   AUTOSTART_SUPPORTED,
@@ -134,6 +147,61 @@ function SettingChoiceRow<T extends string | number>({
               type="button"
               aria-pressed={isActive}
               onClick={() => onChange(o.value)}
+              className={cn(
+                "h-7 cursor-pointer rounded-full border px-3 text-[13px] font-semibold transition-colors outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring focus-visible:outline-solid",
+                isActive
+                  ? "border-transparent bg-ui-selection text-ui-selection-fg"
+                  : "border-border text-muted-foreground hover:bg-ui-list-hover hover:text-foreground"
+              )}
+            >
+              {o.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 여러 개를 동시에 고르는 알약 줄. `SettingChoiceRow` 와 생김새는 같고 선택이 배타적이지
+ * 않다는 점만 다르다 — 켠 것을 한눈에 세는 게 목적이라 체크박스 목록 대신 알약을 쓴다.
+ */
+function SettingMultiRow<T extends string>({
+  title,
+  description,
+  values,
+  options,
+  onChange,
+}: {
+  title: string
+  description: string
+  values: T[]
+  options: { label: string; value: T }[]
+  onChange: (next: T[]) => void
+}) {
+  return (
+    <div className="border-b border-border py-3">
+      <div className="text-[15px] font-semibold">{title}</div>
+      <p className="mt-1 text-[13px] text-muted-foreground">{description}</p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {options.map((o) => {
+          const isActive = values.includes(o.value)
+          return (
+            <button
+              key={o.value}
+              type="button"
+              aria-pressed={isActive}
+              onClick={() =>
+                // 나열 순서를 유지한다 — 고른 순서대로 쌓이면 저장값이 흔들려 보인다.
+                onChange(
+                  options
+                    .map((x) => x.value)
+                    .filter((v) =>
+                      v === o.value ? !isActive : values.includes(v)
+                    )
+                )
+              }
               className={cn(
                 "h-7 cursor-pointer rounded-full border px-3 text-[13px] font-semibold transition-colors outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring focus-visible:outline-solid",
                 isActive
@@ -569,6 +637,43 @@ function JiraSettingsPanel() {
   )
 }
 
+/**
+ * cmux 소켓 비밀번호 입력 행.
+ *
+ * cmux 소켓은 **cmux 안에서 시작된 프로세스만** 붙을 수 있다("Access denied - only
+ * processes started inside cmux can connect"). My Space 는 Finder·로그인 항목에서 뜨므로
+ * 해당이 안 되고, cmux 가 남기는 이벤트 로그를 읽어 목록을 만든다 — 그래서 **비밀번호가
+ * 없어도 세션 목록·상태·알림은 정상**이고, 이동·프롬프트 전송·터미널 로그 보기 세 동작만
+ * 막힌다. 그 비대칭을 설명하지 않으면 "비워 두면 아무것도 안 되는 값"으로 읽힌다.
+ */
+function CmuxPasswordRow() {
+  const { settings, setClaudeCode } = useSettings()
+  const value = settings.claudeCode.cmuxPassword
+
+  return (
+    <div className="flex flex-col gap-1.5 border-b border-border py-3">
+      <label className="text-[15px] font-semibold" htmlFor="cmux-password">
+        cmux 소켓 비밀번호
+      </label>
+      <p className="text-[13px] text-muted-foreground">
+        cmux 설정 → Automation 의 소켓 비밀번호와 같은 값을 넣습니다. 세션 목록과
+        상태는 비밀번호 없이도 보입니다 — 이 값은 <b>이동 · 프롬프트 전송 · 터미널
+        로그 보기</b>에만 필요합니다(cmux 소켓은 cmux 안에서 실행된 프로그램만 받아
+        주기 때문입니다).
+      </p>
+      <Input
+        id="cmux-password"
+        type="password"
+        value={value}
+        placeholder="비워 두면 목록만 동작합니다"
+        onChange={(e) => setClaudeCode({ cmuxPassword: e.target.value })}
+        spellCheck={false}
+        className="mt-1 font-mono text-[13px]"
+      />
+    </div>
+  )
+}
+
 /** Claude Code 카테고리 설정 화면. */
 function ClaudeCodeSettingsPanel() {
   const { settings, setClaudeCode } = useSettings()
@@ -578,12 +683,24 @@ function ClaudeCodeSettingsPanel() {
     <div className="flex flex-col">
       <PanelHeader
         title="Claude Code"
-        description="Claude Code(herdr) 작업을 감시하고, 상태가 바뀔 때 받을 인앱 알림(토스트)을 설정합니다."
+        description="herdr·cmux·Orca 로 실행 중인 Claude Code 작업을 감시하고, 상태가 바뀔 때 받을 인앱 알림(토스트)을 설정합니다."
       />
       <div className="mt-2">
+        <SettingMultiRow<ClaudeWatchTerminal>
+          title="감시 대상 터미널"
+          description="herdr·cmux·Orca 만 지원합니다. 세션 목록에는 “어떤 터미널 pane 이 어떤 Claude 세션인지”와 그 진행 상태가 필요한데, 그 둘을 내주는 도구가 이 셋뿐입니다(herdr 는 소켓 API, cmux 는 이벤트 로그, Orca 는 훅 상태 파일). Ghostty·iTerm2·기본 터미널처럼 터미널 에뮬레이터만 쓰면 목록을 채울 수 없습니다. 여러 개를 켜도 됩니다 — 같은 Claude 세션이 양쪽에 잡히면 herdr 쪽만 남기고(pane 단위가 정확해 이동·전송이 정밀합니다), 설치돼 있지 않은 것은 비용이 거의 없습니다."
+          values={s.backend}
+          options={[
+            { label: "herdr", value: "herdr" },
+            { label: "cmux", value: "cmux" },
+            { label: "Orca", value: "orca" },
+          ]}
+          onChange={(v) => setClaudeCode({ backend: v })}
+        />
+        {s.backend.includes("cmux") && <CmuxPasswordRow />}
         <SettingRow
           title="작업 감시"
-          description="herdr 작업 상태를 주기적으로 확인해 작업목록 갱신·트레이 알림을 구동합니다. 끄면 아래 알림도 동작하지 않습니다."
+          description={`${watchBackendLabel(s.backend)} 의 작업 상태를 주기적으로 확인해 작업목록 갱신·트레이 알림을 구동합니다. 끄면 아래 알림도 동작하지 않습니다.`}
           checked={s.watchEnabled}
           onChange={(v) => setClaudeCode({ watchEnabled: v })}
         />
@@ -627,7 +744,7 @@ function PetBehaviorTable() {
     },
     {
       name: "대기 중",
-      when: "작업 완료·AskUserQuestion·리마인더 — 확인이 필요함",
+      when: "작업 완료·AskUserQuestion·리마인더·받을 알림 — 확인이 필요함",
       how: "대기 동작으로 바뀌고 확인 표시가 붙습니다 (!)",
     },
   ]
@@ -681,9 +798,9 @@ function PetNoticeDurationRow() {
     <div className="border-b border-border py-3">
       <div className="text-[15px] font-semibold">알림 표시 시간</div>
       <p className="mt-1 text-[13px] text-muted-foreground">
-        작업 완료 알림을 말풍선에 띄워 둘 시간입니다. 상시 표시를 꺼 뒀을 때
-        펫이 떠 있는 시간도 같이 따라갑니다. 입력 대기·리마인더는 이 설정과
-        무관하게 답하거나 확인할 때까지 남습니다.
+        작업 완료·Gmail·Slack·캘린더 알림을 말풍선에 띄워 둘 시간입니다. 상시
+        표시를 꺼 뒀을 때 펫이 떠 있는 시간도 같이 따라갑니다. 입력
+        대기·리마인더는 이 설정과 무관하게 답하거나 확인할 때까지 남습니다.
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {NOTICE_PRESETS.map((v) => (
@@ -811,6 +928,162 @@ function PetDialMenusRow() {
   )
 }
 
+/**
+ * 알림 체크박스 한 줄(제목 + 설명). `받을 알림` 목록의 부모·자녀 항목이 함께 쓴다.
+ *
+ * `SettingRow` 를 쓰지 않는 이유: 저쪽은 줄마다 아래 테두리를 그어 한 항목이 하나의
+ * 설정처럼 보이게 만든다. 여기서는 다섯 항목이 **한 묶음**으로 읽혀야 하고, 캘린더처럼
+ * 들여쓴 하위 항목이 붙는다.
+ */
+function NotifyCheck({
+  checked,
+  disabled = false,
+  icon: Icon,
+  label,
+  description,
+  indent = false,
+  onChange,
+}: {
+  checked: boolean
+  /** 부모가 꺼져 있어 고를 수 없는 상태. 숨기지 않고 흐리게 둔다 — 무엇을 켤 수 있는지 보이게. */
+  disabled?: boolean
+  /**
+   * 사이드바·말풍선과 **같은 브랜드 로고**를 쓴다(lucide 아이콘이 아니라) — 어느
+   * 서비스의 알림인지 글자를 읽지 않아도 알게, 그리고 말풍선 카드와 같은 그림이라
+   * 켠 스위치와 실제로 뜨는 알림이 짝지어 보이게. 하위 항목은 아이콘 없이 둔다.
+   */
+  icon?: (props: { className?: string }) => ReactNode
+  label: string
+  description: string
+  indent?: boolean
+  onChange: (next: boolean) => void
+}) {
+  return (
+    <div className={cn(indent && "pl-[26px]", disabled && "opacity-50")}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+        className="flex items-center gap-2 text-left outline-none not-disabled:cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring focus-visible:outline-solid"
+      >
+        <span
+          className={cn(
+            "flex size-[18px] shrink-0 items-center justify-center rounded-[4px] border transition-colors",
+            checked
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-input bg-background"
+          )}
+        >
+          {checked && <CheckIcon className="size-3.5" />}
+        </span>
+        {Icon && <Icon className="size-3.5 shrink-0 text-muted-foreground" />}
+        <span
+          className={cn(
+            "font-semibold",
+            indent ? "text-[13px]" : "text-[15px]"
+          )}
+        >
+          {label}
+        </span>
+      </button>
+      <p className="mt-0.5 pl-[26px] text-[13px] text-muted-foreground">
+        {description}
+      </p>
+    </div>
+  )
+}
+
+/**
+ * 어떤 알림을 말풍선으로 받을지 고르는 행.
+ *
+ * 펫이 앱의 유일한 알림 창구이므로 이 목록이 곧 "받을 알림"이다. 기본은 Claude Code 만
+ * 켜져 있다 — 나머지는 하루에도 수십 번 뜨는 종류라 사용자가 켜야 온다.
+ *
+ * Google 캘린더만 **부모 + 하위 두 개**다: 알릴지(`gcal`)와 언제 알릴지(정시·10분 전)는
+ * 다른 질문이고, 잠깐 끄려고 "언제"까지 지우면 다시 켤 때 두 번 고르게 된다.
+ */
+function PetNotifySourcesRow() {
+  const { settings, setPet } = useSettings()
+  const notify = settings.pet.notify
+  const set = (patch: Partial<typeof notify>) =>
+    setPet({ notify: { ...notify, ...patch } })
+
+  /** 캘린더 알림을 켰는데 "언제"가 둘 다 꺼져 있으면 아무 알림도 오지 않는다. */
+  const gcalEmpty = notify.gcal && !notify.gcalStart && !notify.gcalBefore
+
+  return (
+    <div className="border-b border-border py-3">
+      <div className="text-[15px] font-semibold">받을 알림</div>
+      <p className="mt-1 text-[13px] text-muted-foreground">
+        고른 알림만 말풍선에 쌓입니다. 각 줄을 누르면 해당 메뉴가 열리고 알림은
+        치워집니다. 안 읽은 건수 뱃지는 이 설정과 무관하게 빠른 이동 아이콘에
+        계속 붙습니다.
+      </p>
+      <div className="mt-2 flex flex-col gap-1.5">
+        <NotifyCheck
+          checked={notify.claude}
+          icon={ClaudeBrandIcon}
+          label="Claude Code"
+          description="입력 대기(질문·권한)와 작업 완료를 알립니다. 끄더라도 작업 중 동작(움직임·머리 위 표시)은 그대로입니다."
+          onChange={(v) => set({ claude: v })}
+        />
+        <NotifyCheck
+          checked={notify.reminder}
+          icon={BellIcon}
+          label="직접 등록한 알림"
+          description="생산성 → 알림 메뉴에 등록한 시각이 되면 알립니다. 말풍선에 확인·다시 알림(5·30분·1시간) 버튼이 함께 나옵니다. 끄면 예정 시각이 지나도 뜨지 않습니다(지난 알림이 나중에 몰려 뜨지도 않습니다)."
+          onChange={(v) => set({ reminder: v })}
+        />
+        <NotifyCheck
+          checked={notify.gmail}
+          icon={GmailBrandIcon}
+          label="Gmail 새 메일"
+          description="새로 도착한 안 읽은 메일을 알립니다. 설정 → Gmail 의 관심 발신자·키워드가 있으면 관심 메일만 알립니다."
+          onChange={(v) => set({ gmail: v })}
+        />
+        <NotifyCheck
+          checked={notify.slack}
+          icon={SlackBrandIcon}
+          label="Slack 새 메시지"
+          description="Slack 메뉴에서 고른 채널에 새 메시지가 오면 알립니다(채널 이름 + 보낸 사람)."
+          onChange={(v) => set({ slack: v })}
+        />
+        <NotifyCheck
+          checked={notify.gcal}
+          icon={GoogleCalendarBrandIcon}
+          label="Google 캘린더 일정 알림"
+          description="다가오는 일정을 알립니다. 아래에서 언제 알릴지 고르세요 — 설정 → Google 캘린더가 연결되어 있어야 합니다."
+          onChange={(v) => set({ gcal: v })}
+        />
+        <NotifyCheck
+          indent
+          disabled={!notify.gcal}
+          checked={notify.gcalStart}
+          label="정시 알림"
+          description="일정이 시작하는 시각에 알립니다(시작 시각이 없는 종일 일정은 제외)."
+          onChange={(v) => set({ gcalStart: v })}
+        />
+        <NotifyCheck
+          indent
+          disabled={!notify.gcal}
+          checked={notify.gcalBefore}
+          label="10분 전 알림"
+          description="일정이 시작하기 10분 전에 알립니다."
+          onChange={(v) => set({ gcalBefore: v })}
+        />
+      </div>
+      {gcalEmpty && (
+        <p className="mt-2 text-[13px] text-ui-warning">
+          정시·10분 전 중 하나는 골라야 캘린더 알림이 옵니다.
+        </p>
+      )}
+    </div>
+  )
+}
+
 /** 데스크톱 펫 카테고리 설정 화면. */
 function PetSettingsPanel() {
   const { settings, setPet } = useSettings()
@@ -820,7 +1093,7 @@ function PetSettingsPanel() {
     <div className="flex flex-col">
       <PanelHeader
         title="데스크톱 펫"
-        description="화면 위에 캐릭터를 상시 띄워 두고, Claude Code 작업 상태와 알림을 동작·말풍선으로 알립니다."
+        description="화면 위에 캐릭터를 상시 띄워 두고, Claude Code 작업 상태와 알림(Gmail·Slack·캘린더)을 동작·말풍선으로 알립니다."
       />
       <PetBehaviorTable />
       <div className="mt-2">
@@ -853,6 +1126,7 @@ function PetSettingsPanel() {
           ]}
           onChange={(v) => setPet({ scale: v })}
         />
+        <PetNotifySourcesRow />
         <PetNoticeDurationRow />
         <PetDialMenusRow />
         <PetSpeciesRow />
@@ -1242,6 +1516,12 @@ const CATEGORIES: SettingsCategory[] = [
     label: "일반",
     icon: SlidersHorizontalIcon,
     panel: <GeneralSettingsPanel />,
+  },
+  {
+    id: "menus",
+    label: "메뉴 설정",
+    icon: ListTreeIcon,
+    panel: <MenuSettingsPanel />,
   },
   {
     id: "appearance",

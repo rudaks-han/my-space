@@ -5,6 +5,15 @@ import codeFrenzyCatSheet from "@/assets/pets/code-frenzy-cat.webp"
 import gugaSheet from "@/assets/pets/guga.webp"
 import lanlanSheet from "@/assets/pets/lanlan.webp"
 import baobaoCoderSheet from "@/assets/pets/baobao-coder.webp"
+import cozyFluffSheet from "@/assets/pets/cozy-fluff.webp"
+import lemonSheet from "@/assets/pets/lemon.webp"
+import luffySheet from "@/assets/pets/luffy.webp"
+import maxSheet from "@/assets/pets/max.webp"
+import miniJerrySheet from "@/assets/pets/mini-jerry.webp"
+import mochiSheet from "@/assets/pets/mochi.webp"
+import noirWeblingSheet from "@/assets/pets/noir-webling.webp"
+import pinkRibbonChibiSheet from "@/assets/pets/pinkribbonchibi.webp"
+import shellpopSnailSheet from "@/assets/pets/shellpop-snail.webp"
 import {
   DEFAULT_SPECIES,
   isBuiltinSprite,
@@ -122,6 +131,15 @@ export const BUILTIN_SHEETS: Record<
   guga: { name: "Guga", sheet: gugaSheet },
   lanlan: { name: "Lanlan", sheet: lanlanSheet },
   "baobao-coder": { name: "Baobao Coder", sheet: baobaoCoderSheet },
+  "cozy-fluff": { name: "Cozy Fluff", sheet: cozyFluffSheet },
+  lemon: { name: "Lemon", sheet: lemonSheet },
+  luffy: { name: "Luffy", sheet: luffySheet },
+  max: { name: "Max", sheet: maxSheet },
+  "mini-jerry": { name: "mini-Jerry", sheet: miniJerrySheet },
+  mochi: { name: "Mochi", sheet: mochiSheet },
+  "noir-webling": { name: "Noir Webling", sheet: noirWeblingSheet },
+  pinkribbonchibi: { name: "Pink Ribbon Chibi", sheet: pinkRibbonChibiSheet },
+  "shellpop-snail": { name: "Shellpop Snail", sheet: shellpopSnailSheet },
 }
 
 /** 내장 시트가 있는 종류인지(있으면 이름·시트를 돌려준다). */

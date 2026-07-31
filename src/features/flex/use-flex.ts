@@ -183,15 +183,7 @@ function normalizeEvent(
 /** 사용자 오류 메시지 한국어화. */
 export function flexFriendlyError(code: string): string {
   if (code.includes("not_logged_in") || code.includes("no_credentials"))
-    return "Flex 로그인 세션을 찾지 못했습니다. 설정 → Flex 휴가에서 계정을 저장하면 앱이 자동으로 로그인합니다(또는 Chrome 에서 flex.team 에 로그인한 뒤 새로고침)."
-  // Chrome 쿠키 DB 접근/복사/열기 실패는 모두 "쿠키를 못 읽었다"로 묶어 안내한다.
-  if (
-    code.includes("쿠키 DB") ||
-    code.includes("Chrome 쿠키") ||
-    code.includes("Safe Storage") ||
-    code.includes("Keychain")
-  )
-    return "Chrome 쿠키를 읽지 못했습니다. Chrome 이 켜져 있고 flex.team 에 로그인돼 있는지 확인한 뒤, 키체인 접근을 허용하고 새로고침해 주세요."
+    return "Flex 로그인 세션을 찾지 못했습니다. 설정 → Flex 휴가에서 계정을 저장하면 앱이 자동으로 로그인합니다."
   if (code.includes("json_parse"))
     return "Flex 응답을 해석하지 못했습니다(형식 변경 가능)."
   // 자동 로그인 중 flex 서버가 준 한국어 메시지는 그대로 보여 준다.

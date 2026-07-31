@@ -7,6 +7,7 @@ import {
   FileTextIcon,
   PalmtreeIcon,
   HistoryIcon,
+  ScreenShareIcon,
 } from "lucide-react"
 
 import {
@@ -22,6 +23,7 @@ import {
   KafkaBrandIcon,
 } from "@/components/brand-icons"
 
+import { PLATFORM, type Platform } from "@/lib/platform"
 import { HomeView } from "@/features/home/home-view"
 import { TodoView } from "@/features/todo/todo-view"
 import { BrowserView } from "@/features/browser/browser-view"
@@ -34,6 +36,7 @@ import { GmailView } from "@/features/gmail/gmail-view"
 import { GmailMenuBadge } from "@/features/gmail/gmail-menu-badge"
 import { FlexView } from "@/features/flex/flex-view"
 import { ReminderView } from "@/features/reminder/reminder-view"
+import { ScreenShareView } from "@/features/screen-share/screen-share-view"
 import { ClaudeBridgeView } from "@/features/claude-bridge/claude-bridge-view"
 import { ClaudeMenuBadge } from "@/features/claude-bridge/claude-menu-badge"
 import { IntellijServicesView } from "@/features/intellij/intellij-services-view"
@@ -61,6 +64,19 @@ export interface MenuItem {
   element: React.ReactNode
   /** 사이드바 메뉴 버튼에 겹쳐 표시할 배지(예: 안 읽음 개수). 없으면 표시 안 함. */
   badge?: React.ReactNode
+  /**
+   * 이 OS 에서는 쓸 수 없는 기능. 사이드바 항목이 흐려지며 "사용불가" 칩이 붙고,
+   * 열면 `element` 대신 이유를 설명하는 안내 패널이 뜬다.
+   *
+   * 뷰를 마운트한 채 안내만 덮지 않는 이유: 여기 걸리는 메뉴들은 마운트 즉시 폴링을
+   * 시작해서, "사용불가"라고 해 놓고 뒤에서 실패할 요청을 계속 보내는 꼴이 된다.
+   */
+  unsupported?: {
+    /** 못 쓰는 OS 들. */
+    on: Platform[]
+    /** 왜 안 되는지 — 안내 패널 본문에 그대로 나간다. */
+    reason: string
+  }
 }
 
 export interface MenuGroup {
@@ -156,6 +172,12 @@ export const MENU_GROUPS: MenuGroup[] = [
         icon: BellIcon,
         element: <ReminderView />,
       },
+      {
+        id: "screen-share",
+        title: "화면 공유",
+        icon: ScreenShareIcon,
+        element: <ScreenShareView />,
+      },
     ],
   },
   {
@@ -167,6 +189,11 @@ export const MENU_GROUPS: MenuGroup[] = [
         title: "IntelliJ 서비스",
         icon: IntellijBrandIcon,
         element: <IntellijServicesView />,
+        unsupported: {
+          on: ["windows", "linux"],
+          reason:
+            "실행 중인 서비스를 찾는 방식(ps · lsof)과 내리는 방식(프로세스 시그널)이 모두 Unix 전용이고, IntelliJ 의 MCP 포트도 lsof 로 찾습니다. Windows 에서는 실행 설정 목록만 읽을 수 있을 뿐 시작·중지·상태 확인이 모두 되지 않습니다.",
+        },
       },
       {
         id: "cowork-spec",
@@ -210,6 +237,11 @@ export const MENU_GROUPS: MenuGroup[] = [
         icon: ClaudeBrandIcon,
         element: <ClaudeBridgeView />,
         badge: <ClaudeMenuBadge />,
+        unsupported: {
+          on: ["windows", "linux"],
+          reason:
+            "터미널의 어느 창이 어느 Claude 세션인지 알아야 목록을 채울 수 있는데, 그 매핑을 주는 백엔드가 herdr·cmux·Orca 셋뿐이고 모두 macOS 전용입니다. 대화 기록 자체는 이 PC 에도 있으므로 'CC History Viewer' 로는 지난 세션을 볼 수 있습니다.",
+        },
       },
       {
         id: "cowork-ai-dashboard",
@@ -229,3 +261,12 @@ export const MENU_GROUPS: MenuGroup[] = [
 
 /** 활성 메뉴 조회용 평탄화 목록(App.tsx 에서 id 로 뷰를 찾는다). */
 export const MENUS: MenuItem[] = MENU_GROUPS.flatMap((g) => g.items)
+
+/**
+ * 지금 OS 에서 이 메뉴를 못 쓰면 그 사유를, 쓸 수 있으면 null 을 준다.
+ * 사이드바(칩)와 뷰(안내 패널)가 같은 판단을 쓰도록 여기 하나만 둔다.
+ */
+export function unsupportedReason(menu: MenuItem | undefined): string | null {
+  const u = menu?.unsupported
+  return u && u.on.includes(PLATFORM) ? u.reason : null
+}

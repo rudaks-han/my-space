@@ -159,6 +159,163 @@ fn prune_notices(app: &tauri::AppHandle) -> Vec<HerdrNotice> {
 }
 
 
+// ─────────────────────────── 감시 백엔드 (herdr / cmux / orca) ───────────────────────────
+
+/// 무엇을 보고 Claude Code 작업을 파악할지. **켠 것 여러 개를 동시에 본다.**
+///
+/// **지원하는 터미널은 herdr·cmux·orca 셋뿐이다.** 세션 목록은 (1) 어떤 터미널 pane 이 어떤
+/// Claude 세션인지, (2) 그 세션이 지금 진행 중인지 대기 중인지를 터미널 쪽에서 받아야
+/// 성립한다. 그걸 내주는 도구가 herdr(소켓 API), cmux(`~/.cmuxterm/events.jsonl` 의
+/// `agent.hook.*` 이벤트), Orca(훅 상태 파일 + `orca terminal list`)뿐이다. 순수 터미널
+/// 에뮬레이터(Ghostty·iTerm2·Terminal)는 pane↔세션 매핑도 진행 상태도 알려 주지 않으므로
+/// 목록을 채울 수 없다.
+///
+/// 기본값은 **셋 다 켬**이다. 하나만 보면 반쪽만 보이기 때문이다: herdr 만 보면 다른 터미널에서
+/// 바로 띄운 세션이 빠지고, cmux 만 보면 cmux 안에서 herdr 로 띄운 세션들이 **한 탭으로
+/// 뭉친다**(같은 `CMUX_WORKSPACE_ID` 를 물려받으므로). 합칠 수 있는 근거는 모든 백엔드가
+/// **같은 Claude `session_id`** 를 들고 있다는 것이다 — 그게 중복 제거의 키다(`dup_workspaces`).
+/// 안 쓰는 백엔드의 비용은 사실상 0 이라(cmux 는 없는 파일, Orca 는 없는 데몬, herdr 는 실패하는
+/// CLI 호출 한 번) 셋 다 켜 두는 것이 안전한 기본값이다.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Backends {
+    pub herdr: bool,
+    pub cmux: bool,
+    pub orca: bool,
+}
+
+impl Backends {
+    /// 하나도 안 켠 상태. 감시는 돌지만 목록이 항상 빈다(사용자가 명시적으로 고른 상태).
+    fn none() -> Self {
+        Self {
+            herdr: false,
+            cmux: false,
+            orca: false,
+        }
+    }
+}
+
+/// 백엔드 캐시. `UNSET` 이면 아직 파일을 안 읽은 상태(비트 조합과 겹치지 않는 값이어야 한다).
+const BACKEND_UNSET: u8 = u8::MAX;
+const BIT_HERDR: u8 = 1;
+const BIT_CMUX: u8 = 2;
+const BIT_ORCA: u8 = 4;
+static BACKEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(BACKEND_UNSET);
+
+/// 저장/캐시용 비트 조합.
+fn backend_code(b: Backends) -> u8 {
+    (if b.herdr { BIT_HERDR } else { 0 })
+        | (if b.cmux { BIT_CMUX } else { 0 })
+        | (if b.orca { BIT_ORCA } else { 0 })
+}
+
+fn backend_from_code(code: u8) -> Backends {
+    Backends {
+        herdr: code & BIT_HERDR != 0,
+        cmux: code & BIT_CMUX != 0,
+        orca: code & BIT_ORCA != 0,
+    }
+}
+
+/// 설정 문자열 → 백엔드 집합. 형식은 쉼표로 이은 이름(`"herdr,orca"`).
+///
+/// 예전 단일 선택 값도 그대로 받는다. `"both"` 는 **"그때 있던 전부"**(herdr+cmux)였고 기본값
+/// 이기도 했으므로 셋 다 켠 것으로 옮긴다 — `"cmux"` 처럼 하나만 콕 집어 고른 사람의 선택은
+/// 그대로 두되, 기본값을 쓰던 사람이 Orca 만 빠진 채로 남는 일은 막는다.
+fn backend_from_str(s: &str) -> Backends {
+    if s.trim() == "both" {
+        return Backends {
+            herdr: true,
+            cmux: true,
+            orca: true,
+        };
+    }
+    let mut b = Backends::none();
+    for name in s.split(',') {
+        match name.trim() {
+            "herdr" => b.herdr = true,
+            "cmux" => b.cmux = true,
+            "orca" => b.orca = true,
+            _ => {}
+        }
+    }
+    b
+}
+
+/// 백엔드 집합 → 설정 문자열.
+fn backend_to_str(b: Backends) -> String {
+    let mut names = Vec::new();
+    if b.herdr {
+        names.push("herdr");
+    }
+    if b.cmux {
+        names.push("cmux");
+    }
+    if b.orca {
+        names.push("orca");
+    }
+    if names.is_empty() {
+        // 빈 문자열로 쓰면 "파일이 비었다 = 저장한 적 없다"와 구분되지 않아, 다음 실행에서
+        // 기본값(셋 다 켬)으로 되살아난다. 전부 끈 것도 선택이므로 이름을 붙여 남긴다.
+        return "none".to_string();
+    }
+    names.join(",")
+}
+
+/// 선택한 백엔드를 담아 두는 파일. 설정(localStorage)은 Rust 가 읽을 수 없고, 감시 루프는
+/// 창이 열리기 전(로그인 자동 시작)부터 돌아야 하므로 `watch-disabled` 와 같은 방식으로
+/// 파일에 남긴다.
+fn backend_file() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(format!("{h}/.myspace/backend")))
+}
+
+/// 현재 백엔드 집합.
+///
+/// 저장된 값이 **아예 없으면** 셋 다 켠 상태로 시작한다 — 설정의 기본값과 같아야 하기 때문이다.
+/// 로그인 자동 시작에서는 감시 루프가 창(=설정)보다 먼저 도는데, 여기서 herdr 만 켜면
+/// 프런트가 뜰 때까지 다른 터미널의 세션이 빠진 목록을 방출한다.
+pub fn backend() -> Backends {
+    let code = BACKEND.load(Ordering::Relaxed);
+    if code != BACKEND_UNSET {
+        return backend_from_code(code);
+    }
+    let saved = backend_file()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let b = if saved.is_empty() {
+        Backends {
+            herdr: true,
+            cmux: true,
+            orca: true,
+        }
+    } else {
+        backend_from_str(&saved)
+    };
+    BACKEND.store(backend_code(b), Ordering::Relaxed);
+    b
+}
+
+/// 백엔드(와 cmux 소켓 비밀번호)를 설정한다. 설정 화면에서 바꾸는 즉시 호출된다.
+/// 감시 루프는 매 폴링마다 `backend()` 를 보므로 재시작 없이 다음 틱부터 새 백엔드를 읽는다.
+#[tauri::command]
+pub fn herdr_set_backend(backend: String, password: Option<String>) {
+    let b = backend_from_str(&backend);
+    BACKEND.store(backend_code(b), Ordering::Relaxed);
+    if let Some(path) = backend_file() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, backend_to_str(b));
+    }
+    // 비밀번호는 cmux 쪽이 파일로 들고 있는다(액션에서만 필요).
+    if let Some(pw) = password {
+        crate::cmux::set_socket_password(&pw);
+    }
+    log::info!("claude watch backend = {b:?}");
+}
+
 /// herdr 실행 파일 경로. Finder 실행 앱은 PATH 에 ~/.local/bin 이 없을 수 있어 직접 확인.
 fn herdr_bin() -> String {
     if let Ok(b) = std::env::var("HERDR_BIN") {
@@ -248,7 +405,7 @@ fn list_agents_in(session: &str) -> Result<Vec<HerdrAgent>, String> {
 }
 
 /// 실행 중인 모든 herdr 세션의 agent 를 합쳐 반환한다(세션 하나가 실패해도 나머지는 유지).
-fn list_agents() -> Result<Vec<HerdrAgent>, String> {
+fn list_agents_herdr() -> Result<Vec<HerdrAgent>, String> {
     let mut out = Vec::new();
     for session in running_sessions() {
         match list_agents_in(&session) {
@@ -257,6 +414,88 @@ fn list_agents() -> Result<Vec<HerdrAgent>, String> {
         }
     }
     Ok(out)
+}
+
+/// pane_id 에서 그 pane 이 속한 워크스페이스를 뽑는 규칙. 백엔드마다 pane_id 를 만드는
+/// 방식이 달라(`cmux::pane_ref` 는 앞이, `orca::pane_ref` 는 뒤가 pane) 함수로 받는다.
+type WsOfPane = fn(&str) -> String;
+
+/// cmux pane_id 는 `"<워크스페이스>:<surface>"` 형식이라 앞 조각이 워크스페이스다.
+fn cmux_ws_of(pane_id: &str) -> String {
+    pane_id.split(':').next().unwrap_or(pane_id).to_string()
+}
+
+/// 여러 백엔드를 함께 볼 때 버려야 할 워크스페이스를 고른다(herdr 를 남긴다).
+///
+/// **다른 터미널 안에서 herdr 를 띄운 탭**이 그 대상이다. 그런 탭은 그 터미널의 훅이 세션을
+/// 기록하기는 하지만(cmux 는 `CMUX_WORKSPACE_ID`, Orca 는 pane 훅을 물려받으므로) herdr 세션
+/// 여러 개가 한 탭으로 뭉쳐 보이고 이동도 탭 단위까지만 된다 — 같은 세션을 herdr 쪽 카드가 더
+/// 정확하게 보여 주므로 그쪽을 버린다. 판단 근거는 **herdr 에도 있는 `session_id`** 다.
+///
+/// 세션 단위가 아니라 워크스페이스 단위로 버리는 이유: 세션만 걸러 내면 그 세션이 속한
+/// 워크스페이스 카드는 남아서 "빈 카드"가 되거나 다른 세션의 상태를 대표로 보여 준다.
+/// agent 목록과 워크스페이스 목록이 같은 기준으로 잘려야 둘이 어긋나지 않는다.
+fn dup_workspaces(
+    kept: &[HerdrAgent],
+    incoming: &[HerdrAgent],
+    ws_of: WsOfPane,
+) -> HashSet<String> {
+    let kept_sids: HashSet<&str> = kept
+        .iter()
+        .filter_map(|a| a.session_id.as_deref())
+        .collect();
+    incoming
+        .iter()
+        .filter(|a| {
+            a.session_id
+                .as_deref()
+                .is_some_and(|s| kept_sids.contains(s))
+        })
+        .map(|a| ws_of(&a.pane_id))
+        .collect()
+}
+
+/// 켜 둔 백엔드 전부에서 agent 목록을 읽어 합친다(호출부는 어느 백엔드인지 알 필요가 없다).
+///
+/// 한쪽이 실패해도 다른 쪽을 그대로 낸다 — herdr 를 안 쓰는 사람이 셋 다 켜 두어도 나머지
+/// 목록은 나와야 한다(그 반대도 마찬가지).
+fn list_agents() -> Result<Vec<HerdrAgent>, String> {
+    let b = backend();
+    // herdr 하나만 켠 흔한 경우는 합치기·중복 제거를 통째로 건너뛴다.
+    if b.herdr && !b.cmux && !b.orca {
+        return list_agents_herdr();
+    }
+    let mut out = if b.herdr {
+        list_agents_herdr().unwrap_or_else(|e| {
+            log::warn!("herdr agent 목록 실패: {e}");
+            Vec::new()
+        })
+    } else {
+        Vec::new()
+    };
+    for (on, name, load, ws_of) in other_backends(b) {
+        if !on {
+            continue;
+        }
+        let rows = load().unwrap_or_else(|e| {
+            log::warn!("{name} agent 목록 실패: {e}");
+            Vec::new()
+        });
+        let dup = dup_workspaces(&out, &rows, ws_of);
+        out.extend(rows.into_iter().filter(|a| !dup.contains(&ws_of(&a.pane_id))));
+    }
+    Ok(out)
+}
+
+/// herdr 가 아닌 백엔드들을 (켜짐, 이름, agent 로더, pane→워크스페이스 규칙)로 나열한다.
+/// 목록 두 곳(agent·워크스페이스)이 **같은 순서와 같은 규칙**으로 돌아야 둘이 어긋나지 않는다.
+fn other_backends(
+    b: Backends,
+) -> [(bool, &'static str, fn() -> Result<Vec<HerdrAgent>, String>, WsOfPane); 2] {
+    [
+        (b.cmux, "cmux", crate::cmux::list_agents, cmux_ws_of),
+        (b.orca, "orca", crate::orca::list_agents, crate::orca::workspace_of),
+    ]
 }
 
 /// `~/.claude/projects` 경로.
@@ -279,8 +518,9 @@ fn find_transcript(session_id: &str) -> Option<PathBuf> {
     None
 }
 
-/// 트랜스크립트 끝부분만 읽는다(큰 파일 대비). UTF-8 경계는 lossy 처리.
-fn read_tail(path: &std::path::Path, max: u64) -> Option<String> {
+/// 파일 끝부분만 읽는다(큰 파일 대비). UTF-8 경계는 lossy 처리.
+/// cmux 백엔드도 이벤트 로그를 같은 방식으로 훑는다.
+pub(crate) fn read_tail(path: &std::path::Path, max: u64) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
     let len = f.metadata().ok()?.len();
@@ -424,21 +664,24 @@ fn clean_recap(s: &str) -> String {
 }
 
 /// 세션 트랜스크립트에서 한 번의 스캔으로 뽑아낸 정보.
+///
+/// 백엔드(herdr / cmux)와 무관하게 **여기서 나온 값만** 화면에 쓰인다 — 두 백엔드가
+/// 주는 것은 "어떤 pane 이 어떤 Claude 세션인지"와 진행 상태뿐이다.
 #[derive(Default)]
-struct SessionInfo {
+pub(crate) struct SessionInfo {
     /// 마지막 사용자 프롬프트(정리 후 비어있는 도구 결과·알림 엔트리는 건너뜀).
-    last_prompt: Option<String>,
+    pub(crate) last_prompt: Option<String>,
     /// 그 프롬프트 엔트리의 timestamp(ISO8601).
-    last_prompt_at: Option<String>,
+    pub(crate) last_prompt_at: Option<String>,
     /// 마지막 recap(away_summary) content.
-    recap: Option<String>,
+    pub(crate) recap: Option<String>,
     /// 가장 최근 assistant 턴의 총 토큰(입력+출력+캐시). 진행 현황 표시용.
-    tokens: Option<u64>,
+    pub(crate) tokens: Option<u64>,
 }
 
 /// 세션 트랜스크립트에서 마지막 프롬프트/시각/recap/토큰을 한 번의 역순 스캔으로 뽑는다.
 /// 각각 "가장 최근" 것을 취한다(파일 끝에서부터).
-fn read_session_info(session_id: &str) -> SessionInfo {
+pub(crate) fn read_session_info(session_id: &str) -> SessionInfo {
     let mut info = SessionInfo::default();
     let Some(path) = find_transcript(session_id) else {
         return info;
@@ -561,13 +804,60 @@ fn list_workspaces_in(session: &str) -> Result<Vec<HerdrWorkspace>, String> {
 }
 
 /// 실행 중인 모든 herdr 세션의 워크스페이스를 합쳐 반환한다(세션 하나가 실패해도 나머지는 유지).
-fn list_workspaces() -> Result<Vec<HerdrWorkspace>, String> {
+fn list_workspaces_herdr() -> Result<Vec<HerdrWorkspace>, String> {
     let mut out = Vec::new();
     for session in running_sessions() {
         match list_workspaces_in(&session) {
             Ok(mut w) => out.append(&mut w),
             Err(e) => log::warn!("herdr workspace list 실패 (session={session}): {e}"),
         }
+    }
+    Ok(out)
+}
+
+/// 켜 둔 백엔드 전부에서 워크스페이스 목록을 읽어 합친다. 중복 규칙은 `dup_workspaces` 참고
+/// (같은 Claude 세션이 두 백엔드에 잡히면 herdr 쪽을 남긴다).
+fn list_workspaces() -> Result<Vec<HerdrWorkspace>, String> {
+    let b = backend();
+    if b.herdr && !b.cmux && !b.orca {
+        return list_workspaces_herdr();
+    }
+    let mut out = if b.herdr {
+        list_workspaces_herdr().unwrap_or_else(|e| {
+            log::warn!("herdr 워크스페이스 목록 실패: {e}");
+            Vec::new()
+        })
+    } else {
+        Vec::new()
+    };
+    // 중복 판단은 agent 의 session_id 로만 할 수 있으므로 agent 목록을 함께 읽는다.
+    // `list_agents` 와 **같은 순서·같은 규칙**으로 돌아야 두 목록이 어긋나지 않는다.
+    let mut kept_agents = if b.herdr {
+        list_agents_herdr().unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let loaders: [(bool, &str, fn() -> Result<Vec<HerdrWorkspace>, String>); 2] = [
+        (b.cmux, "cmux", crate::cmux::list_workspaces),
+        (b.orca, "orca", crate::orca::list_workspaces),
+    ];
+    for ((on, name, load_ws), (_, _, load_agents, ws_of)) in
+        loaders.into_iter().zip(other_backends(b))
+    {
+        if !on {
+            continue;
+        }
+        let rows = load_ws().unwrap_or_else(|e| {
+            log::warn!("{name} 워크스페이스 목록 실패: {e}");
+            Vec::new()
+        });
+        let incoming = load_agents().unwrap_or_default();
+        let dup = dup_workspaces(&kept_agents, &incoming, ws_of);
+        if !dup.is_empty() {
+            log::debug!("herdr 와 겹치는 {name} 워크스페이스 {} 개 제외", dup.len());
+        }
+        out.extend(rows.into_iter().filter(|w| !dup.contains(&w.workspace_id)));
+        kept_agents.extend(incoming.into_iter().filter(|a| !dup.contains(&ws_of(&a.pane_id))));
     }
     Ok(out)
 }
@@ -583,9 +873,41 @@ fn read_pane_text_src(session: &str, pane_id: &str, lines: u32, source: &str) ->
         .to_string())
 }
 
+/// 이 동작(이동·전송·읽기)을 어느 백엔드로 보낼지.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Route {
+    Herdr,
+    Cmux,
+    Orca,
+}
+
+/// 동작을 **세션 이름으로** 가른다 — cmux·Orca 백엔드가 만든 항목은 세션이 늘 고정 문자열
+/// (`"cmux"` / `"orca"`)이기 때문이다. 목록을 만든 백엔드가 그대로 동작도 받으므로, 한 화면에
+/// 여러 터미널의 작업이 섞여 있어도 각 카드의 이동·전송이 제 짝으로 간다.
+/// (`herdr --session cmux` 처럼 herdr 세션 이름을 그 값으로 준 경우만 어긋나는데, 그건 감수한다.)
+///
+/// 백엔드가 하나만 켜져 있으면 세션 이름과 무관하게 그쪽으로 보낸다 — 예전 형식으로 저장된
+/// 항목이나 이름이 빈 항목도 동작해야 하기 때문이다.
+fn route_of(session: &str) -> Route {
+    let b = backend();
+    match (b.herdr, b.cmux, b.orca) {
+        (true, false, false) => Route::Herdr,
+        (false, true, false) => Route::Cmux,
+        (false, false, true) => Route::Orca,
+        _ if session == crate::cmux::SESSION => Route::Cmux,
+        _ if session == crate::orca::SESSION => Route::Orca,
+        _ => Route::Herdr,
+    }
+}
+
 /// 기본 read(스크롤백 포함 recent). 질문 파싱·수동 로그용.
+/// cmux·Orca 는 멀티플렉서 세션 개념이 없어 `session` 을 라우팅에만 쓰고 pane 만 본다.
 fn read_pane_text(session: &str, pane_id: &str, lines: u32) -> Result<String, String> {
-    read_pane_text_src(session, pane_id, lines, "recent")
+    match route_of(session) {
+        Route::Cmux => crate::cmux::read_pane(pane_id, lines),
+        Route::Orca => crate::orca::read_pane(pane_id, lines),
+        Route::Herdr => read_pane_text_src(session, pane_id, lines, "recent"),
+    }
 }
 
 /// preview 박스를 그리는 데 쓰이는 문자들(라벨에서 잘라내기 위함).
@@ -837,6 +1159,12 @@ pub fn herdr_list_workspaces() -> Result<Vec<HerdrWorkspace>, String> {
 /// 해당 워크스페이스로 herdr 를 이동(focus)하고 터미널 창을 앞으로 가져온다.
 #[tauri::command]
 pub fn herdr_focus_workspace(session: String, workspace_id: String) -> Result<(), String> {
+    // cmux·Orca 는 탭 전환과 창 활성화를 자기 CLI 로 처리한다(호스트 터미널 탐색이 필요 없다).
+    match route_of(&session) {
+        Route::Cmux => return crate::cmux::focus_workspace(&workspace_id),
+        Route::Orca => return crate::orca::focus_workspace(&workspace_id),
+        Route::Herdr => {}
+    }
     run_herdr(Some(&session), &["workspace", "focus", &workspace_id])?;
     // 펫을 여기서 직접 숨기지는 않는다 — 다른 작업의 알림이 남아 있을 수 있고,
     // 정리 판단은 감시 루프(set_pet_alert)가 한 곳에서 한다.
@@ -851,6 +1179,11 @@ pub fn herdr_focus_workspace(session: String, workspace_id: String) -> Result<()
 pub fn herdr_send_prompt(session: String, pane_id: String, text: String) -> Result<(), String> {
     if text.trim().is_empty() {
         return Ok(());
+    }
+    match route_of(&session) {
+        Route::Cmux => return crate::cmux::send_prompt(&pane_id, &text),
+        Route::Orca => return crate::orca::send_prompt(&pane_id, &text),
+        Route::Herdr => {}
     }
     // run_herdr 는 JSON stdout 을 요구하는데 `pane run` 은 성공 시 출력이 없을 수 있어
     // 오탐(에러)이 난다. 여기선 종료 상태만 확인한다.
@@ -1138,6 +1471,11 @@ fn kaku_activate_session_pane(_session: &str) -> bool {
 /// 사용자가 알림 항목을 클릭하면 그 워크스페이스로 전환해 터미널에서 직접 선택하게 한다.
 #[tauri::command]
 pub fn herdr_focus_pane(session: String, pane_id: String) -> Result<(), String> {
+    match route_of(&session) {
+        Route::Cmux => return crate::cmux::focus_pane(&pane_id),
+        Route::Orca => return crate::orca::focus_pane(&pane_id),
+        Route::Herdr => {}
+    }
     run_herdr(Some(&session), &["agent", "focus", &pane_id])?; // herdr 내부 pane 전환
     // 펫 정리는 감시 루프가 맡는다(herdr_focus_workspace 와 같은 이유).
     // Kaku pane/탭 선택 + OS 앱 활성화(다른 Space 면 macOS 가 전환). 아래 헬퍼 doc 참고.
@@ -1258,7 +1596,7 @@ pub fn herdr_start_watch(app: tauri::AppHandle) {
     }
     let running = state.running.clone();
     std::thread::spawn(move || {
-        log::info!("herdr watcher started");
+        log::info!("claude watcher started (backend={:?})", backend());
         // ~/.myspace 준비(heartbeat·ask·answer 공용 위치).
         let myspace_dir = std::env::var("HOME")
             .ok()
@@ -1391,5 +1729,36 @@ pub fn herdr_stop_watch(app: tauri::AppHandle) {
             let _ = std::fs::create_dir_all(dir);
         }
         let _ = std::fs::write(&flag, b"1");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 설정 문자열 ↔ 백엔드 집합. 프런트(`migrateWatchBackend`)와 **같은 규칙**이어야 한다 —
+    /// 어긋나면 화면과 감시 루프가 서로 다른 백엔드를 본다.
+    #[test]
+    fn parses_and_round_trips_backend_list() {
+        let all = backend_from_str("herdr,cmux,orca");
+        assert_eq!(backend_to_str(all), "herdr,cmux,orca");
+        assert_eq!(backend_from_code(backend_code(all)), all);
+
+        // 예전 단일 선택 값. "both" 는 기본값이자 "그때 있던 전부"였으므로 셋 다로 옮긴다.
+        assert_eq!(backend_from_str("both"), all);
+        assert_eq!(backend_to_str(backend_from_str("cmux")), "cmux");
+
+        // 전부 끈 상태는 빈 문자열이 아니라 이름으로 남아야 한다(빈 파일 = 저장 안 함).
+        assert_eq!(backend_to_str(Backends::none()), "none");
+        assert_eq!(backend_from_str("none"), Backends::none());
+    }
+
+    /// 라우팅은 세션 이름으로 가르되, 하나만 켜져 있으면 이름과 무관하게 그쪽으로 간다.
+    #[test]
+    fn routes_actions_by_session_name() {
+        assert_eq!(crate::orca::SESSION, "orca");
+        assert_eq!(crate::cmux::SESSION, "cmux");
+        // route_of 는 저장된 설정을 읽으므로 여기서는 이름 상수만 고정한다 —
+        // 이 둘이 바뀌면 혼합 모드의 이동·전송이 조용히 엉뚱한 앱으로 간다.
     }
 }

@@ -586,6 +586,18 @@ html.pet-window #root {
   animation: claude-run-bar 1.4s ease-in-out infinite;
 }
 
+/* Claude Code 세션 로그 — tmux pane 캡처를 실제 터미널처럼 검은 배경·흰 글자로 보여준다.
+   프리셋/라이트·다크와 무관하게 항상 어두운 표면이므로, 그 위에 얹히는 스크롤바와
+   선택 색도 어두운 배경 기준으로 다시 잡는다(라이트 모드의 어두운 스크롤바는 검은 바탕에서 안 보인다). */
+.claude-log {
+  --ui-scrollbar: #ffffff33;
+}
+.claude-log ::selection,
+.claude-log::selection {
+  background: #ffffff40;
+  color: #ffffff;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pet-figure,
   .pet-dot,

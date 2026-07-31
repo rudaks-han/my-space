@@ -26,6 +26,25 @@ export function ClaudeNotifier() {
     settingsRef.current = settings
   }, [settings])
 
+  // 감시 대상 터미널(herdr / cmux / orca)과 cmux 소켓 비밀번호를 Rust 에 반영한다.
+  // Rust 감시 루프는 창이 열리기 전(로그인 자동 시작)부터 도므로 localStorage 를 읽을 수
+  // 없다 — 그래서 herdr_set_backend 가 ~/.myspace/backend 에 값을 남기고, 루프는 매 폴링마다
+  // 그 값을 본다(백엔드를 바꿔도 감시를 재시작할 필요가 없다).
+  //
+  // 이 effect 는 아래 watch 토글보다 **먼저 선언돼 있어야** 한다. effect 는 선언 순서로
+  // 실행되므로, 이렇게 두면 감시가 시작되는 시점에 백엔드가 이미 확정돼 있다.
+  // 배열 그대로 두면 매 렌더가 새 참조라 effect 가 계속 돈다 — 쉼표로 이어 값으로 비교한다
+  // (Rust 가 받는 형식도 이 문자열이다).
+  const backend = settings.claudeCode.backend.join(",")
+  const { cmuxPassword } = settings.claudeCode
+  useEffect(() => {
+    if (!isTauri()) return
+    void trackedInvoke("herdr_set_backend", {
+      backend,
+      password: cmuxPassword,
+    }).catch((e) => console.error("감시 백엔드 설정 실패:", e))
+  }, [backend, cmuxPassword])
+
   // 작업 감시 on/off 설정을 Rust 감시 루프에 반영한다. 이 컴포넌트는 어느 화면에서든
   // 항상 마운트돼 있어(설정 화면에서 토글해도) 토글 즉시·마운트 시 상태를 동기화한다.
   // start/stop 커맨드가 ~/.myspace/watch-disabled 플래그를 갱신하므로 재시작 후에도 유지된다.

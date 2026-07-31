@@ -1,10 +1,9 @@
 /**
  * Flex(휴가) 설정 패널 — 로그인 계정 등록.
  *
- * Flex 는 공개 API 가 없어 웹 세션으로 API 를 호출한다. 세션은
- *  1) 앱이 자동 로그인해서 받은 토큰 → 2) Chrome 에 로그인된 세션
- * 순으로 찾고, 둘 다 없으면 여기 저장한 계정으로 자동 로그인한다(브라우저 창 없이
- * 로그인 화면이 쓰는 API 를 그대로 호출한다 — 자세한 흐름은 `src-tauri/src/flex.rs`).
+ * Flex 는 공개 API 가 없어 웹 세션으로 API 를 호출한다. 여기 저장한 계정으로
+ * 앱이 자동 로그인해서 세션을 얻는다(브라우저 창 없이 로그인 화면이 쓰는 API 를
+ * 그대로 호출한다 — 자세한 흐름은 `src-tauri/src/flex.rs`).
  */
 import { LogOutIcon, RefreshCwIcon, UsersIcon } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
@@ -37,7 +36,7 @@ interface FlexStatus {
   email: string | null
   canAutoLogin: boolean
   loggedIn: boolean
-  source: "app" | "chrome" | null
+  source: "app" | null
 }
 
 /** 자동 로그인 실패 원인을 한국어로. */
@@ -251,13 +250,11 @@ export function FlexSettingsPanel() {
                   : "세션 없음"}
             </span>
             <span className="text-[13px] text-muted-foreground">
-              {status?.source === "chrome"
-                ? "Chrome 에 로그인된 세션 사용 중"
-                : status?.source === "app"
-                  ? "앱이 로그인한 세션 사용 중"
-                  : status?.canAutoLogin
-                    ? "저장된 계정으로 자동 로그인합니다"
-                    : "Chrome 로그인 또는 계정 저장이 필요합니다"}
+              {status?.source === "app"
+                ? "앱이 로그인한 세션 사용 중"
+                : status?.canAutoLogin
+                  ? "저장된 계정으로 자동 로그인합니다"
+                  : "계정 저장이 필요합니다"}
             </span>
             <div className="ml-auto flex gap-2">
               <Button
@@ -359,12 +356,6 @@ export function FlexSettingsPanel() {
             )}
           </div>
         </div>
-
-        <p className="text-[13px] text-muted-foreground">
-          계정을 저장하지 않아도, Chrome 에서 flex.team 에 로그인해 두면 그
-          세션을 그대로 씁니다(처음 한 번 macOS 키체인 접근 허용 창이 뜰 수
-          있습니다).
-        </p>
       </div>
     </div>
   )

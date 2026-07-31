@@ -39,7 +39,15 @@ serde_json = "1"
 # Slack/Google API 호출용 HTTP 클라이언트. macOS 는 native-tls(Secure Transport)를 써서 OpenSSL 불필요.
 reqwest = { version = "0.12", features = ["json"] }
 # Slack rate-limit(429) 백오프 대기 + Google OAuth 루프백 대기에 tokio 사용.
-tokio = { version = "1", features = ["time", "sync"] }
+# 화면공유 서버(axum)를 위해 net/rt-multi-thread 도 필요하다.
+tokio = { version = "1", features = [
+  "time",
+  "sync",
+  "net",
+  "rt-multi-thread",
+  "io-util",
+  "macros",
+] }
 # Google 캘린더: 오늘 날짜 경계(로컬 타임존) 계산.
 chrono = "0.4"
 # OAuth 인증 URL 파라미터 인코딩/디코딩.
@@ -69,6 +77,21 @@ cbc = { version = "0.1", features = ["alloc", "block-padding"] }
 # 비밀값 → AES 키/IV 유도: PBKDF2-HMAC-SHA1.
 pbkdf2 = "0.12"
 sha1 = "0.10"
+
+# ── 화면공유 ──
+# WKWebView 는 getDisplayMedia() 를 지원하지 않으므로(Apple 이 임베드 웹뷰엔 getUserMedia 만 허용)
+# 앱은 "서버" 역할만 한다: 송신 페이지·시청 페이지를 서빙하고 WebRTC signaling(SDP/ICE)을 중계한다.
+# 실제 화면 캡처와 인코딩은 시스템 브라우저(Chrome/Safari)가 하므로 비디오 코덱 의존이 전혀 없다.
+axum = { version = "0.8", features = ["ws"] }
+# graceful shutdown + rustls TLS 종단. rustls 는 순수 Rust 라 OpenSSL 이 필요 없다.
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+# 프로세스 시작 시 CryptoProvider 를 명시적으로 설치하기 위해 직접 참조한다.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# LAN 시청자는 https 여야 한다 — RTCPeerConnection 이 secure context 전용이라
+# http://<LAN IP> 로는 WebRTC 가 아예 시작되지 않는다. 자체 서명 인증서를 실행마다 생성한다.
+rcgen = "0.13"
+# 공유 URL 의 추측 불가능한 토큰 생성.
+rand = "0.8"
 
 # macOS 전용: 자식 웹뷰의 WKWebView 에 두 손가락 스와이프(뒤로/앞으로) 제스처를 켜기 위해
 # 네이티브 ObjC 메서드(setAllowsBackForwardNavigationGestures:)를 호출한다.

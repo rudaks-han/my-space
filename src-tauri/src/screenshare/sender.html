@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>화면 공유 — My Space</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f8f8f8;
+        --panel: #ffffff;
+        --fg: #1d1c1d;
+        --muted: #616061;
+        --line: #e8e8e8;
+        --brand: #862688;
+        --err: #e01e5a;
+        --ok: #2bac76;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1a1d21;
+          --panel: #222529;
+          --fg: #e8e8e8;
+          --muted: #9b9b9b;
+          --line: #35383d;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          15px/1.46667 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        display: flex;
+        justify-content: center;
+        padding: 32px 20px;
+      }
+      main {
+        width: 100%;
+        max-width: 640px;
+      }
+      h1 {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin: 0 0 6px;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 0 0 20px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 16px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+        margin-bottom: 14px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: var(--muted);
+        flex: none;
+      }
+      .dot.live {
+        background: var(--ok);
+        box-shadow: 0 0 0 4px rgba(43, 172, 118, 0.18);
+      }
+      .dot.err {
+        background: var(--err);
+      }
+      #state {
+        font-weight: 700;
+      }
+      #detail {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 6px 0 0;
+      }
+      button {
+        font: inherit;
+        font-weight: 700;
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 18px;
+        cursor: pointer;
+        background: var(--brand);
+        color: #fff;
+      }
+      button:hover {
+        filter: brightness(1.08);
+      }
+      button.ghost {
+        background: transparent;
+        color: var(--fg);
+        border: 1px solid var(--line);
+      }
+      button.danger {
+        background: var(--err);
+      }
+      button[hidden] {
+        display: none;
+      }
+      video {
+        width: 100%;
+        border-radius: 8px;
+        background: #000;
+        display: block;
+        aspect-ratio: 16 / 9;
+        object-fit: contain;
+      }
+      .viewers {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .viewers b {
+        color: var(--fg);
+      }
+      /* ── 공유 주소 ── */
+      .urlrow + .urlrow {
+        margin-top: 12px;
+      }
+      .urlrow .label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      .urlrow.primary .label {
+        color: var(--fg);
+        font-weight: 700;
+      }
+      .urlbox {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .urlbox code {
+        flex: 1;
+        min-width: 0;
+        background: color-mix(in srgb, var(--muted) 14%, transparent);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        word-break: break-all;
+        user-select: all;
+      }
+      .urlrow.primary .urlbox code {
+        font-size: 15px;
+        font-weight: 700;
+      }
+      .urlbox button {
+        padding: 8px 14px;
+        flex: none;
+      }
+      .note {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 5px;
+      }
+      .waiting {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      ul {
+        margin: 8px 0 0;
+        padding-left: 20px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      li + li {
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>화면 공유 송신</h1>
+      <p class="sub">
+        이 탭이 화면을 캡처해 시청자에게 보냅니다. 탭을 닫으면 공유가 끝납니다.
+      </p>
+
+      <div class="card">
+        <div class="row">
+          <span class="dot" id="dot"></span>
+          <span id="state">공유 준비됨</span>
+        </div>
+        <p id="detail">
+          아래 버튼을 눌러 공유할 화면(전체 화면 · 창 · 탭)을 고르세요.
+        </p>
+        <div class="row" style="margin-top: 14px">
+          <button id="start">화면 선택하고 공유 시작</button>
+          <button id="stop" class="danger" hidden>공유 중지</button>
+        </div>
+      </div>
+
+      <!-- 상대방에게 전달할 주소. 화면을 고른 직후 여기서 바로 복사할 수 있어야
+           앱으로 돌아갈 일이 없다. 주소는 앱이 소켓으로 알려 준다(urls 메시지). -->
+      <div class="card" id="urls" hidden>
+        <div style="font-weight: 700; font-size: 15px; margin-bottom: 12px">
+          공유 주소
+        </div>
+        <div id="urlList"></div>
+      </div>
+
+      <div class="card" id="live" hidden>
+        <div class="row" style="margin-bottom: 12px; justify-content: space-between">
+          <span class="viewers">
+            시청자 <b id="count">0</b>명
+            <!-- P2P 가 막혀 앱을 거쳐 보는 사람 수. 화질이 낮으므로 드러내 준다. -->
+            <span id="relay" style="margin-left: 6px"></span>
+          </span>
+          <span class="viewers" id="hint"></span>
+        </div>
+        <video id="preview" autoplay muted playsinline></video>
+      </div>
+
+      <div class="card">
+        <div style="font-weight: 700; font-size: 13px">알아두면 좋은 점</div>
+        <ul>
+          <li>공유를 멈추려면 이 탭의 <b>공유 중지</b>를 누르거나 탭을 닫으세요.</li>
+          <li>
+            macOS 크롬은 <b>시스템 소리를 캡처하지 못합니다</b>. 크롬 탭을 공유할
+            때만 그 탭의 소리가 함께 전달됩니다.
+          </li>
+          <li>
+            처음 공유할 때 macOS가 <b>화면 기록 권한</b>을 요청하면 허용해야 합니다.
+          </li>
+        </ul>
+      </div>
+    </main>
+
+    <script>
+      // 토큰은 URL 경로(/s/<token>)에서 읽는다 — 서버가 HTML 을 치환하지 않아도 되도록.
+      const token = decodeURIComponent(location.pathname.split("/").pop() || "")
+      const wsBase =
+        (location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host
+
+      // LAN 시청자는 host candidate 로 바로 붙어 STUN 이 필요 없지만, 터널로 외부에서
+      // 볼 때는 NAT 홀펀칭이 필요하다. TURN 서버는 없으므로 홀펀칭이 실패하는 망
+      // (대칭 NAT·엄격한 기업 방화벽)에서는 연결되지 않는다.
+      const RTC_CONFIG = {
+        iceServers: [
+          {
+            urls: [
+              "stun:stun.l.google.com:19302",
+              "stun:stun1.l.google.com:19302",
+            ],
+          },
+        ],
+      }
+
+      const el = (id) => document.getElementById(id)
+      /** viewerId → RTCPeerConnection */
+      const peers = new Map()
+      let ws = null
+      let stream = null
+      /** 사용자가 명시적으로 멈췄는지 — 자동 재연결을 막는다. */
+      let stopped = false
+
+      function setState(text, detail, kind) {
+        el("state").textContent = text
+        el("detail").textContent = detail
+        el("dot").className = "dot" + (kind ? " " + kind : "")
+      }
+
+      function updateCount() {
+        el("count").textContent = String(peers.size)
+      }
+
+      async function start() {
+        try {
+          stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { frameRate: { ideal: 30, max: 60 } },
+            audio: true,
+          })
+        } catch (e) {
+          // 사용자가 선택 창을 취소한 경우도 여기로 온다.
+          setState(
+            "공유를 시작하지 못했습니다",
+            (e && e.name === "NotAllowedError"
+              ? "화면 선택이 취소되었거나 화면 기록 권한이 없습니다. "
+              : "") + String((e && e.message) || e),
+            "err"
+          )
+          return
+        }
+
+        const track = stream.getVideoTracks()[0]
+        // 문서·코드 공유가 주 용도라 선명도(detail)를 우선한다 — 움직임보다 글자가 중요.
+        track.contentHint = "detail"
+        // 브라우저 자체의 "공유 중지" 막대로 멈춘 경우도 정리한다.
+        track.addEventListener("ended", () => stop("공유가 종료되었습니다."))
+
+        el("preview").srcObject = stream
+        el("live").hidden = false
+        el("start").hidden = true
+        el("stop").hidden = false
+        el("hint").textContent = stream.getAudioTracks().length
+          ? "소리 포함"
+          : "소리 없음"
+        stopped = false
+        connect()
+      }
+
+      function connect() {
+        ws = new WebSocket(
+          wsBase + "/ws?role=sender&token=" + encodeURIComponent(token)
+        )
+        ws.onopen = () =>
+          setState("공유 중", "시청자가 URL 을 열면 화면이 전달됩니다.", "live")
+        ws.onclose = () => {
+          if (stopped) return
+          setState("연결이 끊겼습니다", "3초 후 다시 연결합니다…", "err")
+          setTimeout(() => {
+            if (!stopped && stream && stream.active) connect()
+          }, 3000)
+        }
+        ws.onerror = () =>
+          setState(
+            "My Space 에 연결할 수 없습니다",
+            "앱에서 공유를 다시 시작해 주세요.",
+            "err"
+          )
+        ws.onmessage = (ev) => handle(JSON.parse(ev.data))
+      }
+
+      function send(msg) {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
+      }
+
+      async function handle(msg) {
+        switch (msg.type) {
+          // 서버가 접속 시점의 시청자 목록을 알려준다(시청 페이지가 먼저 열려 있던 경우).
+          case "peers":
+            for (const id of msg.ids) await offerTo(id)
+            break
+          case "join":
+            await offerTo(msg.from)
+            break
+          case "answer": {
+            const pc = peers.get(msg.from)
+            if (pc)
+              await pc.setRemoteDescription({ type: "answer", sdp: msg.sdp })
+            break
+          }
+          case "candidate": {
+            const pc = peers.get(msg.from)
+            if (pc && msg.candidate)
+              await pc.addIceCandidate(msg.candidate).catch(() => {})
+            break
+          }
+          case "leave":
+            drop(msg.from)
+            break
+          // 앱이 "몇 명이 릴레이로 보는지" 알려 준다 — 0 이면 캡처를 멈춘다.
+          case "relay-count":
+            setRelay(msg.count)
+            break
+
+          // 상대방에게 전달할 주소. 터널은 몇 초 뒤에 준비되므로 여러 번 온다.
+          case "urls":
+            renderUrls(msg)
+            break
+
+          // 같은 토큰으로 다른 송신 탭이 붙었다 — 이 탭은 물러난다.
+          case "replaced":
+            stop("다른 탭에서 공유를 시작해 이 탭의 공유를 멈췄습니다.")
+            break
+        }
+      }
+
+      // ── 공유 주소 ──────────────────────────────────────────────────
+      function renderUrls(msg) {
+        const list = el("urlList")
+        list.textContent = ""
+
+        if (msg.tunnelState === "ready" && msg.tunnel) {
+          list.appendChild(
+            urlRow(
+              "상대방에게 전달할 주소 (어느 망에서나 열립니다)",
+              msg.tunnel,
+              "정식 인증서라 경고가 없습니다. 직접 연결이 막히면 자동으로 낮은 화질로 전환되므로, 이 주소가 열리는 곳이면 화면이 보입니다.",
+              true
+            )
+          )
+        } else if (msg.tunnelState === "starting") {
+          const waiting = document.createElement("div")
+          waiting.className = "waiting"
+          waiting.textContent = "상대방에게 전달할 주소를 만들고 있습니다…"
+          list.appendChild(waiting)
+        } else if (msg.tunnelState === "failed") {
+          const failed = document.createElement("div")
+          failed.className = "waiting"
+          failed.textContent =
+            "외부에서 열 수 있는 주소를 만들지 못했습니다. 아래 주소는 같은 네트워크에 있는 사람만 열 수 있습니다."
+          list.appendChild(failed)
+        }
+
+        const lan = msg.lan || []
+        lan.forEach((url, i) => {
+          const label =
+            lan.length > 1
+              ? `같은 네트워크에 있을 때 (${i + 1}/${lan.length} · 더 좋은 화질)`
+              : "같은 네트워크에 있을 때(더 좋은 화질)"
+          const note =
+            i === 0
+              ? "첫 접속 때 “연결이 비공개로 설정되어 있지 않습니다” 경고가 뜹니다 — 고급 → 계속을 누르면 됩니다."
+              : "이 PC 가 여러 네트워크에 붙어 있어 주소가 여럿입니다. 상대방 쪽에서 열리는 것을 쓰세요."
+          list.appendChild(urlRow(label, url, note, false))
+        })
+
+        if (!lan.length && msg.tunnelState !== "ready") {
+          const none = document.createElement("div")
+          none.className = "waiting"
+          none.textContent = "쓸 수 있는 주소가 없습니다 — 네트워크 연결을 확인해 주세요."
+          list.appendChild(none)
+        }
+        el("urls").hidden = false
+      }
+
+      /** 주소 한 줄(라벨 + 주소 + 복사 버튼 + 설명). textContent 로만 채운다. */
+      function urlRow(label, url, note, primary) {
+        const row = document.createElement("div")
+        row.className = primary ? "urlrow primary" : "urlrow"
+
+        const labelEl = document.createElement("div")
+        labelEl.className = "label"
+        labelEl.textContent = label
+
+        const box = document.createElement("div")
+        box.className = "urlbox"
+        const code = document.createElement("code")
+        code.textContent = url
+        const button = document.createElement("button")
+        button.textContent = "복사"
+        if (!primary) button.className = "ghost"
+        button.addEventListener("click", () => copyUrl(url, button, code))
+        box.append(code, button)
+
+        const noteEl = document.createElement("div")
+        noteEl.className = "note"
+        noteEl.textContent = note
+
+        row.append(labelEl, box, noteEl)
+        return row
+      }
+
+      async function copyUrl(url, button, code) {
+        const original = button.textContent
+        try {
+          await navigator.clipboard.writeText(url)
+          button.textContent = "복사됨"
+        } catch (e) {
+          // 클립보드가 막혔으면(권한 거부 등) 최소한 선택은 해 준다 — ⌘C 로 끝낼 수 있게.
+          selectContents(code)
+          button.textContent = "⌘C 로 복사"
+        }
+        setTimeout(() => {
+          button.textContent = original
+        }, 1800)
+      }
+
+      function selectContents(node) {
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        const selection = window.getSelection()
+        selection.removeAllRanges()
+        selection.addRange(range)
+      }
+
+      // ── 릴레이 폴백 ────────────────────────────────────────────────
+      // NAT 를 넘지 못한 시청자는 P2P 대신 앱을 거쳐 JPEG 프레임을 받는다.
+      // 화질·프레임은 낮지만 URL 이 열리는 곳이면 무조건 보인다.
+      // 문서·코드 공유가 주 용도라 프레임 수보다 해상도를 지킨다(글자가 읽혀야 한다).
+      const RELAY_FPS = 5
+      const RELAY_MAX_EDGE = 1600
+      const RELAY_QUALITY = 0.6
+      /** 전송 큐가 이만큼 쌓이면 프레임을 버린다 — 큐가 밀리면 지연이 눈덩이처럼 커진다. */
+      const RELAY_MAX_BUFFERED = 2 * 1024 * 1024
+
+      let relayTimer = null
+      let relayCanvas = null
+      /** toBlob(인코딩)이 진행 중인지 — 겹쳐 돌리면 메모리만 먹는다. */
+      let relayEncoding = false
+
+      function setRelay(count) {
+        el("relay").textContent = count > 0 ? `· 릴레이 ${count}명(저화질)` : ""
+        if (count > 0 && !relayTimer) {
+          relayCanvas = document.createElement("canvas")
+          relayTimer = setInterval(sendFrame, Math.round(1000 / RELAY_FPS))
+        } else if (count === 0 && relayTimer) {
+          stopRelay()
+        }
+      }
+
+      function stopRelay() {
+        clearInterval(relayTimer)
+        relayTimer = null
+        relayCanvas = null
+        el("relay").textContent = ""
+      }
+
+      function sendFrame() {
+        const video = el("preview")
+        if (!ws || ws.readyState !== WebSocket.OPEN) return
+        if (!video.videoWidth || relayEncoding) return
+        if (ws.bufferedAmount > RELAY_MAX_BUFFERED) return
+
+        const scale = Math.min(
+          1,
+          RELAY_MAX_EDGE / Math.max(video.videoWidth, video.videoHeight)
+        )
+        const w = Math.round(video.videoWidth * scale)
+        const h = Math.round(video.videoHeight * scale)
+        if (relayCanvas.width !== w) relayCanvas.width = w
+        if (relayCanvas.height !== h) relayCanvas.height = h
+
+        relayCanvas.getContext("2d").drawImage(video, 0, 0, w, h)
+        relayEncoding = true
+        relayCanvas.toBlob(
+          (blob) => {
+            relayEncoding = false
+            if (blob && ws && ws.readyState === WebSocket.OPEN) ws.send(blob)
+          },
+          "image/jpeg",
+          RELAY_QUALITY
+        )
+      }
+
+      async function offerTo(id) {
+        drop(id)
+        const pc = new RTCPeerConnection(RTC_CONFIG)
+        peers.set(id, pc)
+        updateCount()
+
+        for (const track of stream.getTracks()) pc.addTrack(track, stream)
+        pc.onicecandidate = (e) => {
+          if (e.candidate)
+            send({ type: "candidate", to: id, candidate: e.candidate })
+        }
+        pc.onconnectionstatechange = () => {
+          if (
+            pc.connectionState === "failed" ||
+            pc.connectionState === "closed"
+          )
+            drop(id)
+        }
+
+        const offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+        send({ type: "offer", to: id, sdp: offer.sdp })
+      }
+
+      function drop(id) {
+        const pc = peers.get(id)
+        if (!pc) return
+        try {
+          pc.close()
+        } catch (e) {}
+        peers.delete(id)
+        updateCount()
+      }
+
+      function stop(reason) {
+        stopped = true
+        if (relayTimer) stopRelay()
+        for (const id of [...peers.keys()]) drop(id)
+        if (stream) {
+          for (const t of stream.getTracks()) t.stop()
+          stream = null
+        }
+        if (ws) {
+          try {
+            ws.close()
+          } catch (e) {}
+          ws = null
+        }
+        el("live").hidden = true
+        // 공유가 끝나면 주소도 무효가 된다 — 남겨 두면 죽은 링크를 전달하게 된다.
+        el("urls").hidden = true
+        el("stop").hidden = true
+        el("start").hidden = false
+        el("preview").srcObject = null
+        setState("공유 중지됨", reason || "다시 공유하려면 버튼을 누르세요.")
+      }
+
+      el("start").addEventListener("click", start)
+      el("stop").addEventListener("click", () => stop())
+      // 탭을 닫으면 서버가 즉시 알 수 있도록 소켓을 정리한다.
+      window.addEventListener("pagehide", () => {
+        if (ws) try { ws.close() } catch (e) {}
+      })
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        el("start").disabled = true
+        setState(
+          "이 브라우저는 화면 공유를 지원하지 않습니다",
+          "크롬 또는 Safari 17 이상에서 열어 주세요.",
+          "err"
+        )
+      }
+    </script>
+  </body>
+</html>

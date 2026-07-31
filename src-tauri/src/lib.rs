@@ -1,6 +1,5 @@
 mod auth;
 mod cc_history;
-mod chrome_cookies;
 mod claude_usage;
 mod cowork;
 mod es;
@@ -8,13 +7,16 @@ mod flex;
 mod gcal;
 mod gdrive;
 mod gmail;
+mod cmux;
 mod herdr;
 mod intellij;
 mod jira;
 mod kafka;
 mod mcp;
+mod orca;
 mod pet;
 mod reminder;
+mod screenshare;
 mod slack;
 
 use serde::Serialize;
@@ -442,11 +444,13 @@ pub fn run() {
         .manage(reminder::PendingReminder::default())
         .manage(pet::PetFeed::default())
         .manage(pet::PetAlert::default())
+        .manage(pet::AppNotices::default())
         .manage(pet::NoticeTtl::default())
         .manage(intellij::ServiceState::default())
         .manage(intellij::RunTracking::default())
         .manage(intellij::WatchProject::default())
         .manage(intellij::SequenceState::default())
+        .manage(screenshare::ShareState::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             auth::ldap_login,
@@ -456,6 +460,10 @@ pub fn run() {
             pet::pet_show,
             pet::pet_hide,
             pet::pet_alert,
+            pet::pet_set_claude_alert,
+            pet::pet_notify,
+            pet::pet_dismiss_notice,
+            pet::pet_notices,
             pet::pet_resize,
             pet::pet_set_click_through,
             pet::pet_anchor,
@@ -536,6 +544,7 @@ pub fn run() {
             herdr::herdr_dismiss_notice,
             herdr::herdr_start_watch,
             herdr::herdr_stop_watch,
+            herdr::herdr_set_backend,
             reminder::reminder_fire,
             reminder::reminder_current,
             reminder::reminder_dismiss,
@@ -571,7 +580,12 @@ pub fn run() {
             claude_usage::claude_usage,
             cc_history::cc_history_projects,
             cc_history::cc_history_sessions,
-            cc_history::cc_history_messages
+            cc_history::cc_history_messages,
+            screenshare::screenshare_start,
+            screenshare::screenshare_stop,
+            screenshare::screenshare_status,
+            screenshare::screenshare_tunnel_available,
+            screenshare::screenshare_reopen_sender
         ])
         .setup(|app| {
             // 메뉴바(작업표시줄) 트레이 아이콘. 클릭하면 바로 앱을 열지 않고 메뉴를 띄운다:

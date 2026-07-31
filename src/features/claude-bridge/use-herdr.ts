@@ -67,15 +67,17 @@ export interface AskQuestion {
 }
 
 /**
- * herdr agent 목록과 워크스페이스 진행 현황을 관리한다(상태 뷰용).
- * 실제 감시 루프는 Rust 백그라운드 스레드에서 돌고, on/off 는 설정(작업 감시)으로 제어한다
- * (ClaudeNotifier 가 설정을 Rust 에 반영). 여기서는 `herdr:*` 이벤트 구독만 한다.
+ * agent 목록과 워크스페이스 진행 현황을 관리한다(상태 뷰용).
+ * 실제 감시 루프는 Rust 백그라운드 스레드에서 돌고, on/off 와 감시 대상 터미널
+ * (herdr / cmux / orca)은 설정으로 제어한다(ClaudeNotifier 가 설정을 Rust 에 반영).
+ * 여기서는 `herdr:*` 이벤트 구독만 한다 — 이벤트 이름과 데이터 모양은 백엔드와 무관하게
+ * 같으므로, 어느 터미널을 보고 있는지는 이 훅 아래로 내려가지 않는다.
  */
 export function useHerdr() {
   const [agents, setAgents] = useState<HerdrAgent[]>([])
   const [workspaces, setWorkspaces] = useState<HerdrWorkspace[]>([])
-  // 감시 on/off 는 설정이 단일 출처. 헤더 상태 표시는 이 값을 그대로 보여준다(읽기전용).
-  const watching = useSettings().settings.claudeCode.watchEnabled
+  // 감시 on/off 와 백엔드는 설정이 단일 출처. 헤더·오류 문구는 이 값을 그대로 보여준다(읽기전용).
+  const { watchEnabled: watching, backend } = useSettings().settings.claudeCode
   const [error, setError] = useState<string | null>(null)
 
   // setState 는 모두 await 뒤에서만 호출한다(effect 에서 바로 불려도 동기 setState 가
@@ -146,6 +148,8 @@ export function useHerdr() {
     agents,
     workspaces,
     watching,
+    /** 지금 무엇을 보고 있는지(오류 문구에 이름을 넣기 위해). */
+    backend,
     error,
     refresh,
     readPane,

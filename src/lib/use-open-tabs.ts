@@ -18,6 +18,8 @@ export interface OpenTabsState {
   /** 없으면 추가하고 활성화, 있으면 활성화만 */
   open: (id: string) => void
   close: (id: string) => void
+  /** 모든 탭을 닫고 홈 하나만 남긴다(마지막 한 개는 항상 있어야 하므로). */
+  closeAll: () => void
   setActive: (id: string) => void
   /** draggedId 탭을 targetId 탭의 앞(before) 또는 뒤로 옮긴다(드래그 재정렬). */
   move: (draggedId: string, targetId: string, before: boolean) => void
@@ -94,6 +96,12 @@ export function useOpenTabs(): OpenTabsState {
     [openIds, activeId, setStoredIds, setStoredActive]
   )
 
+  const closeAll = useCallback(() => {
+    // 탭이 전부 사라지면 보여 줄 뷰가 없으므로 홈 하나로 초기화한다.
+    setStoredIds(["home"])
+    setStoredActive("home")
+  }, [setStoredIds, setStoredActive])
+
   const setActive = useCallback(
     (id: string) => {
       setStoredActive(id)
@@ -118,5 +126,5 @@ export function useOpenTabs(): OpenTabsState {
     [openIds, setStoredIds]
   )
 
-  return { openIds, activeId, open, close, setActive, move }
+  return { openIds, activeId, open, close, closeAll, setActive, move }
 }

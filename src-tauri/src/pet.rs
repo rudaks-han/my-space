@@ -145,11 +145,50 @@ pub enum AlertSource {
     Herdr,
     /// 사용자가 걸어 둔 리마인더.
     Reminder,
+    /// 앱 알림(Gmail 새 메일·Slack 새 메시지·캘린더 일정) — `AppNotice` 참고.
+    App,
 }
+
+impl AlertSource {
+    /// `AlertState` 배열에서의 자리.
+    fn idx(self) -> usize {
+        match self {
+            AlertSource::Herdr => 0,
+            AlertSource::Reminder => 1,
+            AlertSource::App => 2,
+        }
+    }
+}
+
+/// 알림 출처 개수(`AlertState` 배열 길이).
+const ALERT_SOURCES: usize = 3;
 
 /// 알림 때문에 펫을 띄워 둬야 하는지(출처별). 설정의 "상시 표시"와는 별개의 축이다.
 #[derive(Default)]
-pub struct PetAlert(pub std::sync::Mutex<(bool, bool)>);
+pub struct AlertState {
+    /// 출처별로 지금 알릴 것이 있는지.
+    active: [bool; ALERT_SOURCES],
+    /// Claude Code 알림을 설정에서 꺼 뒀는지(`settings.pet.notify.claude`).
+    ///
+    /// 여기서 걸러야 하는 이유: herdr 감시 루프는 설정을 모른 채 알림을 계속 만들므로,
+    /// 꺼 둔 알림 때문에 **말풍선에 아무것도 없는 펫이 불쑥 나타난다**. 다른 출처는
+    /// 프론트엔드가 만들어 보내므로(`pet_notify`) 꺼 두면 애초에 오지 않아 필요 없다.
+    claude_muted: bool,
+}
+
+impl AlertState {
+    /// 지금 펫을 띄워 둬야 하는지 — 꺼 둔 출처는 세지 않는다.
+    fn any(&self) -> bool {
+        self.active
+            .iter()
+            .enumerate()
+            .any(|(i, on)| *on && !(i == AlertSource::Herdr.idx() && self.claude_muted))
+    }
+}
+
+/// 알림 표시 상태(출처별 + 설정에서 끈 출처).
+#[derive(Default)]
+pub struct PetAlert(pub std::sync::Mutex<AlertState>);
 
 /// 한 출처의 알림 상태를 갱신하고, **합친 결과가 바뀌었을 때만** 메인 창에 알린다
 /// (같은 값을 되풀어 보내면 PetController 의 effect 가 다시 돌아 창이 기본 크기로 되돌아간다).
@@ -160,12 +199,9 @@ pub fn set_alert(app: &tauri::AppHandle, source: AlertSource, active: bool) {
     let Ok(mut g) = state.0.lock() else {
         return;
     };
-    let before = g.0 || g.1;
-    match source {
-        AlertSource::Herdr => g.0 = active,
-        AlertSource::Reminder => g.1 = active,
-    }
-    let after = g.0 || g.1;
+    let before = g.any();
+    g.active[source.idx()] = active;
+    let after = g.any();
     if before == after {
         return;
     }
@@ -179,8 +215,123 @@ pub fn pet_alert(app: tauri::AppHandle) -> bool {
     app.state::<PetAlert>()
         .0
         .lock()
-        .map(|g| g.0 || g.1)
+        .map(|g| g.any())
         .unwrap_or(false)
+}
+
+/// Claude Code 알림을 펫으로 받을지를 설정에서 반영한다(메인 창의 PetController).
+///
+/// 끄면 herdr 쪽 알림으로는 펫이 나타나지 않는다 — 알림을 꺼 뒀는데 빈 펫이 뜨는 것을
+/// 막으려면, 표시를 판단하는 Rust 도 이 설정을 알아야 한다. 이미 떠 있는 상태에서 껐다면
+/// 그 자리에서 내려간다(설정을 만지고도 펫이 남아 있으면 꺼진 것처럼 안 보인다).
+#[tauri::command]
+pub fn pet_set_claude_alert(app: tauri::AppHandle, enabled: bool) {
+    let Some(state) = app.try_state::<PetAlert>() else {
+        return;
+    };
+    let Ok(mut g) = state.0.lock() else {
+        return;
+    };
+    let before = g.any();
+    g.claude_muted = !enabled;
+    let after = g.any();
+    if before != after {
+        let _ = app.emit_to("main", "pet:alert", after);
+    }
+}
+
+/*
+ * ── 앱 알림(Gmail · Slack · 캘린더) ─────────────────────────────────────────
+ *
+ * herdr·리마인더와 달리 이 알림들은 **프론트엔드가 만들어** 여기로 넣는다 — 폴링과
+ * 판정(새 메일인지, 일정 10분 전인지)이 이미 메인 창에 있고, Rust 로 옮기면 같은 API
+ * 호출을 두 벌 돌리게 된다.
+ *
+ * 그래도 Rust 를 거치는 이유는 뱃지 건수(`PetFeed`)와 같다: 펫 창은 숨어 있다가 뒤늦게
+ * 뜰 수 있어(웹뷰 콜드 로드) 마운트 시 현재 목록을 조회할 곳이 필요하고, "펫을 꺼 뒀을 때
+ * 잠깐 띄우는" 판단(`set_alert`)도 Rust 몫이다.
+ *
+ * 표시 시간(TTL)은 여기서 세지 않는다 — 알림을 넣은 메인 창이 설정된 시간 뒤에
+ * `pet_dismiss_notice` 로 치운다(리마인더 스케줄러와 같은 구조).
+ */
+
+/// 펫 말풍선에 띄울 앱 알림 한 건.
+#[derive(Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppNotice {
+    /// 중복 방지·닫기 매칭용 id. 프론트엔드가 출처와 원본 식별자로 만든다
+    /// (`gmail:<메시지 id>`, `slack:<채널>:<ts>`, `gcal:before:<시작시각>` …).
+    pub id: String,
+    /// 출처 — 말풍선의 아이콘·이름이 이 값으로 갈린다("gmail" | "slack" | "gcal").
+    pub source: String,
+    /// 상태 칩 문구("새 메일", "10분 전" …).
+    pub chip: String,
+    /// 굵은 첫 줄(메일 제목·채널 이름·일정 이름).
+    pub title: String,
+    /// 옅은 둘째 줄. 없으면 빈 문자열.
+    pub body: String,
+    /// 눌렀을 때 열 메뉴 id(`menus.tsx`). 비어 있으면 메인 창만 띄운다.
+    pub menu_id: String,
+}
+
+/// 지금 떠 있는 앱 알림들(메인 창이 넣고 치운다, 펫 창이 조회·구독한다).
+#[derive(Default)]
+pub struct AppNotices(pub std::sync::Mutex<Vec<AppNotice>>);
+
+/// 목록을 모든 창에 알리고, 펫 표시 여부(알림 축)도 갱신한다.
+fn emit_app_notices(app: &tauri::AppHandle, list: Vec<AppNotice>) {
+    set_alert(app, AlertSource::App, !list.is_empty());
+    let _ = app.emit("pet:notices", list);
+}
+
+/// 앱 알림 하나를 띄운다(메인 창의 PetNotifyPublisher 가 호출).
+/// 같은 id 가 이미 있으면 새 내용으로 바꾼다 — 같은 알림이 두 장으로 쌓이지 않게.
+#[tauri::command]
+pub fn pet_notify(app: tauri::AppHandle, notice: AppNotice) {
+    let list = {
+        let Some(state) = app.try_state::<AppNotices>() else {
+            return;
+        };
+        let Ok(mut g) = state.0.lock() else {
+            return;
+        };
+        match g.iter_mut().find(|n| n.id == notice.id) {
+            Some(slot) => *slot = notice,
+            None => g.push(notice),
+        }
+        g.clone()
+    };
+    emit_app_notices(&app, list);
+}
+
+/// 앱 알림 하나를 치운다(표시 시간이 지났거나, 말풍선을 눌러 해당 메뉴로 이동했을 때).
+#[tauri::command]
+pub fn pet_dismiss_notice(app: tauri::AppHandle, id: String) {
+    let list = {
+        let Some(state) = app.try_state::<AppNotices>() else {
+            return;
+        };
+        let Ok(mut g) = state.0.lock() else {
+            return;
+        };
+        let before = g.len();
+        g.retain(|n| n.id != id);
+        if g.len() == before {
+            return;
+        }
+        g.clone()
+    };
+    emit_app_notices(&app, list);
+}
+
+/// 지금 떠 있는 앱 알림들. 펫 창이 마운트 시 한 번 조회한다(이벤트를 놓쳤을 때).
+#[tauri::command]
+pub fn pet_notices(app: tauri::AppHandle) -> Vec<AppNotice> {
+    app.state::<AppNotices>()
+        .0
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
 }
 
 /// 트레이 메뉴의 "펫 표시/숨기기". 설정은 localStorage 에 있어 Rust 가 뒤집을 수 없으므로

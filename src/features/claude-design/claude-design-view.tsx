@@ -4,6 +4,7 @@ import { ArrowLeftIcon, RotateCwIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
 import { useTabActive } from "@/lib/use-tab-active"
+import { useWebviewsSuppressed } from "@/lib/webview-overlay"
 import { useWebviewBounds } from "@/lib/use-webview-bounds"
 import { browserLabel } from "@/lib/window-role"
 
@@ -27,26 +28,29 @@ const inTauri = isTauri()
 export function ClaudeDesignView() {
   // 이 뷰가 보이는 탭인지(숨은 동안 네이티브 웹뷰도 같이 숨겨야 한다).
   const tabActive = useTabActive()
+  // 웹뷰 위에 HTML 오버레이(탭 목록 드롭다운 등)가 떠 있으면 잠시 비켜 준다.
+  const suppressed = useWebviewsSuppressed()
+  const visible = tabActive && !suppressed
   const contentRef = useRef<HTMLDivElement>(null)
   const rect = useWebviewBounds(contentRef)
 
   // 영역이 확정되면 웹뷰를 만들고(이후에는 재배치만) 리사이즈·사이드바 토글에 따라 위치를 맞춘다.
   // 탭이 다시 보이게 될 때도 이 effect 가 돌아 화면 밖에서 제자리로 돌아온다.
   useEffect(() => {
-    if (!inTauri || !rect || !tabActive) return
+    if (!inTauri || !rect || !visible) return
     void trackedInvoke("browser_open", {
       label: LABEL,
       url: CLAUDE_DESIGN_URL,
       ...rect,
     })
-  }, [rect, tabActive])
+  }, [rect, visible])
 
-  // 다른 탭으로 전환하면(뷰는 마운트된 채로 남는다) 화면 밖으로 숨긴다. 네이티브 웹뷰는
+  // 다른 탭으로 전환하거나 웹뷰 위에 오버레이가 뜨면 화면 밖으로 숨긴다. 네이티브 웹뷰는
   // 창 위에 겹쳐 그려져 CSS 로 감춰지지 않으므로, 숨기지 않으면 다른 화면을 덮는다.
   useEffect(() => {
-    if (!inTauri || tabActive) return
+    if (!inTauri || visible) return
     void trackedInvoke("browser_hide", { label: LABEL })
-  }, [tabActive])
+  }, [visible])
 
   // 탭을 닫으면(언마운트) 숨긴다(웹뷰는 살려 두어 로그인·스크롤 상태 유지).
   useEffect(() => {

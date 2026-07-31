@@ -445,7 +445,7 @@ export function FlexView() {
             variant="outline"
             className={PILL}
             onClick={() => void trackedInvoke("flex_open_time_off")}
-            title="flex.team 휴가 신청 화면을 Chrome 에서 엽니다"
+            title="flex.team 휴가 신청 화면을 브라우저에서 엽니다"
           >
             <ExternalLinkIcon className="size-3.5" />
             휴가 신청

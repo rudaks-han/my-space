@@ -11,6 +11,7 @@ import {
   type FlexSettings,
   type GeneralSettings,
   type GmailSettings,
+  type MenuSettings,
   type PetSettings,
   type SlackSettings,
 } from "@/features/settings/settings-context"
@@ -35,6 +36,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setRaw((prev) => {
         const base = withDefaults(prev)
         return { ...base, general: { ...base.general, ...patch } }
+      })
+    },
+    [setRaw]
+  )
+
+  const setMenus = useCallback(
+    (patch: Partial<MenuSettings>) => {
+      setRaw((prev) => {
+        const base = withDefaults(prev)
+        return { ...base, menus: { ...base.menus, ...patch } }
       })
     },
     [setRaw]
@@ -104,6 +115,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     () => ({
       settings,
       setGeneral,
+      setMenus,
       setClaudeCode,
       setSlack,
       setGmail,
@@ -114,6 +126,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [
       settings,
       setGeneral,
+      setMenus,
       setClaudeCode,
       setSlack,
       setGmail,

@@ -1,8 +1,9 @@
 import { SettingsIcon } from "lucide-react"
 
+import { UnsupportedView } from "@/components/shell/unsupported-view"
 import { SettingsView } from "@/features/settings/settings-view"
 import { SETTINGS_ID } from "@/lib/use-open-tabs"
-import { MENUS, MENU_GROUPS } from "@/menus"
+import { MENUS, MENU_GROUPS, unsupportedReason } from "@/menus"
 import type { MenuIcon } from "@/menus"
 
 /** 탭·뷰 헤더·새 창 제목에 쓰는 화면 표시 정보. */
@@ -34,8 +35,16 @@ export function viewInfo(id: string): ViewInfo | null {
   }
 }
 
-/** 화면 id → 그릴 뷰. 없는 id 면 첫 메뉴(홈)를 그린다. */
+/**
+ * 화면 id → 그릴 뷰. 없는 id 면 첫 메뉴(홈)를 그린다.
+ *
+ * 이 OS 에서 못 쓰는 메뉴는 뷰 대신 안내 패널로 바꾼다 — 여기가 탭·팝아웃 창이
+ * 공유하는 유일한 길목이라, 한 곳만 막으면 실제 뷰가 어디서도 마운트되지 않는다.
+ */
 export function viewElement(id: string) {
   if (id === SETTINGS_ID) return <SettingsView />
-  return (MENUS.find((m) => m.id === id) ?? MENUS[0]).element
+  const menu = MENUS.find((m) => m.id === id) ?? MENUS[0]
+  const reason = unsupportedReason(menu)
+  if (reason) return <UnsupportedView title={menu.title} reason={reason} />
+  return menu.element
 }

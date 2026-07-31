@@ -18,6 +18,15 @@ export type PetSpeciesId =
   | "guga"
   | "lanlan"
   | "baobao-coder"
+  | "cozy-fluff"
+  | "lemon"
+  | "luffy"
+  | "max"
+  | "mini-jerry"
+  | "mochi"
+  | "noir-webling"
+  | "pinkribbonchibi"
+  | "shellpop-snail"
   | "petdex"
   | "anim"
   | "custom"
@@ -41,6 +50,15 @@ export const BUILTIN_SPRITE_IDS = [
   "guga",
   "lanlan",
   "baobao-coder",
+  "cozy-fluff",
+  "lemon",
+  "luffy",
+  "max",
+  "mini-jerry",
+  "mochi",
+  "noir-webling",
+  "pinkribbonchibi",
+  "shellpop-snail",
 ] as const
 
 export type BuiltinSpriteId = (typeof BUILTIN_SPRITE_IDS)[number]
@@ -77,6 +95,19 @@ export const PET_SPECIES: PetSpeciesMeta[] = [
   { id: "guga", name: "Guga", category: BUILTIN_CATEGORY },
   { id: "lanlan", name: "Lanlan", category: BUILTIN_CATEGORY },
   { id: "baobao-coder", name: "Baobao Coder", category: BUILTIN_CATEGORY },
+  { id: "cozy-fluff", name: "Cozy Fluff", category: BUILTIN_CATEGORY },
+  { id: "lemon", name: "Lemon", category: BUILTIN_CATEGORY },
+  { id: "luffy", name: "Luffy", category: BUILTIN_CATEGORY },
+  { id: "max", name: "Max", category: BUILTIN_CATEGORY },
+  { id: "mini-jerry", name: "mini-Jerry", category: BUILTIN_CATEGORY },
+  { id: "mochi", name: "Mochi", category: BUILTIN_CATEGORY },
+  { id: "noir-webling", name: "Noir Webling", category: BUILTIN_CATEGORY },
+  {
+    id: "pinkribbonchibi",
+    name: "Pink Ribbon Chibi",
+    category: BUILTIN_CATEGORY,
+  },
+  { id: "shellpop-snail", name: "Shellpop Snail", category: BUILTIN_CATEGORY },
   { id: "petdex", name: "Petdex 폴더", category: "가져오기" },
   { id: "anim", name: "움직이는 이미지", category: "가져오기" },
   { id: "custom", name: "이미지 한 장", category: "가져오기" },

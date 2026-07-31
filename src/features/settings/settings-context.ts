@@ -23,10 +23,74 @@ export interface GeneralSettings {
   autoStart: boolean
 }
 
+/**
+ * 어떤 터미널 도구로 Claude Code 작업을 감시할지. **지원하는 터미널은 herdr·cmux·Orca 셋뿐이다.**
+ *
+ * 세션 목록은 (1) 어떤 터미널 pane 이 어떤 Claude 세션인지, (2) 그 세션이 지금 진행
+ * 중인지 대기 중인지를 터미널 쪽에서 받아야 성립한다. herdr 는 소켓 API 로, cmux 는
+ * 이벤트 로그(`~/.cmuxterm/events.jsonl` 의 `agent.hook.*`)로, Orca 는 훅 상태 파일
+ * (`~/Library/Application Support/orca/agent-hooks/last-status.json`)로 그 둘을 내주지만,
+ * 순수 터미널 에뮬레이터(Ghostty·iTerm2·Terminal)는 어느 쪽도 알려 주지 않는다.
+ *
+ * **여러 개를 동시에 켠다.** 하나만 보면 반쪽만 보이기 때문이다(herdr 만 보면 다른 터미널에서
+ * 바로 띄운 세션이 빠지고, cmux 만 보면 cmux 안에서 herdr 로 띄운 세션들이 한 탭으로 뭉친다).
+ * 모든 백엔드가 같은 Claude `session_id` 를 들고 있어서 중복 제거가 된다.
+ */
+export type ClaudeWatchTerminal = "herdr" | "cmux" | "orca"
+
+/** 고를 수 있는 감시 대상 전부(설정 화면의 나열 순서이기도 하다). */
+export const CLAUDE_WATCH_TERMINALS: ClaudeWatchTerminal[] = [
+  "herdr",
+  "cmux",
+  "orca",
+]
+
+/**
+ * 사용자에게 보여줄 백엔드 이름. 설정 문구와 세션 목록의 오류 문구가 같은 표현을 쓰도록
+ * 한곳에 둔다(`"herdr,orca"` 처럼 저장값이 그대로 새는 것을 막는다).
+ */
+export function watchBackendLabel(b: ClaudeWatchTerminal[]): string {
+  return b.length === 0 ? "감시 안 함" : b.join(" · ")
+}
+
+/**
+ * 예전 단일 선택 값(`"herdr"` / `"cmux"` / `"both"`)을 목록으로 옮긴다.
+ *
+ * `"both"` 는 **"그때 있던 전부"**(herdr+cmux)였고 기본값이기도 했으므로 셋 다로 옮긴다 —
+ * `"cmux"` 처럼 하나만 콕 집어 고른 사람의 선택은 그대로 두되, 기본값을 쓰던 사람이 Orca 만
+ * 빠진 채로 남지 않게 한다. Rust 쪽 `backend_from_str` 도 같은 규칙이다(둘이 어긋나면 화면과
+ * 감시 루프가 서로 다른 백엔드를 본다).
+ */
+export function migrateWatchBackend(
+  stored: ClaudeWatchTerminal[] | string | undefined
+): ClaudeWatchTerminal[] {
+  if (Array.isArray(stored)) {
+    return CLAUDE_WATCH_TERMINALS.filter((t) => stored.includes(t))
+  }
+  if (stored === "both") return CLAUDE_WATCH_TERMINALS
+  if (stored === "herdr" || stored === "cmux" || stored === "orca") {
+    return [stored]
+  }
+  return CLAUDE_WATCH_TERMINALS
+}
+
 /** Claude Code 관련 설정. */
 export interface ClaudeCodeSettings {
   /**
-   * 작업 감시 on/off. herdr 작업 상태를 주기적으로 폴링해 작업목록 실시간 갱신·
+   * 감시 대상 터미널(**켠 것 여러 개를 동시에 본다**). Rust 감시 루프도 같은 값을 알아야
+   * 하므로(창이 열리기 전부터 돌기 때문에 localStorage 를 못 읽는다) `ClaudeNotifier` 가
+   * 쉼표로 이어 `herdr_set_backend` 로 밀어 넣고, Rust 는 그 값을 `~/.myspace/backend` 에
+   * 남긴다.
+   */
+  backend: ClaudeWatchTerminal[]
+  /**
+   * cmux 소켓 비밀번호(cmux 설정에서 만든 값). **목록·상태에는 필요 없다** — cmux 소켓은
+   * cmux 안에서 시작된 프로세스만 붙을 수 있어서, 이동·프롬프트 전송·화면 읽기 세 동작만
+   * 이 비밀번호를 쓴다. 비워 두면 목록은 정상이고 그 동작들만 실패한다.
+   */
+  cmuxPassword: string
+  /**
+   * 작업 감시 on/off. 선택한 백엔드의 작업 상태를 주기적으로 확인해 작업목록 실시간 갱신·
    * 트레이 팝오버 질문·완료/대기 알림을 구동한다. 끄면 이 모든 실시간 동작이 멈춘다.
    */
   watchEnabled: boolean
@@ -34,6 +98,20 @@ export interface ClaudeCodeSettings {
   notifyOnBlocked: boolean
   /** 작업이 끝났을 때(진행 중 → 완료/대기) 인앱 알림(토스트) 표시. */
   notifyOnDone: boolean
+}
+
+/**
+ * 사이드바에 어떤 메뉴를 보일지 설정.
+ *
+ * **감출 것만 저장한다**(기본값은 전부 표시). 반대로 "보일 id 목록"을 저장하면
+ * `menus.tsx` 에 메뉴를 새로 추가했을 때 기존 사용자에게는 그 메뉴가 나타나지 않는다 —
+ * 저장된 목록에 없기 때문이다.
+ */
+export interface MenuSettings {
+  /** 사이드바에서 통째로 감출 그룹 id 목록(`MENU_GROUPS` 의 id). */
+  hiddenGroups: string[]
+  /** 사이드바에서 감출 개별 메뉴 id 목록(`MENUS` 의 id). */
+  hiddenItems: string[]
 }
 
 /** Slack 관련 설정. */
@@ -85,6 +163,45 @@ export interface CoworkSettings {
   markdownCss: string
   /** "스타일 가져오기" 가 읽어올 Typora 테마 css 경로(`~` 지원). */
   cssPath: string
+}
+
+/**
+ * 펫 말풍선으로 받을 알림 종류. 펫이 앱의 유일한 알림 창구이므로 이 스위치들이
+ * 곧 "어떤 알림을 받을지"다.
+ *
+ * 기본은 **Claude Code 와 직접 등록한 알림(리마인더)만 켜짐** — 이 둘은 이 설정이 생기기
+ * 전부터 늘 뜨던 알림이라 기본값이 곧 기존 동작이다. 나머지(Gmail·Slack·캘린더)는 상시
+ * 켜 두면 하루에도 수십 번 뜨는 종류라 사용자가 골라 켠다(뱃지 건수는 이 설정과 무관하게
+ * 다이얼에 계속 붙는다).
+ *
+ * 끄는 지점이 출처마다 다르다:
+ *  - `claude` 는 **Rust 에도 알린다**(`pet_set_claude_alert`). herdr 알림은 Rust 가 만들어
+ *    표시 축을 올리므로, 프론트엔드에서만 끄면 말풍선은 비어 있는데 펫이 나타난다.
+ *  - `reminder` 는 **발생 자체를 막는다**(reminder-store 가 `reminder_fire` 를 부르지 않는다).
+ *    스케줄러가 메인 창에 있어 설정을 바로 읽을 수 있으니 Rust 를 거칠 이유가 없다.
+ *  - 나머지는 프론트엔드가 만들어 보내는 알림이라(`pet_notify`) 끄면 애초에 오지 않는다.
+ */
+export interface PetNotifySettings {
+  /** Claude Code(herdr) 입력 대기·작업 완료. */
+  claude: boolean
+  /** 생산성 → 알림 메뉴에 직접 등록한 시각 알림(리마인더). */
+  reminder: boolean
+  /** 새로 도착한 안 읽은 메일. 설정 → Gmail 의 관심 필터가 있으면 관심 메일만. */
+  gmail: boolean
+  /** 선택한 채널에 새로 온 안 읽은 메시지. */
+  slack: boolean
+  /**
+   * 구글 캘린더 일정 알림 전체 스위치. **아래 두 값의 상위**다 —
+   * 이것이 꺼져 있으면 `gcalStart` / `gcalBefore` 가 켜져 있어도 알리지 않는다.
+   *
+   * 왜 세 값으로 나누나: 일정 알림을 잠깐 끄고 싶을 때 "언제 알릴지"(정시·10분 전)를
+   * 고른 값까지 지워 버리면, 다시 켤 때 사용자가 두 번 고르게 된다.
+   */
+  gcal: boolean
+  /** 일정 시작 시각(정시). `gcal` 이 켜져 있을 때만 쓴다. */
+  gcalStart: boolean
+  /** 일정 시작 10분 전. `gcal` 이 켜져 있을 때만 쓴다. */
+  gcalBefore: boolean
 }
 
 /** 데스크톱 펫(상시 표시 캐릭터 창) 설정. */
@@ -145,6 +262,8 @@ export interface PetSettings {
    * 다른 시간 동안 보인다 — 그래서 PetController 가 `pet_set_notice_ttl` 로 Rust 에 밀어 넣는다.
    */
   noticeSeconds: number
+  /** 어떤 알림을 말풍선으로 받을지(`PetNotifySettings`). */
+  notify: PetNotifySettings
 }
 
 /**
@@ -154,6 +273,7 @@ export interface PetSettings {
  */
 export interface AppSettings {
   general: GeneralSettings
+  menus: MenuSettings
   claudeCode: ClaudeCodeSettings
   slack: SlackSettings
   gmail: GmailSettings
@@ -166,7 +286,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
   general: {
     autoStart: true,
   },
+  // 기본값은 "모두 사용" — 감출 것만 쌓인다.
+  menus: {
+    hiddenGroups: [],
+    hiddenItems: [],
+  },
   claudeCode: {
+    // 기본값을 "셋 다"로 두는 이유: 어느 하나만 보면 반쪽만 보이고(다른 터미널에서 직접 띄운
+    // 세션이 빠지거나 herdr 세션이 한 탭으로 뭉친다), 안 쓰는 쪽은 비용이 사실상 0이다 —
+    // cmux 가 없으면 이벤트 로그 파일이 없어 즉시 빈 결과, Orca 가 없으면 데몬 pid 확인에서
+    // 끝나고(CLI 를 띄우지도 않는다), herdr 가 없으면 CLI 호출이 한 번 실패하고 끝난다.
+    // 하나만 쓰는 사람도 이 값으로 정상 동작한다.
+    backend: CLAUDE_WATCH_TERMINALS,
+    cmuxPassword: "",
     watchEnabled: true,
     notifyOnBlocked: true,
     notifyOnDone: true,
@@ -203,6 +335,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
     animPaths: { idle: "", running: "", busy: "", waiting: "" },
     dialMenus: ["home", "gmail", "slack", "claude-bridge"],
     noticeSeconds: 12,
+    notify: {
+      claude: true,
+      // 이 설정이 생기기 전에는 늘 떴던 알림이라 기본값이 켜짐이다 — 기본을 꺼짐으로
+      // 두면 사용자가 직접 걸어 둔 알림이 조용히 사라진다.
+      reminder: true,
+      gmail: false,
+      slack: false,
+      gcal: false,
+      // 상위 스위치를 켜는 순간 바로 알림이 오도록 "언제"의 기본값은 채워 둔다 —
+      // 셋 다 꺼진 상태로 두면 켜도 아무 일이 없어 고장으로 보인다.
+      gcalStart: true,
+      gcalBefore: true,
+    },
   },
 }
 
@@ -218,16 +363,34 @@ export function withDefaults(
 ): AppSettings {
   return {
     general: { ...DEFAULT_SETTINGS.general, ...(stored?.general ?? {}) },
-    claudeCode: {
+    menus: { ...DEFAULT_SETTINGS.menus, ...(stored?.menus ?? {}) },
+    claudeCode: migrateClaudeCode({
       ...DEFAULT_SETTINGS.claudeCode,
       ...(stored?.claudeCode ?? {}),
-    },
+    }),
     slack: { ...DEFAULT_SETTINGS.slack, ...(stored?.slack ?? {}) },
     gmail: { ...DEFAULT_SETTINGS.gmail, ...(stored?.gmail ?? {}) },
     flex: { ...DEFAULT_SETTINGS.flex, ...(stored?.flex ?? {}) },
     cowork: { ...DEFAULT_SETTINGS.cowork, ...(stored?.cowork ?? {}) },
-    pet: migratePet({ ...DEFAULT_SETTINGS.pet, ...(stored?.pet ?? {}) }),
+    pet: migratePet({
+      ...DEFAULT_SETTINGS.pet,
+      ...(stored?.pet ?? {}),
+      // 알림 종류는 한 겹 더 병합한다 — 카테고리별 얕은 병합만으로는 예전 저장값의
+      // notify 객체가 새로 생긴 스위치를 undefined 로 덮어(=꺼진 것도 아닌 값) 남긴다.
+      notify: {
+        ...DEFAULT_SETTINGS.pet.notify,
+        ...(stored?.pet?.notify ?? {}),
+      },
+    }),
   }
+}
+
+/**
+ * 감시 대상이 단일 선택(`"both"` 등 문자열)이던 시절의 저장값을 목록으로 옮긴다.
+ * 얕은 병합만으로는 문자열이 그대로 남아 `backend.includes` 같은 호출이 조용히 틀린다.
+ */
+function migrateClaudeCode(s: ClaudeCodeSettings): ClaudeCodeSettings {
+  return { ...s, backend: migrateWatchBackend(s.backend) }
 }
 
 /**
@@ -254,6 +417,8 @@ export interface SettingsContextValue {
   settings: AppSettings
   /** 앱 전반 설정 일부를 갱신한다. */
   setGeneral: (patch: Partial<GeneralSettings>) => void
+  /** 사이드바 메뉴 표시 설정 일부를 갱신한다. */
+  setMenus: (patch: Partial<MenuSettings>) => void
   /** Claude Code 설정 일부를 갱신한다. */
   setClaudeCode: (patch: Partial<ClaudeCodeSettings>) => void
   /** Slack 설정 일부를 갱신한다. */

@@ -9,6 +9,12 @@ import type {
   HerdrWorkspace,
 } from "@/features/claude-bridge/use-herdr"
 import type { ReminderPayload } from "@/features/reminder/reminder-payload"
+import {
+  dismissPetNotice,
+  useAppNotices,
+  type AppNotice,
+  type AppNoticeSource,
+} from "./pet-notify"
 
 /**
  * 펫의 동작. 표정·움직임·스프라이트 상태가 모두 이 값 하나에서 나온다.
@@ -29,8 +35,10 @@ const BUSY_THRESHOLD = 2
 /**
  * 알림 한 건의 종류. `waiting` 일 때 머리 위 배지 아이콘을 고르는 데 쓴다
  * (`working` 은 배지가 아니라 상태 패널 목록에만 나오는 진행 중 작업이다).
+ *
+ * `app` 은 Gmail·Slack·캘린더 알림 — Claude 작업 상태가 아니라 "보러 갈 것이 생겼다"다.
  */
-export type PetAlert = "input" | "done" | "reminder" | "working"
+export type PetAlert = "input" | "done" | "reminder" | "working" | "app"
 
 /**
  * 카드 아래에 붙는 버튼 한 개(리마인더의 확인·다시 알림). 카드를 누르는 것만으로는
@@ -56,8 +64,11 @@ export interface PetNotice {
    * (칩 문구를 비교하는 방식은 문구를 바꾸면 조용히 깨진다).
    */
   kind: PetAlert
-  /** 머리말 아이콘 종류. Claude Code(herdr) 알림이면 Claude 로고를 쓴다. */
-  source: "claude" | "reminder"
+  /**
+   * 머리말 아이콘 종류. Claude Code(herdr) 알림이면 Claude 로고를,
+   * Gmail·Slack·캘린더는 각 서비스 로고를 쓴다(`pet-bubble.tsx` 의 SourceIcon).
+   */
+  source: "claude" | "reminder" | AppNoticeSource
   /** 머리말에 적을 출처 이름. */
   sourceName: string
   /** 상태 칩(문구 + 클래스). */
@@ -68,6 +79,14 @@ export interface PetNotice {
   detail: string | null
   /** 이 항목을 눌렀을 때 데려갈 곳. */
   action: (() => void) | null
+  /**
+   * 오른쪽 위 X — 이 알림만 치운다. 종류마다 "치운다"의 뜻이 달라서 콜백으로 받는다:
+   * 리마인더는 확인 처리, 완료 알림은 Rust 목록에서도 제거, 입력 대기는 원본을 지울 수
+   * 없으므로(터미널에서 답해야 사라진다) 로컬에서 가리기만 한다.
+   * `null` 이면 X 를 그리지 않는다 — 진행 중 작업 목록은 알림이 아니라 펼쳐 본 것이라
+   * 닫을 대상이 아니다(패널 자체를 다시 눌러 접는다).
+   */
+  dismiss: (() => void) | null
   /**
    * 카드 아래 버튼들. 대부분의 알림은 "이동"이 유일한 선택지라 비어 있고,
    * 리마인더만 확인·다시 알림을 갖는다. 없으면 버튼 줄을 그리지 않는다.
@@ -111,6 +130,41 @@ const SNOOZE_OPTIONS: { minutes: number; label: string }[] = [
   { minutes: 60, label: "1시간" },
 ]
 
+/** 앱 알림의 출처 이름 — 말풍선 머리말에 적는다. */
+const APP_SOURCE_NAME: Record<AppNoticeSource, string> = {
+  gmail: "Gmail",
+  slack: "Slack",
+  gcal: "Google 캘린더",
+}
+
+/**
+ * 앱 알림의 칩 색. 캘린더는 시각이 걸린 알림이라 warning, 새 메일·메시지는 info —
+ * Claude 칩(`agent-status.ts`)과 같은 팔레트를 쓴다.
+ *
+ * 클래스는 **문자열을 이어 만들지 않는다** — Tailwind 는 소스에 그대로 적힌 이름만
+ * 만들어 내므로, 조립한 클래스(`bg-${tone}/15`)는 스타일이 조용히 사라진다.
+ */
+const APP_CHIP_CLASS: Record<AppNoticeSource, string> = {
+  gmail: "rounded-full bg-ui-info/15 px-2 text-[11px] font-bold text-ui-info",
+  slack: "rounded-full bg-ui-info/15 px-2 text-[11px] font-bold text-ui-info",
+  gcal: "rounded-full bg-ui-warning/15 px-2 text-[11px] font-bold text-ui-warning",
+}
+
+/** `usePetMood` 의 동작을 정하는 설정값들. */
+export interface PetMoodOptions {
+  /** 완료·앱 알림을 말풍선에 띄워 둘 시간(ms). 0 이면 치울 때까지 남는다. */
+  noticeMs?: number
+  /**
+   * Claude Code 알림을 말풍선에 띄울지(`settings.pet.notify.claude`).
+   *
+   * 끄면 입력 대기·완료 카드를 만들지 않지만 **동작(mood)과 진행 중 작업 목록은 그대로
+   * 둔다** — 이건 "알림"을 끄는 스위치이고, 펫이 일하는 모습으로 움직이는 것까지 끄는
+   * 값이 아니다(그건 상시 표시). Gmail·Slack·캘린더는 꺼 두면 메인 창이 알림을 아예
+   * 보내지 않으므로 여기서 걸러야 할 것이 없다.
+   */
+  claudeNotices?: boolean
+}
+
 /**
  * 전역 이벤트를 구독해 펫의 기분과 말풍선을 만든다.
  *
@@ -122,7 +176,8 @@ const SNOOZE_OPTIONS: { minutes: number; label: string }[] = [
  * (`*_current` 커맨드). 펫은 설정에서 꺼 뒀다가 알림이 생길 때만 뜰 수도 있어(pet.rs 의
  * PetAlert) 이 콜드 로드는 예외가 아니라 흔한 경로다.
  */
-export function usePetMood(noticeMs = DEFAULT_DONE_TTL_MS): PetState {
+export function usePetMood(options: PetMoodOptions = {}): PetState {
+  const { noticeMs = DEFAULT_DONE_TTL_MS, claudeNotices = true } = options
   const [reminder, setReminder] = useState<ReminderPayload | null>(null)
   const [questions, setQuestions] = useState<AskQuestion[]>([])
   const [notices, setNotices] = useState<HerdrNotice[]>([])
@@ -140,6 +195,32 @@ export function usePetMood(noticeMs = DEFAULT_DONE_TTL_MS): PetState {
   const [dones, setDones] = useState<{ notice: HerdrNotice; at: number }[]>([])
   /** 이미 축하한 완료 알림 id — 같은 알림으로 두 번 들뜨지 않게. */
   const celebrated = useRef<Set<string>>(new Set())
+
+  /*
+   * X 로 닫은 알림 id. 입력 대기(AskUserQuestion·blocked)는 **답하기 전까지 계속 이어지는**
+   * 상태라 원본을 지울 수 없다 — 터미널에서 답해야 사라진다. 그래서 표시만 여기서 가린다.
+   */
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set())
+  const hide = useCallback((id: string) => {
+    setHidden((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
+  }, [])
+
+  /*
+   * 원본이 사라진 id 는 "닫음" 표시에서도 버린다. 안 그러면 (1) 세션이 길어질수록 계속 쌓이고,
+   * (2) **같은 pane·워크스페이스가 다시 물어봤을 때 id 가 같아 알림이 조용히 안 뜬다**
+   * (권한 확인처럼 같은 자리에서 되풀이되는 대기가 대부분이라 이게 흔한 경로다).
+   * 새 스냅샷이 도착하는 자리에서 정리한다 — 파생 상태를 effect 로 되돌려 쓰지 않으려고.
+   */
+  const pruneHidden = useCallback((prefix: string, liveIds: string[]) => {
+    setHidden((prev) => {
+      if (!prev.size) return prev
+      const live = new Set(liveIds)
+      const next = new Set(
+        [...prev].filter((id) => !id.startsWith(prefix) || live.has(id))
+      )
+      return next.size === prev.size ? prev : next
+    })
+  }, [])
 
   useEffect(() => {
     void trackedInvoke<ReminderPayload | null>("reminder_current").then((r) => {
@@ -159,9 +240,11 @@ export function usePetMood(noticeMs = DEFAULT_DONE_TTL_MS): PetState {
     const unlistens = [
       listen<ReminderPayload>("reminder:fire", (e) => setReminder(e.payload)),
       listen("reminder:dismiss", () => setReminder(null)),
-      listen<AskQuestion[]>("herdr:questions", (e) =>
-        setQuestions(e.payload || [])
-      ),
+      listen<AskQuestion[]>("herdr:questions", (e) => {
+        const list = e.payload || []
+        setQuestions(list)
+        pruneHidden("question:", list.map(questionId))
+      }),
       listen<HerdrNotice[]>("herdr:notices", (e) => {
         const list = e.payload || []
         setNotices(list)
@@ -184,14 +267,19 @@ export function usePetMood(noticeMs = DEFAULT_DONE_TTL_MS): PetState {
           return [...kept, ...fresh.map((notice) => ({ notice, at }))]
         })
       }),
-      listen<HerdrWorkspace[]>("herdr:workspaces", (e) =>
-        setWorkspaces(e.payload || [])
-      ),
+      listen<HerdrWorkspace[]>("herdr:workspaces", (e) => {
+        const list = e.payload || []
+        setWorkspaces(list)
+        pruneHidden(
+          "blocked:",
+          list.filter((w) => w.agent_status === "blocked").map(blockedId)
+        )
+      }),
     ]
     return () => {
       for (const u of unlistens) void u.then((f) => f())
     }
-  }, [])
+  }, [pruneHidden])
 
   /*
    * 완료 축하는 정해진 시간만 — 가장 오래된 것이 만료될 때 깨어나 지난 것들을 걷어낸다.
@@ -209,24 +297,63 @@ export function usePetMood(noticeMs = DEFAULT_DONE_TTL_MS): PetState {
   }, [dones, noticeMs])
 
   /*
-   * 완료 알림을 치운다. **양쪽에서** 지워야 한다:
+   * Rust 목록에 실재하는 알림(완료 알림, 그리고 워크스페이스 스냅샷이 오기 전의 대기 알림)을
+   * 치운다. **양쪽에서** 지워야 한다:
    *  - 로컬 `dones`: 말풍선 카드를 즉시 없앤다(Rust 이벤트를 기다리면 클릭이 먹은 것처럼 안 보인다).
    *  - Rust `Notices`: 완료 알림은 만료 없이 보관되므로, 안 지우면 "항상 표시"에서 알림이
    *    영원히 남고 펫도 계속 떠 있다(감시 루프가 "알림이 남아 있으면 표시"로 판단한다).
    * `celebrated` 에는 id 가 남아 있어 같은 알림이 다시 올라오지 않는다.
    */
-  const clearDone = useCallback((id: string) => {
+  const dismissNotice = useCallback((id: string) => {
     setDones((prev) => prev.filter((d) => d.notice.id !== id))
     void trackedInvoke("herdr_dismiss_notice", { id }).catch((e) =>
       console.error("herdr_dismiss_notice 실패:", e)
     )
   }, [])
 
-  return useMemo(
+  // Gmail·Slack·캘린더 알림은 메인 창이 만들어 Rust 에 넣어 둔 것을 그대로 받는다.
+  const appNotices = useAppNotices()
+
+  const state = useMemo(
     () =>
-      pickState({ reminder, questions, notices, workspaces, dones, clearDone }),
-    [reminder, questions, notices, workspaces, dones, clearDone]
+      pickState({
+        reminder,
+        questions,
+        notices,
+        workspaces,
+        dones,
+        appNotices,
+        claudeNotices,
+        dismissNotice,
+        hide,
+      }),
+    [
+      reminder,
+      questions,
+      notices,
+      workspaces,
+      dones,
+      appNotices,
+      claudeNotices,
+      dismissNotice,
+      hide,
+    ]
   )
+
+  return useMemo(() => {
+    if (!hidden.size) return state
+    const rest = state.notices.filter((n) => !hidden.has(n.id))
+    // 남은 알림이 없으면 동작도 waiting 에서 내려와야 한다 — 말풍선은 없는데 계속
+    // "사람을 기다리는" 자세로 서 있으면 무엇을 기다리는지 알 수 없다.
+    const mood = rest.length ? state.mood : moodOf(state.running)
+    return { ...state, mood, notices: rest }
+  }, [state, hidden])
+}
+
+/** 확인할 것이 없을 때의 동작 — 동시에 실행 중인 작업 수만으로 갈린다. */
+function moodOf(running: number): PetMood {
+  if (running >= BUSY_THRESHOLD) return "busy"
+  return running === 1 ? "running" : "idle"
 }
 
 /** 워크스페이스의 표시 이름 — 작업목록 카드와 같은 규칙(label 우선). */
@@ -237,6 +364,31 @@ function taskTitle(w: HerdrWorkspace): string {
 /** 워크스페이스의 부가 설명 — 작업목록 카드와 같은 규칙(recap 우선, 없으면 프롬프트). */
 function taskDetail(w: HerdrWorkspace | undefined): string | null {
   return w?.recap ?? w?.last_prompt ?? null
+}
+
+/**
+ * 워크스페이스 하나를 가리키는 key(중복 방지·닫힘 표시용). 구분자로 NUL 을 쓰는 이유는
+ * 세션·워크스페이스 이름에 절대 들어갈 수 없는 문자라야 두 이름이 붙어 같은 key 가 되는
+ * 일이 없기 때문이다.
+ */
+function wsKey(t: { session: string; workspace_id: string }): string {
+  return `${t.session}\0${t.workspace_id}`
+}
+
+/*
+ * 알림 id 두 개는 만드는 곳(pickState)과 정리하는 곳(원본이 사라졌을 때 "닫음" 표시를
+ * 버리는 리스너)이 달라서 함수로 둔다 — 양쪽이 각자 문자열을 조립하면 조용히 어긋나고,
+ * 그러면 한 번 닫은 알림이 영영 다시 안 뜬다.
+ */
+
+/** 입력 대기 질문 한 건(pane 단위). */
+function questionId(q: { session: string; pane_id: string }): string {
+  return `question:${q.session}:${q.pane_id}`
+}
+
+/** 워크스페이스 스냅샷에서 온 입력 대기. */
+function blockedId(w: { session: string; workspace_id: string }): string {
+  return `blocked:${wsKey(w)}`
 }
 
 /**
@@ -270,8 +422,14 @@ function pickState(s: {
   notices: HerdrNotice[]
   workspaces: HerdrWorkspace[]
   dones: { notice: HerdrNotice; at: number }[]
-  /** 완료 알림을 치우는 콜백(카드를 누르면 확인한 것으로 본다). */
-  clearDone: (id: string) => void
+  /** Gmail·Slack·캘린더 알림(메인 창이 만들어 Rust 에 넣어 둔 것). */
+  appNotices: AppNotice[]
+  /** Claude Code 알림을 말풍선에 띄울지(설정). 동작·진행 작업 목록에는 영향이 없다. */
+  claudeNotices: boolean
+  /** Rust 목록에 있는 알림을 치우는 콜백(카드를 누르면 확인한 것으로 본다). */
+  dismissNotice: (id: string) => void
+  /** 원본을 지울 수 없는 알림을 표시에서만 가리는 콜백(X 버튼). */
+  hide: (id: string) => void
 }): PetState {
   const out: PetNotice[] = []
 
@@ -288,6 +446,9 @@ function pickState(s: {
       // 카드를 누르면 알림 목록으로 데려간다 — 확인·미루기는 아래 버튼이 맡으므로
       // 카드 클릭에 그 둘 중 하나를 몰래 배정하면 어느 쪽인지 알 수 없다.
       action: () => void trackedInvoke("pet_open_menu", { menuId: "reminder" }),
+      // X 는 리마인더에서만 아래 "확인"과 같은 일을 한다 — 알림을 가리기만 하면 Rust 쪽
+      // 리마인더가 살아 있어 펫이 계속 떠 있고, 다음 알림과도 겹친다.
+      dismiss: () => void trackedInvoke("reminder_dismiss"),
       actions: [
         ...SNOOZE_OPTIONS.map((o) => ({
           label: o.label,
@@ -310,17 +471,27 @@ function pickState(s: {
    *    무엇을 묻는지는 질문에서 가져온다.
    */
   const takenWs = new Set<string>()
-  const wsKey = (t: { session: string; workspace_id: string }) =>
-    `${t.session} ${t.workspace_id}`
 
-  for (const q of s.questions) {
+  /*
+   * 설정에서 Claude Code 알림을 껐으면 herdr 쪽 입력을 한 곳에서 빈 목록으로 끊는다 —
+   * 아래 네 갈래(질문 · 입력 대기 · 스냅샷 폴백 · 완료)에 조건을 각각 흩어 두면 하나를
+   * 빼먹어도 드러나지 않는다. 동작(mood)과 진행 중 작업 목록은 `s.workspaces` 를 그대로
+   * 쓰므로 영향받지 않는다 — 이건 알림만 끄는 스위치다.
+   */
+  const herdrQuestions = s.claudeNotices ? s.questions : []
+  const herdrBlocked = s.claudeNotices ? s.workspaces : []
+  const herdrNotices = s.claudeNotices ? s.notices : []
+  const herdrDones = s.claudeNotices ? s.dones : []
+
+  for (const q of herdrQuestions) {
     // 질문은 pane 단위라 워크스페이스를 특정할 수 없다 — 같은 세션의 입력 대기 작업에 붙인다.
     const ws = s.workspaces.find(
       (w) => w.session === q.session && w.agent_status === "blocked"
     )
     if (ws) takenWs.add(wsKey(ws))
+    const id = questionId(q)
     out.push({
-      id: `question:${q.session}:${q.pane_id}`,
+      id,
       ...claudeHead("blocked"),
       title: ws ? taskTitle(ws) : q.header || "Claude Code",
       detail: q.question || q.header || null,
@@ -329,25 +500,28 @@ function pickState(s: {
           session: q.session,
           paneId: q.pane_id,
         }),
+      dismiss: () => s.hide(id),
       actions: [],
     })
   }
 
-  for (const w of s.workspaces) {
+  for (const w of herdrBlocked) {
     if (w.agent_status !== "blocked" || takenWs.has(wsKey(w))) continue
     takenWs.add(wsKey(w))
+    const id = blockedId(w)
     out.push({
-      id: `blocked:${wsKey(w)}`,
+      id,
       ...claudeHead("blocked"),
       title: taskTitle(w),
       detail: taskDetail(w) ?? "사용자 응답을 기다립니다",
       action: () => focusWorkspace(w),
+      dismiss: () => s.hide(id),
       actions: [],
     })
   }
 
   // 워크스페이스 스냅샷이 아직 없을 때(창을 막 켠 직후)를 위한 폴백.
-  for (const n of s.notices) {
+  for (const n of herdrNotices) {
     if (n.kind !== "blocked" || takenWs.has(wsKey(n))) continue
     takenWs.add(wsKey(n))
     out.push({
@@ -356,12 +530,14 @@ function pickState(s: {
       title: n.label,
       detail: "사용자 응답을 기다립니다",
       action: () => focusWorkspace(n),
+      // 이쪽은 Rust 목록에 실재하는 알림이라 원본을 지울 수 있다.
+      dismiss: () => s.dismissNotice(n.id),
       actions: [],
     })
   }
 
   // 3. 방금 끝난 작업들. 알림의 label 이 작업 이름이고, 요약(recap)이 있으면 붙인다.
-  for (const { notice: done } of s.dones) {
+  for (const { notice: done } of herdrDones) {
     // 다시 일을 시작했거나 입력 대기로 바뀐 작업은 완료 축하를 접는다(중복·모순 방지).
     if (takenWs.has(wsKey(done))) continue
     const ws = s.workspaces.find(
@@ -377,8 +553,39 @@ function pickState(s: {
       // "항상 표시"에서 카드가 영원히 남아 클릭이 먹지 않은 것처럼 보인다.
       action: () => {
         focusWorkspace(done)
-        s.clearDone(done.id)
+        s.dismissNotice(done.id)
       },
+      // X 는 이동 없이 확인만 — 끝난 걸 알았으면 그것으로 볼일이 끝나는 알림이다.
+      dismiss: () => s.dismissNotice(done.id),
+      actions: [],
+    })
+  }
+
+  /*
+   * 4. Gmail·Slack·캘린더 알림. Claude 작업 알림보다 뒤에 둔다 — 급한 쪽(사람이 답해야
+   *    멈춤이 풀리는 작업)이 먼저 보여야 하고, 넘치는 것은 "N개 더 보기"로 접힌다.
+   *    설정에서 끈 종류는 메인 창이 아예 보내지 않으므로 여기서 걸러낼 것이 없다.
+   */
+  for (const n of s.appNotices) {
+    out.push({
+      id: n.id,
+      kind: "app",
+      source: n.source,
+      sourceName: APP_SOURCE_NAME[n.source] ?? n.source,
+      chip: { text: n.chip, className: APP_CHIP_CLASS[n.source] },
+      title: n.title,
+      detail: n.body || null,
+      // 눌렀으면 확인한 것으로 보고 카드를 치운다 — 안 치우면 "항상 표시"에서 영원히
+      // 남아 클릭이 먹지 않은 것처럼 보인다(완료 알림과 같은 규칙).
+      action: () => {
+        if (n.menuId) void trackedInvoke("pet_open_menu", { menuId: n.menuId })
+        else void trackedInvoke("show_main_window")
+        dismissPetNotice(n.id)
+      },
+      // X 는 이동 없이 확인만. 원본이 Rust 의 AppNotices 라 그쪽에서 지워야 하고
+      // (가리기만 하면 "항상 표시"에서 알림이 남아 펫이 계속 떠 있다), 그 커맨드가
+      // 완료 알림용 `dismissNotice` 와는 다르므로 pet-notify 쪽 함수를 쓴다.
+      dismiss: () => dismissPetNotice(n.id),
       actions: [],
     })
   }
@@ -405,14 +612,13 @@ function pickState(s: {
     title: taskTitle(w),
     detail: w.last_prompt ?? w.recap ?? null,
     action: () => focusWorkspace(w),
+    // 진행 중 작업은 알림이 아니라 눌러서 펼쳐 본 목록이라 닫을 대상이 아니다.
+    dismiss: null,
     actions: [],
   }))
 
   if (out.length) return { mood: "waiting", running, notices: out, tasks }
-  if (running >= BUSY_THRESHOLD)
-    return { mood: "busy", running, notices: [], tasks }
-  if (running === 1) return { mood: "running", running, notices: [], tasks }
-  return { mood: "idle", running, notices: [], tasks }
+  return { mood: moodOf(running), running, notices: [], tasks }
 }
 
 /** 해당 워크스페이스의 터미널로 이동한다(알림·워크스페이스 어느 쪽이 와도 같은 필드를 쓴다). */

@@ -2,6 +2,7 @@ import { useState } from "react"
 import {
   CheckIcon,
   GripVerticalIcon,
+  PencilIcon,
   PlusIcon,
   RotateCcwIcon,
   StickyNoteIcon,
@@ -84,6 +85,11 @@ function StickyCard({
     }
     setEditingId(null)
     setEditingText("")
+  }
+
+  const startEdit = (todo: { id: string; text: string }) => {
+    setEditingId(todo.id)
+    setEditingText(todo.text)
   }
 
   return (
@@ -170,6 +176,7 @@ function StickyCard({
               className="mt-[3px] shrink-0"
             />
             {editingId === t.id ? (
+              // 편집 중에는 입력칸이 행 전체를 쓰도록 수정/삭제 버튼을 감춘다.
               <input
                 value={editingText}
                 autoFocus
@@ -185,30 +192,42 @@ function StickyCard({
                 className="min-w-0 flex-1 rounded-lg border border-input bg-background px-2 py-0.5 text-[15px] focus:border-ring focus:outline-none"
               />
             ) : (
-              <span
-                className={cn(
-                  // min-w-0 + wrap-anywhere 가 없으면 공백 없는 긴 문자열이
-                  // flex 항목의 min-content 를 밀어 카드 밖으로 삐져나간다.
-                  "min-w-0 flex-1 cursor-text py-0.5 text-[15px] wrap-anywhere",
-                  t.done && "text-muted-foreground line-through"
-                )}
-                onDoubleClick={() => {
-                  setEditingId(t.id)
-                  setEditingText(t.text)
-                }}
-                title="더블클릭하여 수정"
-              >
-                {t.text}
-              </span>
+              <>
+                {/* 클릭 한 번으로 편집 — 더블클릭은 단서가 없어 아무도 찾지 못한다.
+                    span 이 아니라 button 이라 키보드로도 편집에 들어갈 수 있다. */}
+                <button
+                  type="button"
+                  onClick={() => startEdit(t)}
+                  title="클릭하여 수정"
+                  className={cn(
+                    // min-w-0 + wrap-anywhere 가 없으면 공백 없는 긴 문자열이
+                    // flex 항목의 min-content 를 밀어 카드 밖으로 삐져나간다.
+                    "min-w-0 flex-1 cursor-text py-0.5 text-left text-[15px] wrap-anywhere",
+                    t.done && "text-muted-foreground line-through"
+                  )}
+                >
+                  {t.text}
+                </button>
+                {/* 연필 — 클릭으로 편집된다는 사실을 hover 때 눈에 보이게 하는 단서. */}
+                <button
+                  type="button"
+                  onClick={() => startEdit(t)}
+                  aria-label="할 일 수정"
+                  title="할 일 수정"
+                  className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-[color-mix(in_oklab,var(--sticky-accent)_28%,transparent)] hover:text-foreground"
+                >
+                  <PencilIcon className="size-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => api.removeTodo(note.id, t.id)}
+                  aria-label="할 일 삭제"
+                  className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-[color-mix(in_oklab,var(--sticky-accent)_28%,transparent)] hover:text-foreground"
+                >
+                  <XIcon className="size-4" />
+                </button>
+              </>
             )}
-            <button
-              type="button"
-              onClick={() => api.removeTodo(note.id, t.id)}
-              aria-label="할 일 삭제"
-              className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-[color-mix(in_oklab,var(--sticky-accent)_28%,transparent)] hover:text-foreground"
-            >
-              <XIcon className="size-4" />
-            </button>
           </li>
         ))}
         {note.todos.length === 0 && (

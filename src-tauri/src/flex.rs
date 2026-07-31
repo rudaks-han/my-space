@@ -1,9 +1,11 @@
 //! Flex(flex.team) 휴가/일정 연동 — 공개 API 가 없어 웹 API 를 그대로 호출한다.
 //!
-//! 인증은 세 갈래를 순서대로 시도한다.
+//! 인증은 두 갈래를 순서대로 시도한다.
 //!  1. 메모리 캐시 — 직전에 통했던 Cookie 헤더(자동 로그인 결과 포함).
-//!  2. Chrome 쿠키 — 사용자가 Chrome 에서 flex.team 에 로그인해 둔 경우.
-//!  3. 저장된 계정으로 **자동 로그인**(아래).
+//!  2. 저장된 계정으로 **자동 로그인**(아래).
+//!
+//! 계정은 설정 → Flex 휴가에서 등록한다. (예전에는 Chrome 에 로그인된 flex 세션
+//! 쿠키를 재사용하는 갈래도 있었지만, 계정 로그인만 지원하도록 제거했다.)
 //!
 //! ── 자동 로그인 ──
 //! 로그인 화면이 쓰는 내부 API 를 그대로 호출한다(브라우저를 띄우지 않는다).
@@ -23,7 +25,7 @@
 //! 웹도 이 값을 `AID` 쿠키에 넣어 쓴다. 만료되면 401 → 다시 로그인한다.
 //!
 //! OTP·SSO 처럼 비밀번호만으로 끝나지 않는 계정은 중간 단계에서 걸리며, 그때는 서버가 준
-//! 한국어 메시지를 그대로 올려 보낸다(사용자는 Chrome 로그인으로 우회할 수 있다).
+//! 한국어 메시지를 그대로 올려 보낸다.
 //!
 //! 계정은 앱 설정 디렉터리의 `flex.json` 에 저장하고, 비밀번호는 이 맥의 하드웨어
 //! UUID 로 유도한 키로 AES-128-CBC 암호화해 둔다(파일만 유출돼선 못 푼다. 같은 기기에서
@@ -41,7 +43,6 @@ use serde_json::{json, Value};
 use sha1::Sha1;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
@@ -49,7 +50,6 @@ type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
 const BASE: &str = "https://flex.team";
-const HOST: &str = "flex.team";
 /// 로그인이 살아 있는지 확인할 때 때리는 가장 가벼운 API.
 const PROBE_PATH: &str = "/api/v2/calendar/calendars/primary";
 /// 계정 저장 파일(앱 설정 디렉터리).
@@ -186,27 +186,7 @@ fn saved_credentials(app: &tauri::AppHandle) -> Option<(String, String)> {
     Some((cfg.email, pw))
 }
 
-/* ────────────────────────────── 쿠키 수집 ────────────────────────────── */
-
-/// Chrome 의 flex.team 쿠키(만료된 건 제외)로 Cookie 헤더를 만든다.
-fn cookies_from_chrome() -> Option<String> {
-    let cookies = crate::chrome_cookies::read_cookies_for_host(HOST).ok()?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0);
-
-    let pairs: Vec<String> = cookies
-        .into_iter()
-        .filter(|c| c.expires_unix.map(|exp| exp >= now).unwrap_or(true))
-        .map(|c| format!("{}={}", c.name, c.value))
-        .collect();
-    if pairs.is_empty() {
-        None
-    } else {
-        Some(pairs.join("; "))
-    }
-}
+/* ────────────────────────────── 쿠키 캐시 ────────────────────────────── */
 
 fn cached_cookie() -> Option<String> {
     SESSION.lock().ok().and_then(|g| g.clone())
@@ -224,15 +204,9 @@ fn forget_cookie() {
     }
 }
 
-/// 시도할 쿠키 후보를 순서대로. 같은 값이 중복되면 한 번만.
+/// 시도할 쿠키 후보 — 지금은 캐시된 세션 하나뿐이다(없으면 빈 목록 → 자동 로그인).
 fn cookie_candidates() -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for c in [cached_cookie(), cookies_from_chrome()].into_iter().flatten() {
-        if !out.contains(&c) {
-            out.push(c);
-        }
-    }
-    out
+    cached_cookie().into_iter().collect()
 }
 
 /* ────────────────────────────── HTTP 호출 ────────────────────────────── */
@@ -376,7 +350,7 @@ async fn http_login(email: &str, password: &str) -> Result<String, String> {
     .await?;
     if verified["nextStep"] != "AUTHENTICATION" {
         return Err(format!(
-            "비밀번호 로그인을 쓸 수 없는 계정입니다(다음 단계: {}). Chrome 에서 로그인해 주세요.",
+            "비밀번호 로그인을 쓸 수 없는 계정입니다(다음 단계: {}).",
             verified["nextStep"]
         ));
     }
@@ -390,7 +364,7 @@ async fn http_login(email: &str, password: &str) -> Result<String, String> {
     .await?;
     if authed["nextStep"] != "AUTHORIZATION" {
         return Err(format!(
-            "추가 인증이 필요한 계정입니다(다음 단계: {}). Chrome 에서 로그인해 주세요.",
+            "추가 인증이 필요한 계정입니다(다음 단계: {}).",
             authed["nextStep"]
         ));
     }
@@ -566,7 +540,7 @@ pub struct FlexStatus {
     pub can_auto_login: bool,
     /// 지금 쓸 수 있는 세션이 있는지.
     pub logged_in: bool,
-    /// 그 세션의 출처: "app"(자동 로그인) | "chrome" | null.
+    /// 그 세션의 출처: "app"(자동 로그인) | null.
     pub source: Option<String>,
 }
 
@@ -580,14 +554,12 @@ pub async fn flex_status(app: tauri::AppHandle) -> Result<FlexStatus, String> {
         Some(cfg.email.clone())
     };
 
-    // 캐시된 세션 → Chrome 순으로 살아 있는 쿠키를 찾는다.
+    // 캐시된 세션이 살아 있는지 확인한다(없거나 만료면 저장된 계정으로 자동 로그인 가능).
     let mut source = None;
-    for (name, cookie) in [("app", cached_cookie()), ("chrome", cookies_from_chrome())] {
-        let Some(cookie) = cookie else { continue };
+    if let Some(cookie) = cached_cookie() {
         if probe(&cookie).await {
             remember_cookie(&cookie);
-            source = Some(name.to_string());
-            break;
+            source = Some("app".to_string());
         }
     }
 
@@ -643,28 +615,12 @@ pub async fn flex_login_now(app: tauri::AppHandle) -> Result<FlexStatus, String>
 /// 휴가 신청 화면(내 휴가 대시보드) 주소.
 const TIME_OFF_URL: &str = "https://flex.team/time-tracking/my-time-off/dashboard";
 
-/// 휴가 신청 화면을 **Chrome 에서** 연다.
-///
-/// 기본 브라우저가 아니라 Chrome 을 지정하는 게 중요하다 — 이 연동은 Chrome 에
-/// 로그인해 둔 flex 세션 쿠키를 읽어 쓰므로(파일 헤더 참고), 같은 브라우저에서
-/// 열면 곧바로 로그인된 화면이 뜬다. Chrome 이 없는 맥에서는 실패하니 기본
-/// 브라우저로 한 번 더 시도한다.
-///
-/// `async` 인 이유: macOS 에서 앱을 지정한 open 은 `/usr/bin/open -a` 의 종료를
-/// **기다린다**(그래서 Chrome 부재를 Err 로 알 수 있다). 동기 커맨드로 두면 그
-/// 대기가 메인 스레드에서 일어난다.
+/// 휴가 신청 화면을 기본 브라우저에서 연다.
 #[tauri::command]
 pub async fn flex_open_time_off(app: tauri::AppHandle) -> Result<(), String> {
-    let opener = app.opener();
-    if opener
-        .open_url(TIME_OFF_URL, Some("Google Chrome"))
-        .is_err()
-    {
-        opener
-            .open_url(TIME_OFF_URL, None::<&str>)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    app.opener()
+        .open_url(TIME_OFF_URL, None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -761,13 +717,14 @@ mod tests {
         assert_eq!(decrypt_password("not-base64!!"), None);
     }
 
-    /// 같은 쿠키가 캐시와 Chrome 양쪽에서 나와도 한 번만 시도한다.
+    /// 캐시된 세션이 후보로 나온다(자동 로그인 결과를 재사용).
     #[test]
-    fn dedupes_cookie_candidates() {
+    fn cached_session_is_a_candidate() {
         remember_cookie("AID=abc");
         let list = cookie_candidates();
-        assert_eq!(list.iter().filter(|c| *c == "AID=abc").count(), 1);
+        assert_eq!(list, vec!["AID=abc".to_string()]);
         forget_cookie();
+        assert!(cookie_candidates().is_empty());
     }
 
     /// 실제 flex.team 에 로그인해 보는 통합 테스트 — 로그인 흐름이 바뀌면 여기서 먼저 깨진다.

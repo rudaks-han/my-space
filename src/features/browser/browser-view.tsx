@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
 import { useTabActive } from "@/lib/use-tab-active"
+import { useWebviewsSuppressed } from "@/lib/webview-overlay"
 import { useWebviewBounds } from "@/lib/use-webview-bounds"
 import { cn } from "@/lib/utils"
 import { labelFor, normalizeUrl, useBrowser } from "./use-browser"
@@ -27,6 +28,10 @@ export function BrowserView() {
 
   // 이 뷰가 보이는 탭인지(숨은 동안 네이티브 웹뷰도 같이 숨겨야 한다).
   const tabActive = useTabActive()
+  // 웹뷰 위에 HTML 오버레이(탭 목록 드롭다운 등)가 떠 있으면 잠시 비켜 준다.
+  const suppressed = useWebviewsSuppressed()
+  // 웹뷰를 실제로 화면에 보여야 하는 조건 — 활성 탭이면서 오버레이에 가려지지 않을 때만.
+  const visible = tabActive && !suppressed
 
   const contentRef = useRef<HTMLDivElement>(null)
   // 네이티브 웹뷰를 겹쳐 그릴 영역(레이아웃이 안정되기 전에는 null).
@@ -62,7 +67,7 @@ export function BrowserView() {
   // 활성 탭을 현재 영역에 표시(없으면 생성)하고 나머지는 숨긴다.
   // 이미 존재하는 웹뷰는 재배치만 하므로 탭 전환·리사이즈로 페이지가 다시 로드되지 않는다.
   useEffect(() => {
-    if (!inTauri || !rect || !tabActive) return
+    if (!inTauri || !rect || !visible) return
     const active = tabs.find((t) => t.id === activeId)
     if (active) {
       void trackedInvoke("browser_open", {
@@ -76,17 +81,17 @@ export function BrowserView() {
         void trackedInvoke("browser_hide", { label: labelFor(t.id) })
       }
     }
-  }, [activeId, rect, tabs, tabActive])
+  }, [activeId, rect, tabs, visible])
 
-  // 다른 메뉴 탭으로 넘어가면(뷰는 그대로 마운트돼 있다) 네이티브 웹뷰를 숨긴다.
-  // 웹뷰는 창 위에 겹쳐 그려지므로 CSS 로 감춰지지 않는다 — 숨기지 않으면 다른 화면을 덮는다.
-  // 웹뷰 자체는 살려 두므로 돌아왔을 때 페이지가 그대로 남아 있다.
+  // 다른 메뉴 탭으로 넘어가거나 웹뷰 위에 오버레이가 뜨면 네이티브 웹뷰를 숨긴다.
+  // 웹뷰는 창 위에 겹쳐 그려지므로 CSS 로 감춰지지 않는다 — 숨기지 않으면 다른 화면(과
+  // 그 위 드롭다운)을 덮는다. 웹뷰 자체는 살려 두므로 돌아왔을 때 페이지가 그대로 남아 있다.
   useEffect(() => {
-    if (!inTauri || tabActive) return
+    if (!inTauri || visible) return
     for (const t of tabsRef.current) {
       void trackedInvoke("browser_hide", { label: labelFor(t.id) })
     }
-  }, [tabActive])
+  }, [visible])
 
   // 웹뷰 내부 이동(링크 클릭 등)을 Rust 가 알려주면 탭 URL·제목을 동기화한다.
   useEffect(() => {
