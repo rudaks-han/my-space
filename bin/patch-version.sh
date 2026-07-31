@@ -395,13 +395,39 @@ fi
 
 # ── 초안 퍼블리시 ────────────────────────────────────────────────────────────
 # 이걸 해야 releases/latest/download/latest.json 이 살아난다(초안은 서빙되지 않는다).
+#
+# gh 는 **자기가 로그인한 계정**으로 동작하는데, 이 기계에서는 그 계정이 저장소
+# 협업자가 아니다(권한이 pull 뿐 — `gh api repos/rudaks-han/my-space --jq .permissions`
+# 로 확인된다). 반면 git push 는 credential helper 에 저장된 다른 자격증명으로
+# 되기 때문에, "푸시는 되는데 릴리스만 403" 인 헷갈리는 상태가 된다. 초안은 태그가
+# 아직 없어 `untagged-…` 로 만들어지고 gh release list 에도 안 보이므로 더 헷갈린다.
+# 그래서 실패하면 push 에 쓰는 그 자격증명으로 한 번 더 시도한다.
+git_credential_token() {
+  printf "protocol=https\nhost=github.com\n\n" | git credential fill 2>/dev/null |
+    sed -n 's/^password=//p'
+}
+
 echo
 echo "→ 릴리스 $TAG 퍼블리시"
-if ! gh release edit "$TAG" --draft=false --latest; then
+PUBLISHED=false
+if gh release edit "$TAG" --draft=false --latest; then
+  PUBLISHED=true
+else
+  TOKEN=$(git_credential_token || true)
+  if [ -n "$TOKEN" ]; then
+    echo "  gh 계정으로는 거부됐습니다 — git push 에 쓰는 자격증명으로 다시 시도합니다." >&2
+    if GH_TOKEN="$TOKEN" gh release edit "$TAG" --draft=false --latest; then
+      PUBLISHED=true
+    fi
+  fi
+fi
+if ! $PUBLISHED; then
   cat >&2 <<MSG
-✗ 퍼블리시하지 못했습니다. gh 토큰에 릴리스 권한이 없을 수 있습니다.
-  권한 추가:  gh auth refresh -h github.com -s repo
-  또는 웹에서 직접 Publish: https://github.com/rudaks-han/my-space/releases
+✗ 퍼블리시하지 못했습니다. gh 로그인 계정에 이 저장소 write 권한이 없을 수 있습니다.
+  확인:  gh api repos/rudaks-han/my-space --jq .permissions   # push 가 false 면 이 경우다
+  → 권한 있는 계정으로 로그인(gh auth login)하거나, 웹에서 직접 Publish 하세요.
+     초안은 태그가 없어 'Draft untagged-…' 로 보입니다:
+     https://github.com/rudaks-han/my-space/releases
 MSG
   exit 1
 fi
