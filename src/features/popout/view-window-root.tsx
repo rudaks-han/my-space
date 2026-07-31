@@ -2,6 +2,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { ClaudeActivityProvider } from "@/features/claude-bridge/claude-activity-store"
 import { ReminderProvider } from "@/features/reminder/reminder-store"
 import { SettingsProvider } from "@/features/settings/settings-store"
+import { AuthProvider } from "@/features/auth/auth-store"
 import { SlackProvider } from "@/features/slack/slack-store"
 import { GmailProvider } from "@/features/gmail/gmail-store"
 import { NavigationProvider } from "@/lib/navigation-store"
@@ -37,55 +38,57 @@ export function ViewWindowRoot() {
 
   return (
     <TooltipProvider>
-      <SettingsProvider>
-        <ReminderProvider>
-          <SlackProvider>
-            <GmailProvider>
-              <ClaudeActivityProvider>
-                {/* 홈 카드의 "전체 보기 →" 등은 (탭이 없으므로) 그 메뉴를 또 새 창으로 띄운다. */}
-                <NavigationProvider
-                  onNavigate={(menuId) => {
-                    const target = viewInfo(menuId)
-                    if (!target) return
-                    void trackedInvoke("open_view_window", {
-                      id: target.id,
-                      title: target.title,
-                    }).catch((e) => console.error("새 창 열기 실패:", e))
-                  }}
-                >
-                  <div className="flex h-svh flex-col overflow-hidden bg-ui-chrome">
-                    {/* 상단 크롬 바 — 메인 창의 타이틀바와 같은 높이·색이고 신호등 자리만 둔다.
+      <AuthProvider>
+        <SettingsProvider>
+          <ReminderProvider>
+            <SlackProvider>
+              <GmailProvider>
+                <ClaudeActivityProvider>
+                  {/* 홈 카드의 "전체 보기 →" 등은 (탭이 없으므로) 그 메뉴를 또 새 창으로 띄운다. */}
+                  <NavigationProvider
+                    onNavigate={(menuId) => {
+                      const target = viewInfo(menuId)
+                      if (!target) return
+                      void trackedInvoke("open_view_window", {
+                        id: target.id,
+                        title: target.title,
+                      }).catch((e) => console.error("새 창 열기 실패:", e))
+                    }}
+                  >
+                    <div className="flex h-svh flex-col overflow-hidden bg-ui-chrome">
+                      {/* 상단 크롬 바 — 메인 창의 타이틀바와 같은 높이·색이고 신호등 자리만 둔다.
                       제목은 아래 뷰 헤더가 맡으므로 여기에는 아무것도 넣지 않고,
                       바 전체를 창 드래그 핸들로 쓴다. */}
-                    <header
-                      data-tauri-drag-region
-                      className="h-(--ui-titlebar-h) shrink-0 bg-ui-chrome"
-                    />
-                    {/* 흰 패널 — 메인 창의 에디터 영역과 같다(좌상단만 라운드). */}
-                    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-tl-[var(--ui-panel-radius)] bg-background">
-                      {/* 뷰 헤더 — 팝업 전(메인 창 탭 바 아래)과 같은 자리·같은 모양. */}
-                      <div className="flex h-(--ui-breadcrumb-h) shrink-0 items-center gap-2 border-b border-ui-tab-border px-5 select-none">
-                        <Icon className="size-[18px] shrink-0" />
-                        <span className="truncate text-[18px] font-bold tracking-[-0.01em]">
-                          {info.title}
-                        </span>
-                        {info.id !== SETTINGS_ID && (
-                          <span className="truncate text-[13px] text-muted-foreground">
-                            {info.group}
+                      <header
+                        data-tauri-drag-region
+                        className="h-(--ui-titlebar-h) shrink-0 bg-ui-chrome"
+                      />
+                      {/* 흰 패널 — 메인 창의 에디터 영역과 같다(좌상단만 라운드). */}
+                      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-tl-[var(--ui-panel-radius)] bg-background">
+                        {/* 뷰 헤더 — 팝업 전(메인 창 탭 바 아래)과 같은 자리·같은 모양. */}
+                        <div className="flex h-(--ui-breadcrumb-h) shrink-0 items-center gap-2 border-b border-ui-tab-border px-5 select-none">
+                          <Icon className="size-[18px] shrink-0" />
+                          <span className="truncate text-[18px] font-bold tracking-[-0.01em]">
+                            {info.title}
                           </span>
-                        )}
-                      </div>
-                      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-5">
-                        {viewElement(id)}
+                          {info.id !== SETTINGS_ID && (
+                            <span className="truncate text-[13px] text-muted-foreground">
+                              {info.group}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-5">
+                          {viewElement(id)}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </NavigationProvider>
-              </ClaudeActivityProvider>
-            </GmailProvider>
-          </SlackProvider>
-        </ReminderProvider>
-      </SettingsProvider>
+                  </NavigationProvider>
+                </ClaudeActivityProvider>
+              </GmailProvider>
+            </SlackProvider>
+          </ReminderProvider>
+        </SettingsProvider>
+      </AuthProvider>
     </TooltipProvider>
   )
 }

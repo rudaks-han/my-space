@@ -29,4 +29,4 @@ dist-ssr
 
 # 개인 메모·편의 스크립트 (공개 저장소에 올릴 것 아님)
 수정사항.txt
-run.sh
+bin/run.sh

@@ -450,10 +450,84 @@ pub async fn flex_coworkers(app: tauri::AppHandle) -> Result<Value, String> {
     .await
 }
 
-/// 내 정보(primary 캘린더).
+/// 내 정보(primary 캘린더). `token` 이 내 calendarId — **이름도 부서도 없다.**
 #[tauri::command]
 pub async fn flex_primary(app: tauri::AppHandle) -> Result<Value, String> {
     flex_get(&app, &format!("{BASE}{PROBE_PATH}")).await
+}
+
+/// 로그인한 나 자신 — **이름과 부서**.
+///
+/// 두 번 호출해서 만든다. primary 는 이름도 부서도 주지 않지만 `customerIdHash`(회사)와
+/// `userIdHash`(나)를 주고, 그 둘로 구성원 검색을 부르면 내 인사 레코드가 나온다.
+/// coworkers 목록에는 나 자신이 아예 빠져 있어서 이 경로가 내 부서를 아는 유일한 길이다.
+///
+/// ```text
+/// GET /api/v2/calendar/calendars/primary                                  → customerIdHash, userIdHash
+/// GET /api/v2/search/customers/{customerIdHash}/search-users/{userIdHash} → [{ departments, user{…} }]
+/// ```
+///
+/// 두 번째 경로는 flex 웹 번들의 생성 클라이언트(`UserSearchControllerApi.searchUserByIds`)에서
+/// 그대로 가져왔다. `userIdHashes` 는 콤마로 여러 명도 되지만 여기선 나 하나만 쓴다.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlexMe {
+    pub user_id_hash: String,
+    /// 표시 이름(없으면 빈 문자열).
+    pub name: String,
+    /// 소속 부서명. 여러 직책이 있으면 `isPrimary` 인 것을 쓴다.
+    pub department: Option<String>,
+}
+
+/// 검색 결과 한 건(`{ departments:[{name}], user:{ displayName, positions:[…] } }`)에서
+/// 이름·부서를 뽑는다. 직책이 여러 개면 `isPrimary` 인 것이 소속이고, `positions` 가
+/// 없으면 `departments` 의 첫 부서로 떨어진다.
+fn me_from_search(user_id_hash: &str, rec: &Value) -> FlexMe {
+    let department = rec["user"]["positions"]
+        .as_array()
+        .and_then(|ps| {
+            ps.iter()
+                .find(|p| p["isPrimary"].as_bool() == Some(true))
+                .or_else(|| ps.first())
+        })
+        .and_then(|p| p["departmentName"].as_str())
+        .or_else(|| rec["departments"][0]["name"].as_str())
+        .map(|s| s.to_string());
+
+    FlexMe {
+        user_id_hash: user_id_hash.to_string(),
+        name: rec["user"]["displayName"]
+            .as_str()
+            .or_else(|| rec["user"]["name"].as_str())
+            .unwrap_or_default()
+            .to_string(),
+        department,
+    }
+}
+
+#[tauri::command]
+pub async fn flex_me(app: tauri::AppHandle) -> Result<FlexMe, String> {
+    let primary = flex_get(&app, &format!("{BASE}{PROBE_PATH}")).await?;
+    let customer = primary["customerIdHash"]
+        .as_str()
+        .ok_or("primary 응답에 customerIdHash 가 없습니다")?;
+    let user_hash = primary["userIdHash"]
+        .as_str()
+        .ok_or("primary 응답에 userIdHash 가 없습니다")?;
+
+    let found = flex_get(
+        &app,
+        &format!("{BASE}/api/v2/search/customers/{customer}/search-users/{user_hash}"),
+    )
+    .await?;
+    // 응답은 검색 결과 배열이다(요청한 해시가 하나여도 배열).
+    let rec = found
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    Ok(me_from_search(user_hash, &rec))
 }
 
 /// 기간 내 일정(휴가/회의/근무기록/생일/입사일).
@@ -596,6 +670,83 @@ pub async fn flex_open_time_off(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 실계정으로 `flex_me` 의 두 번 호출 흐름을 그대로 재현한다(부서가 나오는지 확인).
+    #[tokio::test]
+    #[ignore = "실제 계정과 네트워크가 필요하다"]
+    async fn reads_my_department_for_real() {
+        let home = std::env::var("HOME").expect("HOME");
+        let cfg: FlexConfig = serde_json::from_str(
+            &std::fs::read_to_string(
+                PathBuf::from(home).join("Library/Application Support/com.rudaks.myspace/flex.json"),
+            )
+            .expect("flex.json"),
+        )
+        .expect("parse");
+        let pw = decrypt_password(&cfg.password_enc).expect("복호화");
+        let cookie = http_login(&cfg.email, &pw).await.expect("로그인");
+
+        let primary = send(&format!("{BASE}{PROBE_PATH}"), None, &cookie)
+            .await
+            .map_err(|e| e.to_string())
+            .expect("primary");
+        let customer = primary["customerIdHash"].as_str().expect("customerIdHash");
+        let user_hash = primary["userIdHash"].as_str().expect("userIdHash");
+        let found = send(
+            &format!("{BASE}/api/v2/search/customers/{customer}/search-users/{user_hash}"),
+            None,
+            &cookie,
+        )
+        .await
+        .map_err(|e| e.to_string())
+        .expect("search-users");
+
+        let me = me_from_search(
+            user_hash,
+            found.as_array().and_then(|a| a.first()).expect("결과 1건"),
+        );
+        println!("이름={} / 부서={:?}", me.name, me.department);
+        assert!(!me.name.is_empty(), "이름이 있어야 한다");
+        assert!(me.department.is_some(), "부서가 있어야 한다");
+    }
+
+    /// 구성원 검색 응답에서 이름·부서를 뽑는다(실제 응답 구조 그대로, 값만 예시).
+    #[test]
+    fn reads_name_and_department_from_search() {
+        let rec = json!({
+            "departments": [{ "idHash": "D1", "name": "샘플본부" }],
+            "user": {
+                "displayName": "김샘플",
+                "name": "김샘플",
+                "positions": [
+                    { "departmentName": "다른팀", "isPrimary": false },
+                    { "departmentName": "샘플본부", "isPrimary": true },
+                ],
+            },
+        });
+        let me = me_from_search("U1", &rec);
+        assert_eq!(me.user_id_hash, "U1");
+        assert_eq!(me.name, "김샘플");
+        // isPrimary 인 직책의 부서를 골라야 한다(배열 순서가 아니라).
+        assert_eq!(me.department.as_deref(), Some("샘플본부"));
+    }
+
+    /// positions 가 없으면 departments 로 떨어지고, 아무것도 없으면 None.
+    #[test]
+    fn falls_back_to_departments_array() {
+        let rec = json!({
+            "departments": [{ "name": "샘플본부" }],
+            "user": { "name": "김샘플" },
+        });
+        assert_eq!(
+            me_from_search("U1", &rec).department.as_deref(),
+            Some("샘플본부")
+        );
+
+        let empty = me_from_search("U1", &json!({}));
+        assert_eq!(empty.department, None);
+        assert_eq!(empty.name, "");
+    }
 
     #[test]
     fn roundtrips_password() {

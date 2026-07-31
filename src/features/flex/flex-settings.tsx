@@ -6,14 +6,22 @@
  * 순으로 찾고, 둘 다 없으면 여기 저장한 계정으로 자동 로그인한다(브라우저 창 없이
  * 로그인 화면이 쓰는 API 를 그대로 호출한다 — 자세한 흐름은 `src-tauri/src/flex.rs`).
  */
-import { LogOutIcon, RefreshCwIcon } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { LogOutIcon, RefreshCwIcon, UsersIcon } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "@/components/ui/select"
 import { trackedInvoke } from "@/lib/tauri"
 import { cn } from "@/lib/utils"
+
+import { useFlexCoworkers, useFlexMyDept } from "./use-flex"
 
 /** Slack 흰 패널 — 10px 라운드 + 아주 옅은 그림자. */
 const PANEL =
@@ -41,6 +49,96 @@ function loginError(code: string): string {
   // flex 서버가 준 한국어 메시지("계정 또는 비밀번호에 오류가 있어요." 등)는 그대로 보여 준다.
   if (/[가-힣]/.test(code)) return code
   return `오류: ${code}`
+}
+
+/** "자동" 을 뜻하는 값 — Select 는 빈 문자열을 값으로 쓰기 애매해서 별도 토큰을 쓴다. */
+const AUTO = "__auto__"
+
+/** 자동 감지도 실패했을 때(로그인 전 등)의 표시. */
+const NONE_LABEL = "자동 (아직 못 읽음)"
+
+/**
+ * 내 부서 — 같은 부서 구성원을 휴가 목록에서 칩으로 강조하는 기준.
+ *
+ * 기본은 **자동**이다: `flex_me` 가 구성원 검색으로 내 부서를 읽어 온다(coworkers 목록에는
+ * 나 자신이 빠져 있어서 그 경로로는 알 수 없다 — `src-tauri/src/flex.rs` 참고).
+ * 직접 고르는 건 자동으로 읽힌 단위가 원하는 단위와 다를 때를 위한 수동 지정이다
+ * (예: 내 소속은 "제품개발본부" 인데 팀 단위로 강조하고 싶을 때).
+ */
+function MyDepartmentPanel() {
+  const { coworkers, me, loading, refresh } = useFlexCoworkers()
+  const { dept, picked, setPicked } = useFlexMyDept(me)
+
+  // 자동으로 읽힌 부서를 그대로 보여 준다(못 읽었으면 그렇다고 쓴다).
+  const autoLabel = me?.department ? `자동 — ${me.department}` : NONE_LABEL
+
+  // 구성원 캐시에 있는 부서들(중복 제거 + 가나다순).
+  const departments = useMemo(() => {
+    const set = new Set<string>()
+    for (const c of coworkers) if (c.department) set.add(c.department)
+    return [...set].sort((a, b) => a.localeCompare(b, "ko"))
+  }, [coworkers])
+
+  return (
+    <div className={PANEL}>
+      <div className={PANEL_HEADER}>내 부서</div>
+      <div className="flex flex-col gap-3 p-4 text-[15px]">
+        <p className="text-[13px] text-muted-foreground">
+          {me?.name ? `${me.name} 님과 ` : ""}같은 부서 구성원은 휴가 목록에서
+          이름·부서가 칩으로 강조됩니다. 부서는 flex 에서 자동으로 읽어 오며,
+          다른 단위로 강조하고 싶을 때만 직접 고르세요.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={picked ?? AUTO}
+            onValueChange={(v) => setPicked(v === AUTO ? null : String(v))}
+          >
+            <SelectTrigger className="min-w-56">
+              <span
+                className={cn(
+                  "flex-1 text-left",
+                  picked === null && "text-muted-foreground"
+                )}
+              >
+                {picked ?? autoLabel}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={AUTO}>{autoLabel}</SelectItem>
+              {departments.map((d) => (
+                <SelectItem key={d} value={d}>
+                  {d}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Button
+            variant="outline"
+            className={PILL}
+            onClick={() => void refresh()}
+            disabled={loading}
+            title="부서 목록을 다시 불러옵니다"
+          >
+            <UsersIcon className={cn("size-3.5", loading && "animate-spin")} />
+            구성원 새로고침
+          </Button>
+
+          <span className="text-[13px] text-muted-foreground">
+            {dept ? `강조 기준: ${dept}` : "강조 안 함"}
+          </span>
+        </div>
+
+        {departments.length === 0 && (
+          <p className="text-[13px] text-muted-foreground">
+            구성원 목록이 비어 있습니다. 로그인 후 "구성원 새로고침"을 눌러
+            주세요.
+          </p>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export function FlexSettingsPanel() {
@@ -186,6 +284,9 @@ export function FlexSettingsPanel() {
             </div>
           </div>
         </div>
+
+        {/* 같은 부서 강조 기준 */}
+        <MyDepartmentPanel />
 
         {/* 계정 입력 */}
         <div className={PANEL}>

@@ -171,7 +171,10 @@ function UsageSegment({
     <span className="flex items-center gap-1.5">
       <span className="h-1.5 w-8 overflow-hidden rounded-full bg-ui-chrome-active">
         <span
-          className={cn("block h-full rounded-full", usageBarClass(win.utilization))}
+          className={cn(
+            "block h-full rounded-full",
+            usageBarClass(win.utilization)
+          )}
           style={{ width: `${Math.min(win.utilization, 100)}%` }}
         />
       </span>

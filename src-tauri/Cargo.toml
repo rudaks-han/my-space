@@ -1,6 +1,6 @@
 [package]
 name = "my-space"
-version = "0.0.2"
+version = "0.0.3"
 description = "My Space - 업무용 통합 앱"
 authors = ["rudaks"]
 edition = "2021"
@@ -48,6 +48,9 @@ urlencoding = "2"
 base64 = "0.22"
 # IntelliJ 실행 설정(.idea/runConfigurations/*.xml) 파싱용 경량 read-only XML 파서.
 roxmltree = "0.20"
+# 사내 LDAP 로그인. 사내 서버가 평문(389)이라 TLS 백엔드는 끄고(default-features=false)
+# 비동기 클라이언트만 쓴다 — OpenSSL 등 추가 빌드 의존이 없다.
+ldap3 = { version = "0.11", default-features = false }
 
 # ── Kafka 뷰어 ──
 # Kafka 는 HTTP 가 아니라 TCP 바이너리 프로토콜이라 웹뷰에서 직접 붙을 수 없다.

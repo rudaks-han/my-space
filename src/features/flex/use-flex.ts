@@ -10,6 +10,12 @@ const POLL_MS = 300_000
 /** 조직 구성원 캐시 저장 키(새로고침 전까지 재사용). */
 const COWORKERS_KEY = "myspace.flexCoworkers"
 
+/** 내 정보(primary 캘린더) 캐시 저장 키 — 내 부서를 알아야 같은 부서를 강조할 수 있다. */
+const ME_KEY = "myspace.flexMe"
+
+/** 설정에서 직접 고른 내 부서(자동 감지가 안 될 때의 기준). */
+const MY_DEPT_KEY = "myspace.flexMyDept"
+
 /** 정규화한 구성원 한 명. */
 export interface FlexCoworker {
   id: string
@@ -99,8 +105,19 @@ function normalizeCoworker(c: any): FlexCoworker | null {
   }
 }
 
-/** primary 응답에서 내 캘린더(구성원)를 뽑는다. token 이 곧 내 calendarId. */
-function extractSelf(primary: any): FlexCoworker | null {
+/** Rust `FlexMe` 와 같은 모양 — 내 이름·부서. */
+interface FlexMeInfo {
+  userIdHash: string
+  name: string
+  department: string | null
+}
+
+/**
+ * primary 응답에서 내 캘린더(구성원)를 뽑는다. token 이 곧 내 calendarId.
+ * primary 에는 **이름도 부서도 없어서**(그대로 두면 내 휴가가 "(이름 없음)" 으로
+ * 나온다) 둘 다 `flex_me`(구성원 검색) 응답에서 받아 채운다.
+ */
+function extractSelf(primary: any, me: FlexMeInfo | null): FlexCoworker | null {
   if (!primary || typeof primary !== "object") return null
   // { calendar: {...} } / { data: {...} } / 최상위에 token 이 있는 형태 모두 시도.
   const obj =
@@ -108,7 +125,13 @@ function extractSelf(primary: any): FlexCoworker | null {
     primary.calendar ??
     primary.data ??
     primary
-  return normalizeCoworker(obj)
+  const self = normalizeCoworker(obj)
+  if (!self) return null
+  return {
+    ...self,
+    name: me?.name || self.name,
+    department: me?.department ?? self.department,
+  }
 }
 
 function normalizeEvent(
@@ -185,7 +208,13 @@ export function useFlexCoworkers() {
     COWORKERS_KEY,
     []
   )
+  // 나 자신(primary). coworkers 목록 안에도 들어가지만 그 안에서는 누가 나인지 구분할
+  // 수 없으므로 따로 캐시한다.
+  const [me, setMe] = useLocalStorage<FlexCoworker | null>(ME_KEY, null)
   const [raw, setRaw] = useState<unknown>(null)
+  // primary 원본 — 이 응답에 부서(departmentName)가 들어오는지는 워크스페이스마다
+  // 다를 수 있어서 디버그 패널에서 눈으로 확인할 수 있게 남겨 둔다.
+  const [primaryRaw, setPrimaryRaw] = useState<unknown>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -193,13 +222,16 @@ export function useFlexCoworkers() {
     setLoading(true)
     setError(null)
     try {
-      // 조직도 + 내 정보(primary)를 함께 가져온다. 나 자신은 coworkers 에 포함되지
-      // 않으므로 primary.token 으로 별도 추가해야 내 휴가도 보인다(extension 방식).
-      const [data, primary] = await Promise.all([
+      // 조직도 + 내 캘린더(primary) + 내 이름·부서(flex_me)를 함께 가져온다. 나 자신은
+      // coworkers 에 포함되지 않으므로 primary.token 으로 별도 추가해야 내 휴가도
+      // 보이고, 이름·부서는 primary 에 없어서 flex_me 로 채운다.
+      const [data, primary, meInfo] = await Promise.all([
         trackedInvoke<unknown>("flex_coworkers"),
         trackedInvoke<unknown>("flex_primary").catch(() => null),
+        trackedInvoke<FlexMeInfo>("flex_me").catch(() => null),
       ])
       setRaw(data)
+      setPrimaryRaw(primary)
       const list = extractArray(data, [
         "calendars",
         "coworkers",
@@ -210,7 +242,8 @@ export function useFlexCoworkers() {
         .filter((c): c is FlexCoworker => c !== null)
 
       // primary 응답에서 내 캘린더를 뽑아 목록 맨 앞에 추가(중복이면 제외).
-      const self = extractSelf(primary)
+      const self = extractSelf(primary, meInfo)
+      if (self) setMe(self)
       if (self && !list.some((c) => c.id === self.id)) list.unshift(self)
 
       setCoworkers(list)
@@ -219,13 +252,31 @@ export function useFlexCoworkers() {
     } finally {
       setLoading(false)
     }
-  }, [setCoworkers])
+  }, [setCoworkers, setMe])
 
   // 캐시가 없을 때만 최초 1회 로드(있으면 재사용 — 새로고침은 수동).
   useEffect(() => {
-    if (coworkers.length > 0) return
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh()
+    if (coworkers.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      void refresh()
+      return
+    }
+    // 구성원 캐시는 있는데 내 정보가 없거나 부서가 비어 있는 경우(이전 버전 캐시) —
+    // 구성원 전체를 다시 받지 않고 내 정보만 가볍게 한 번 더 읽는다.
+    if (me?.department) return
+    void (async () => {
+      try {
+        const [primary, meInfo] = await Promise.all([
+          trackedInvoke<unknown>("flex_primary"),
+          trackedInvoke<FlexMeInfo>("flex_me").catch(() => null),
+        ])
+        setPrimaryRaw(primary)
+        const self = extractSelf(primary, meInfo)
+        if (self) setMe(self)
+      } catch {
+        // 실패해도 같은 부서 강조만 못 하므로 화면에 오류를 띄우지 않는다.
+      }
+    })()
     // 최초 마운트 시 한 번만. (coworkers 를 deps 에 넣으면 매번 재실행된다.)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -236,7 +287,18 @@ export function useFlexCoworkers() {
     return m
   }, [coworkers])
 
-  return { coworkers, byId, raw, loading, error, refresh }
+  return { coworkers, byId, me, raw, primaryRaw, loading, error, refresh }
+}
+
+/**
+ * 같은 부서 강조의 기준이 되는 **내 부서**.
+ *
+ * 기본은 `flex_me` 가 읽어 온 내 소속(`me.department`)이고, 설정에서 고른 값이 있으면
+ * 그게 이긴다 — 자동으로 읽히는 단위가 본부인데 팀 단위로 강조하고 싶을 수 있다.
+ */
+export function useFlexMyDept(me: FlexCoworker | null) {
+  const [picked, setPicked] = useLocalStorage<string | null>(MY_DEPT_KEY, null)
+  return { dept: picked ?? me?.department ?? null, picked, setPicked }
 }
 
 /**

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 
+import { effectiveMarkdownCss } from "./bundled-css"
 import { renderMermaid } from "./mermaid"
 
 /*
@@ -10,6 +11,9 @@ import { renderMermaid } from "./mermaid"
  * 섀도 트리 안에는 html/body 요소가 없으므로 css 의 `html`·`body` 선택자는 아무 데도
  * 걸리지 않는다. 이 둘을 `:host` 로 바꿔(adaptTyporaCss) 폰트 크기·본문 색이 살아나게 한다.
  * Typora 는 라이트 테마 문서이므로 앱이 다크 모드라도 문서 자체는 흰 배경으로 그린다.
+ *
+ * `css` prop 은 설정에 저장된 사용자 테마다 — 비어 있으면 앱에 번들된 기본 테마를 쓴다
+ * (`bundled-css.ts`). 즉 Typora 가 없는 사람도 첫 실행부터 같은 화면을 본다.
  */
 
 /** Typora css 를 섀도 DOM 에 맞게 살짝 손본다(html/body → :host). */
@@ -19,7 +23,7 @@ function adaptTyporaCss(css: string): string {
     .replace(/(^|[},])(\s*)body\b/g, "$1$2:host")
 }
 
-/** 테마 css 가 없을 때/있을 때 공통으로 깔아 두는 최소 기반 스타일. */
+/** 테마 css 위에 항상 깔아 두는 최소 기반 스타일. */
 const BASE_CSS = `
 :host {
   display: block;
@@ -89,10 +93,12 @@ export function MarkdownViewer({ html, css }: { html: string; css: string }) {
     writeRef.current = write
   }, [])
 
-  // 테마 css 가 바뀌면 스타일을 다시 주입한다.
+  // 테마 css 가 바뀌면 스타일을 다시 주입한다. 저장된 css 가 비어 있으면
+  // 앱에 번들된 기본 스타일을 쓰므로, 주입할 css 가 아예 없는 경우는 없다.
   useEffect(() => {
     if (styleRef.current) {
-      styleRef.current.textContent = BASE_CSS + (css ? adaptTyporaCss(css) : "")
+      styleRef.current.textContent =
+        BASE_CSS + adaptTyporaCss(effectiveMarkdownCss(css))
     }
   }, [css])
 

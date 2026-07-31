@@ -16,6 +16,8 @@ import { ReminderProvider } from "@/features/reminder/reminder-store"
 import { SlackProvider } from "@/features/slack/slack-store"
 import { GmailProvider } from "@/features/gmail/gmail-store"
 import { SettingsProvider } from "@/features/settings/settings-store"
+import { AuthProvider } from "@/features/auth/auth-store"
+import { LoginGate } from "@/features/auth/login-gate"
 import { ClaudeNotifier } from "@/features/claude-bridge/claude-notifier"
 import { ClaudeActivityProvider } from "@/features/claude-bridge/claude-activity-store"
 import { PetController } from "@/features/pet/pet-controller"
@@ -70,12 +72,6 @@ export default function App() {
     setCollapsed(false)
   }
 
-  // 상단바 검색 알약 → 사이드바를 펼치고 메뉴 검색 컨테이너로 전환.
-  const openSearch = () => {
-    setContainer("search")
-    setCollapsed(false)
-  }
-
   // 앱 시작 시 GitHub 릴리스에 새 버전이 있는지 한 번 확인한다.
   useEffect(() => {
     void checkForUpdates()
@@ -92,85 +88,85 @@ export default function App() {
 
   return (
     <TooltipProvider>
-      <SettingsProvider>
-        <ReminderProvider>
-          <SlackProvider>
-            <GmailProvider>
-              <ClaudeActivityProvider>
-                <ClaudeNotifier />
-                {/* 설정의 "로그인 시 자동 실행" 을 OS 로그인 항목에 반영한다. */}
-                <AutoStartSync />
-                {/* 설정의 "상시 표시" 에 맞춰 데스크톱 펫 창을 띄운다/숨긴다. */}
-                <PetController />
-                {/* 이미 폴링해 둔 Slack·Gmail 안읽음 건수를 펫이 볼 수 있게 적어 둔다. */}
-                <PetFeedPublisher />
-                {/* 홈 화면 카드의 "전체 보기 →" 가 해당 메뉴 탭을 열게 한다. */}
-                <NavigationProvider onNavigate={open}>
-                  {/* 라벤더 크롬 위에 흰 패널(사이드바·에디터)이 얹힌 Slack 레이아웃 */}
-                  <div className="flex h-svh flex-col overflow-hidden bg-ui-chrome">
-                    <TitleBar
-                      onOpenSearch={openSearch}
-                      onToggleSidebar={() => setCollapsed((v) => !v)}
-                    />
-                    <div className="flex min-h-0 min-w-0 flex-1">
-                      <ActivityBar
-                        container={container}
-                        collapsed={collapsed}
-                        onSelectContainer={selectContainer}
-                        onOpenSettings={() => open(SETTINGS_ID)}
-                        settingsActive={isSettings}
-                      />
-                      {!collapsed && (
-                        <SideBar
-                          container={container}
-                          activeId={activeId}
-                          onSelectMenu={open}
+      <AuthProvider>
+        <SettingsProvider>
+          <ReminderProvider>
+            <SlackProvider>
+              <GmailProvider>
+                <ClaudeActivityProvider>
+                  <ClaudeNotifier />
+                  {/* 설정의 "로그인 시 자동 실행" 을 OS 로그인 항목에 반영한다. */}
+                  <AutoStartSync />
+                  {/* 설정의 "상시 표시" 에 맞춰 데스크톱 펫 창을 띄운다/숨긴다. */}
+                  <PetController />
+                  {/* 이미 폴링해 둔 Slack·Gmail 안읽음 건수를 펫이 볼 수 있게 적어 둔다. */}
+                  <PetFeedPublisher />
+                  {/* 홈 화면 카드의 "전체 보기 →" 가 해당 메뉴 탭을 열게 한다. */}
+                  <NavigationProvider onNavigate={open}>
+                    {/* 로그인 안 됐으면 셸 대신 로그인 폼을 띄운다. */}
+                    <LoginGate>
+                      {/* 라벤더 크롬 위에 흰 패널(사이드바·에디터)이 얹힌 Slack 레이아웃 */}
+                      <div className="flex h-svh flex-col overflow-hidden bg-ui-chrome">
+                        <TitleBar
+                          onToggleSidebar={() => setCollapsed((v) => !v)}
                         />
-                      )}
-                      {/* 에디터 영역 — 탭 바 + 뷰 헤더 + 활성 뷰.
+                        <div className="flex min-h-0 min-w-0 flex-1">
+                          <ActivityBar
+                            container={container}
+                            collapsed={collapsed}
+                            onSelectContainer={selectContainer}
+                            onOpenSettings={() => open(SETTINGS_ID)}
+                            settingsActive={isSettings}
+                          />
+                          {!collapsed && (
+                            <SideBar activeId={activeId} onSelectMenu={open} />
+                          )}
+                          {/* 에디터 영역 — 탭 바 + 뷰 헤더 + 활성 뷰.
                         사이드바가 접혀 있으면 이쪽이 좌상단 라운드를 대신 맡는다. */}
-                      <div
-                        className={cn(
-                          "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
-                          collapsed && "rounded-tl-[var(--ui-panel-radius)]"
-                        )}
-                      >
-                        <TabBar
-                          openIds={openIds}
-                          activeId={activeId}
-                          onSelect={setActive}
-                          onClose={close}
-                          onMove={move}
-                        />
-                        {/* 열린 탭들을 겹쳐 두고 활성 탭만 보인다. display:none 대신
+                          <div
+                            className={cn(
+                              "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
+                              collapsed && "rounded-tl-[var(--ui-panel-radius)]"
+                            )}
+                          >
+                            <TabBar
+                              openIds={openIds}
+                              activeId={activeId}
+                              onSelect={setActive}
+                              onClose={close}
+                              onMove={move}
+                            />
+                            {/* 열린 탭들을 겹쳐 두고 활성 탭만 보인다. display:none 대신
                           visibility 로 감춰야 숨은 탭의 스크롤 위치가 유지된다. */}
-                        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-                          {nextMounted.map((id) => (
-                            <TabActiveProvider
-                              key={id}
-                              active={id === activeId}
-                            >
-                              <div
-                                className={cn(
-                                  "absolute inset-0 flex flex-col overflow-x-hidden overflow-y-auto p-5",
-                                  id !== activeId && "invisible"
-                                )}
-                              >
-                                {viewElement(id)}
-                              </div>
-                            </TabActiveProvider>
-                          ))}
+                            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+                              {nextMounted.map((id) => (
+                                <TabActiveProvider
+                                  key={id}
+                                  active={id === activeId}
+                                >
+                                  <div
+                                    className={cn(
+                                      "absolute inset-0 flex flex-col overflow-x-hidden overflow-y-auto p-5",
+                                      id !== activeId && "invisible"
+                                    )}
+                                  >
+                                    {viewElement(id)}
+                                  </div>
+                                </TabActiveProvider>
+                              ))}
+                            </div>
+                          </div>
                         </div>
+                        <StatusBar onOpen={open} />
                       </div>
-                    </div>
-                    <StatusBar onOpen={open} />
-                  </div>
-                </NavigationProvider>
-              </ClaudeActivityProvider>
-            </GmailProvider>
-          </SlackProvider>
-        </ReminderProvider>
-      </SettingsProvider>
+                    </LoginGate>
+                  </NavigationProvider>
+                </ClaudeActivityProvider>
+              </GmailProvider>
+            </SlackProvider>
+          </ReminderProvider>
+        </SettingsProvider>
+      </AuthProvider>
     </TooltipProvider>
   )
 }

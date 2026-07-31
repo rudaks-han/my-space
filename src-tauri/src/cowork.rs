@@ -4,9 +4,11 @@
 //! 저장·편집은 하지 않는다(읽기 전용). 파일 IO 는 Rust 가 직접 하고(std::fs),
 //! 프론트엔드는 목록·본문·스타일(css)만 받아 화면에 그린다.
 //!
-//! 스타일은 사용자의 Typora 테마 css(예: `~/Library/Application Support/
-//! abnerworks.Typora/themes/rudaks.css`)를 그대로 읽어와 뷰어에 주입한다 — Typora 에서
-//! 보던 가독성을 앱 안에서도 그대로 재현하기 위함이다.
+//! 기본 스타일은 프론트엔드에 번들돼 있다(`src/assets/typora/rudaks.css`, 뷰어가
+//! 섀도 DOM 에 주입) — Typora 가 깔려 있지 않은 사람도 첫 실행부터 같은 화면을 본다.
+//! 여기의 `cowork_read_css` 는 그걸 **덮어쓰고 싶을 때만** 쓰이는 통로로, 사용자의
+//! Typora 테마 css(예: `~/Library/Application Support/abnerworks.Typora/themes/
+//! rudaks.css`)를 읽어 설정에 저장한다.
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};

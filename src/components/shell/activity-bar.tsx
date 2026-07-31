@@ -1,10 +1,4 @@
-import {
-  FilesIcon,
-  MoonIcon,
-  SearchIcon,
-  SettingsIcon,
-  SunIcon,
-} from "lucide-react"
+import { FilesIcon, MoonIcon, SettingsIcon, SunIcon } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 
 import { useIsDark, useTheme } from "@/components/theme-provider"
@@ -16,17 +10,14 @@ import {
 import { cn } from "@/lib/utils"
 
 /** 사이드바에 표시할 컨테이너(뷰) 종류. */
-export type ActivityContainerId = "explorer" | "search"
+export type ActivityContainerId = "explorer"
 
 /** 레일 상단 컨테이너 목록. */
 const CONTAINERS: {
   id: ActivityContainerId
   label: string
   icon: LucideIcon
-}[] = [
-  { id: "explorer", label: "탐색기", icon: FilesIcon },
-  { id: "search", label: "메뉴 검색", icon: SearchIcon },
-]
+}[] = [{ id: "explorer", label: "탐색기", icon: FilesIcon }]
 
 interface ActivityBarProps {
   /** 현재 선택된 컨테이너. */

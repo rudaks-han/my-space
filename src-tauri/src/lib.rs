@@ -1,3 +1,4 @@
+mod auth;
 mod cc_history;
 mod chrome_cookies;
 mod claude_usage;
@@ -448,6 +449,7 @@ pub fn run() {
         .manage(intellij::SequenceState::default())
         .invoke_handler(tauri::generate_handler![
             greet,
+            auth::ldap_login,
             minimize_to_tray,
             show_main_window,
             quit_app,
@@ -495,6 +497,7 @@ pub fn run() {
             gcal::gcal_person_events,
             flex::flex_coworkers,
             flex::flex_primary,
+            flex::flex_me,
             flex::flex_events,
             flex::flex_status,
             flex::flex_save_account,

@@ -3,14 +3,11 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   MoreHorizontalIcon,
-  SearchIcon,
 } from "lucide-react"
 
-import type { ActivityContainerId } from "@/components/shell/activity-bar"
 import { useLocalStorage } from "@/lib/use-local-storage"
 import { useMenuOrder } from "@/lib/use-menu-order"
 import { cn } from "@/lib/utils"
-import { MENUS, type MenuItem } from "@/menus"
 
 /** 사이드바 폭(px) — 저장 키와 허용 범위. */
 const WIDTH_KEY = "myspace.sidebarWidth"
@@ -29,7 +26,6 @@ const SECTIONS_KEY = "myspace.sidebarSections"
  * `px-3`(0.75rem) + 셰브론(1rem) + `gap-1.5`(0.375rem) = 2.125rem 으로 맞춰서
  * 항목 아이콘이 섹션 제목 글자와 같은 x 에 오도록 들여쓴다 — 이 값이 없으면 아이콘이
  * 셰브론보다 왼쪽에 놓여 중첩이 아니라 형제 항목처럼 보인다.
- * 검색 결과는 그룹에 속하지 않으므로 들여쓰지 않는다.
  */
 function rowClass(active: boolean, nested = false) {
   return cn(
@@ -42,8 +38,6 @@ function rowClass(active: boolean, nested = false) {
 }
 
 interface SideBarProps {
-  /** 좌측 레일에서 고른 컨테이너(탐색기 / 메뉴 검색). 검색 컨테이너면 입력에 포커스가 간다. */
-  container: ActivityContainerId
   /** 활성 탭 id(트리에서 강조). */
   activeId: string
   /** 항목 클릭 → 탭 열기. */
@@ -54,21 +48,17 @@ interface SideBarProps {
  * Slack 채널 사이드바.
  *
  * 라벤더 크롬 위에 얹힌 흰 패널처럼 보이도록 좌상단만 라운드를 준다. 헤더는 17px bold
- * 워크스페이스명이고, 그 아래 검색 입력은 항상 표시된다 — 검색어가 있으면 그룹 트리 대신
- * 제목 부분 일치 결과를 보여 주므로 탐색기/검색 컨테이너가 같은 UI 를 공유한다
- * (검색 컨테이너로 들어오면 입력에 포커스만 더 준다).
+ * 워크스페이스명이고, 그 아래 그룹(섹션) 트리를 그린다.
  * 항목은 그룹 안에서 드래그로 재정렬 가능하고(순서는 `use-menu-order` 가 localStorage 에 저장),
  * 우측 끝 4px 는 폭 조절 핸들이다(폭도 localStorage 에 저장).
  */
-export function SideBar({ container, activeId, onSelectMenu }: SideBarProps) {
+export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
   const { groups, moveItem } = useMenuOrder()
   const [width, setWidth] = useLocalStorage<number>(WIDTH_KEY, DEFAULT_WIDTH)
   const [sections, setSections] = useLocalStorage<Record<string, boolean>>(
     SECTIONS_KEY,
     {}
   )
-  const [query, setQuery] = React.useState("")
-  const inputRef = React.useRef<HTMLInputElement>(null)
 
   // 드래그 중인 항목과 그룹, 드롭 대상 표시용 상태. groupId 로 같은 그룹 안에서만 재정렬.
   // dropAt.before = 대상 항목의 위쪽 절반(= 그 앞에 넣기), false = 아래쪽 절반(= 뒤에 넣기).
@@ -164,22 +154,9 @@ export function SideBar({ container, activeId, onSelectMenu }: SideBarProps) {
     }
   }, [resizing, setWidth])
 
-  // 검색 컨테이너로 전환되면(상단바 검색 알약 포함) 입력에 포커스를 준다.
-  React.useEffect(() => {
-    if (container !== "search") return
-    inputRef.current?.focus()
-    inputRef.current?.select()
-  }, [container])
-
   const toggleSection = (groupId: string) => {
     setSections((prev) => ({ ...prev, [groupId]: !prev[groupId] }))
   }
-
-  // 검색 결과: 제목 부분 일치(대소문자 무시). 검색어가 있으면 트리 대신 평평한 목록.
-  const keyword = query.trim().toLowerCase()
-  const matched: MenuItem[] = keyword
-    ? MENUS.filter((m) => m.title.toLowerCase().includes(keyword))
-    : MENUS
 
   return (
     <aside
@@ -199,47 +176,8 @@ export function SideBar({ container, activeId, onSelectMenu }: SideBarProps) {
         </button>
       </div>
 
-      {/* 항상 표시되는 검색 입력 — Slack 의 "Find a conversation…" 자리 */}
-      <div className="mx-3 mb-2 flex h-8 shrink-0 items-center gap-2 rounded-lg border border-input px-2.5 transition-colors focus-within:border-ring">
-        <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="메뉴 검색"
-          aria-label="메뉴 검색"
-          autoFocus={container === "search"}
-          className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
-        />
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-        {keyword ? (
-          <div className="flex flex-col">
-            {matched.length === 0 ? (
-              <p className="px-3 py-2 text-[15px] text-muted-foreground">
-                일치하는 메뉴가 없습니다
-              </p>
-            ) : (
-              matched.map((m) => {
-                const Icon = m.icon
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => onSelectMenu(m.id)}
-                    className={rowClass(activeId === m.id)}
-                  >
-                    <Icon className="size-4 shrink-0" />
-                    <span className="truncate">{m.title}</span>
-                    {m.badge}
-                  </button>
-                )
-              })
-            )}
-          </div>
-        ) : (
-          groups.map((group) => {
+      <div className="min-h-0 flex-1 overflow-y-auto pt-1 pb-2">
+        {groups.map((group) => {
             const isFolded = sections[group.id] === true
             return (
               <div key={group.id}>
@@ -305,8 +243,7 @@ export function SideBar({ container, activeId, onSelectMenu }: SideBarProps) {
                   })}
               </div>
             )
-          })
-        )}
+        })}
       </div>
 
       {/* 폭 조절 핸들 */}

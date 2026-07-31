@@ -7,6 +7,7 @@ import {
   DownloadIcon,
   FileTextIcon,
   HardDriveIcon,
+  LogOutIcon,
   MailIcon,
   MessageSquareIcon,
   PalmtreeIcon,
@@ -15,6 +16,7 @@ import {
   ServerIcon,
   SlidersHorizontalIcon,
   SquareKanbanIcon,
+  UserIcon,
   type LucideIcon,
 } from "lucide-react"
 
@@ -25,6 +27,7 @@ import { isTauri, trackedInvoke } from "@/lib/tauri"
 import { useIsDark } from "@/components/theme-provider"
 import { useThemePreset } from "@/components/theme-preset-provider"
 import { useSettings } from "./settings-context"
+import { useAuth } from "@/features/auth/auth-context"
 import {
   AUTOSTART_SUPPORTED,
   applyAutoStart,
@@ -36,6 +39,7 @@ import { GdriveConnectionPanel } from "@/features/gdrive/gdrive-connection"
 import { GmailSettingsPanel } from "@/features/gmail/gmail-settings"
 import { JiraConnectionPanel } from "@/features/jira/jira-connection"
 import { FlexSettingsPanel } from "@/features/flex/flex-settings"
+import { BUNDLED_MARKDOWN_CSS } from "@/features/cowork-spec/bundled-css"
 import { PetSpeciesRow } from "@/features/pet/pet-species-settings"
 import { MENU_GROUPS } from "@/menus"
 import type { McpStatus } from "@/features/intellij/use-services"
@@ -1013,8 +1017,9 @@ function IntellijSettingsPanel() {
  * Cowork spec 문서 설정 화면 — 스펙 문서를 찾을 cowork 홈 경로와, 마크다운 뷰어에
  * 입힐 스타일(css)을 관리한다.
  *
- * 스타일은 사용자의 Typora 테마 css 를 그대로 가져와 저장하고, 뷰어가 그 원문을
- * 섀도 DOM 에 주입해 Typora 와 같은 화면으로 문서를 보여 준다.
+ * 스타일은 앱에 번들된 기본 테마(`cowork-spec/bundled-css.ts`)로 시작한다 — Typora 가
+ * 깔려 있지 않아도 첫 실행부터 제대로 보인다. 여기서 하는 일은 그 위에 사용자의 Typora
+ * 테마 css 를 덮어쓰는 것뿐이고, 뷰어는 그 원문을 섀도 DOM 에 주입한다.
  */
 function CoworkSettingsPanel() {
   const { settings, setCowork } = useSettings()
@@ -1047,7 +1052,7 @@ function CoworkSettingsPanel() {
     <div className="flex flex-col">
       <PanelHeader
         title="Cowork Spec 문서"
-        description="cowork 홈 아래 .cowork/specs 의 스펙 문서(md)를 마크다운으로 봅니다. Typora 테마 css 를 가져오면 Typora 와 같은 가독성으로 표시됩니다."
+        description="cowork 홈 아래 .cowork/specs 의 스펙 문서(md)를 마크다운으로 봅니다. 기본 스타일이 앱에 내장되어 있어 그대로 Typora 와 같은 가독성으로 표시됩니다."
       />
 
       <div className="mt-4 flex flex-col gap-1.5 border-b border-border pb-4">
@@ -1072,8 +1077,9 @@ function CoworkSettingsPanel() {
           마크다운 스타일 (Typora)
         </div>
         <p className="text-[13px] text-muted-foreground">
-          Typora 테마 css 파일 경로입니다. “스타일 가져오기” 를 누르면 이 파일을
-          읽어 저장하고, 문서 뷰어에 그대로 적용합니다.
+          기본 스타일은 앱에 내장되어 있어 따로 설정하지 않아도 됩니다. 자기
+          Typora 테마로 바꾸고 싶을 때만 아래 경로의 css 를 “스타일 가져오기” 로
+          읽어 오면, 그 원문이 저장되어 내장 스타일 대신 적용됩니다.
         </p>
         <div className="mt-1 flex items-center gap-2">
           <Input
@@ -1095,18 +1101,13 @@ function CoworkSettingsPanel() {
           </Button>
         </div>
 
-        {/* 현재 저장된 스타일 상태 + 방금 가져온 결과 */}
+        {/* 지금 적용 중인 스타일(내장 / 가져온 것) + 방금 가져온 결과 */}
         <div className="mt-2 flex items-center gap-2 text-[13px]">
-          <span
-            className={cn(
-              "size-2 shrink-0 rounded-full",
-              hasCss ? "bg-ui-success" : "bg-ui-warning"
-            )}
-          />
+          <span className="size-2 shrink-0 rounded-full bg-ui-success" />
           <span className="text-muted-foreground">
             {hasCss
-              ? `스타일 적용됨 (${s.markdownCss.length.toLocaleString()}자)`
-              : "저장된 스타일 없음 — 기본 스타일로 표시됩니다."}
+              ? `가져온 스타일 적용 중 (${s.markdownCss.length.toLocaleString()}자)`
+              : `내장 기본 스타일 적용 중 (${BUNDLED_MARKDOWN_CSS.length.toLocaleString()}자)`}
           </span>
           {hasCss && (
             <Button
@@ -1118,7 +1119,7 @@ function CoworkSettingsPanel() {
                 setResult(null)
               }}
             >
-              스타일 지우기
+              내장 스타일로 되돌리기
             </Button>
           )}
         </div>
@@ -1138,6 +1139,85 @@ function CoworkSettingsPanel() {
   )
 }
 
+/**
+ * 계정 설정 화면 — 로그인한 사내 계정 정보와 로그아웃 버튼.
+ *
+ * 로그인 상태는 AuthProvider(localStorage)가 관리한다. 로그아웃하면 저장된 자동 로그인
+ * 정보가 지워지고 셸이 로그인 폼으로 돌아간다.
+ */
+function AccountSettingsPanel() {
+  const { user, logout } = useAuth()
+
+  const rows: { label: string; value: string }[] = user
+    ? [
+        { label: "이름", value: user.displayName },
+        { label: "아이디", value: user.username },
+        { label: "이메일", value: user.email || "—" },
+        { label: "DN", value: user.dn },
+      ]
+    : []
+
+  return (
+    <div className="flex flex-col">
+      <PanelHeader
+        title="계정"
+        description="현재 로그인한 사내 계정 정보입니다. 로그아웃하면 자동 로그인이 해제되어 다음 실행에서 다시 로그인해야 합니다."
+      />
+
+      {user ? (
+        <>
+          {/* 사용자 요약 카드 */}
+          <div className="mt-4 flex items-center gap-3 rounded-[10px] border border-border bg-card px-4 py-3 shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-ui-chrome text-ui-chrome-fg">
+              <UserIcon className="size-5" />
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-[15px] font-bold">
+                {user.displayName}
+              </div>
+              <div className="truncate text-[13px] text-muted-foreground">
+                {user.email || user.username}
+              </div>
+            </div>
+          </div>
+
+          {/* 상세 정보 */}
+          <div className="mt-4">
+            {rows.map((r) => (
+              <div
+                key={r.label}
+                className="flex gap-3 border-b border-border py-2.5"
+              >
+                <span className="w-20 shrink-0 text-[13px] text-muted-foreground">
+                  {r.label}
+                </span>
+                <span className="min-w-0 flex-1 font-mono text-[13px] break-all">
+                  {r.value}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5">
+            <Button
+              variant="outline"
+              className="rounded-full text-ui-error hover:text-ui-error"
+              onClick={() => logout()}
+            >
+              <LogOutIcon className="size-3.5" />
+              로그아웃
+            </Button>
+          </div>
+        </>
+      ) : (
+        <p className="mt-4 text-[13px] text-muted-foreground">
+          로그인되어 있지 않습니다.
+        </p>
+      )}
+    </div>
+  )
+}
+
 interface SettingsCategory {
   id: string
   label: string
@@ -1151,6 +1231,12 @@ interface SettingsCategory {
  * 왼쪽 카테고리 목록과 오른쪽 화면에 자동 반영된다.
  */
 const CATEGORIES: SettingsCategory[] = [
+  {
+    id: "account",
+    label: "계정",
+    icon: UserIcon,
+    panel: <AccountSettingsPanel />,
+  },
   {
     id: "general",
     label: "일반",

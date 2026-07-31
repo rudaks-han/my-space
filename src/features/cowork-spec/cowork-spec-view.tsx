@@ -437,8 +437,6 @@ export function CoworkSpecView() {
             <p className="max-w-xs text-[13px] text-muted-foreground">
               왼쪽 목록에서 스펙 문서를 고르면 상단에 탭으로 열립니다. 여러
               문서를 동시에 열어 두고 오갈 수 있습니다.
-              {!markdownCss.trim() &&
-                " 설정 → Cowork Spec 문서 에서 Typora 스타일을 가져오면 더 보기 좋습니다."}
             </p>
           </div>
         )}

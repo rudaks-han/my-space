@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# install.sh
+# bin/install.sh
 #
 # My Space 설치파일(.dmg)을 만든다. `bun run tauri build` 를 감싼 것으로,
 # PATH 준비 · 의존성 설치 · 산출물 위치 안내까지 한 번에 처리한다.
@@ -28,15 +28,18 @@
 #    빠지고 드래그 설치는 그대로다.
 #
 # 사용:
-#   ./install.sh              # 현재 아키텍처용 .dmg 생성
-#   ./install.sh --universal  # Intel + Apple Silicon 겸용(universal) .dmg 생성
-#   ./install.sh --open       # 생성 후 Finder 에서 산출물 폴더 열기
-#   ./install.sh --install    # 생성 후 빌드된 .app 을 /Applications 에 설치
-#   ./install.sh --help
+#   ./bin/install.sh              # 현재 아키텍처용 .dmg 생성
+#   ./bin/install.sh --universal  # Intel + Apple Silicon 겸용(universal) .dmg 생성
+#   ./bin/install.sh --open       # 생성 후 Finder 에서 산출물 폴더 열기
+#   ./bin/install.sh --install    # 생성 후 빌드된 .app 을 /Applications 에 설치
+#   ./bin/install.sh --help
 
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")"
+# 스크립트는 bin/ 아래에 있고, 아래 경로들은 모두 저장소 루트 기준이다.
+# --help 이 자기 파일을 다시 읽으므로, cd 로 상대경로가 깨지기 전에 절대경로로 붙잡아 둔다.
+SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
+cd "$(dirname "$SELF")/.."
 
 UNIVERSAL=false
 OPEN_AFTER=false
@@ -50,7 +53,7 @@ for arg in "$@"; do
     --help | -h)
       # 파일 맨 위 주석 블록(shebang 다음 줄부터 첫 비주석 줄 전까지)이 곧 도움말이다.
       # 줄 번호를 박아두면 헤더를 고칠 때마다 어긋나므로 주석인 동안만 읽는다.
-      tail -n +2 "${BASH_SOURCE[0]}" | sed -n '/^#/!q;s/^# \{0,1\}//p'
+      tail -n +2 "$SELF" | sed -n '/^#/!q;s/^# \{0,1\}//p'
       exit 0
       ;;
     *)
@@ -253,7 +256,7 @@ else
   echo "✗ .dmg 를 찾지 못했습니다: $BUNDLE_DIR/dmg" >&2
   if [ -n "$APP" ]; then
     echo "  (.app 은 만들어졌습니다: $APP — 이것만 /Applications 에 복사해도 씁니다)" >&2
-    echo "   ./install.sh --install 로 바로 설치할 수 있습니다." >&2
+    echo "   ./bin/install.sh --install 로 바로 설치할 수 있습니다." >&2
   fi
   exit 1
 fi

@@ -77,8 +77,10 @@ export interface CoworkSettings {
    */
   home: string
   /**
-   * 마크다운 뷰어에 주입할 스타일(css) 원문. Typora 테마 css 를 그대로 가져와
-   * 넣으면 Typora 와 같은 가독성으로 문서가 표시된다. 비어 있으면 기본 스타일만 쓴다.
+   * 마크다운 뷰어에 주입할 스타일(css) 원문 — **덮어쓰기용**이라 기본값은 빈 문자열이다.
+   * 비어 있으면 앱에 번들된 기본 테마(`cowork-spec/bundled-css.ts`)를 쓰므로, Typora 가
+   * 없는 사람도 그대로 잘 보인다. 자기 Typora 테마 css 를 가져오면 여기에 저장되고
+   * 번들 스타일 대신 적용된다.
    */
   markdownCss: string
   /** "스타일 가져오기" 가 읽어올 Typora 테마 css 경로(`~` 지원). */

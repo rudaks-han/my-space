@@ -16,6 +16,7 @@ import {
   flexFriendlyError,
   useFlexCoworkers,
   useFlexEvents,
+  useFlexMyDept,
   type FlexEvent,
 } from "./use-flex"
 
@@ -217,14 +218,19 @@ function buildSpans(events: FlexEvent[]): Map<string, VacationSpan> {
   return out
 }
 
-/** 일정 한 줄 — 사람 이름을 굵게, 부서·유형 배지 + 시간. */
+/**
+ * 일정 한 줄 — 사람 이름을 굵게, 부서·유형 배지 + 시간.
+ * `sameDept`(나와 같은 부서)면 이름과 부서를 멘션 칩 색으로 칠해 한눈에 구분한다.
+ */
 function EventRow({
   ev,
   dept,
+  sameDept,
   span,
 }: {
   ev: FlexEvent
   dept: string | null
+  sameDept: boolean
   span: VacationSpan | undefined
 }) {
   const meta = TYPE_META[ev.type]
@@ -245,9 +251,24 @@ function EventRow({
       >
         {typeLabel(ev.type)}
       </span>
-      <span className="shrink-0 font-bold">{ev.personName ?? "—"}</span>
+      <span
+        className={cn(
+          "shrink-0 font-bold",
+          sameDept &&
+            "rounded-full bg-ui-mention px-2 py-0.5 text-ui-mention-fg"
+        )}
+      >
+        {ev.personName ?? "—"}
+      </span>
       {dept && (
-        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold text-muted-foreground">
+        <span
+          className={cn(
+            "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold",
+            sameDept
+              ? "bg-ui-mention text-ui-mention-fg"
+              : "bg-muted text-muted-foreground"
+          )}
+        >
           {dept}
         </span>
       )}
@@ -261,16 +282,21 @@ function EventRow({
   )
 }
 
-/** 한 주치 일정을 날짜별로 묶어 보여준다. deptOf 로 각 일정에 부서를 붙인다. */
+/**
+ * 한 주치 일정을 날짜별로 묶어 보여준다. deptOf 로 각 일정에 부서를 붙이고,
+ * myDept 와 같으면 칩으로 강조한다.
+ */
 function WeekSection({
   title,
   events,
   deptOf,
+  myDept,
   spans,
 }: {
   title: string
   events: FlexEvent[]
   deptOf: (ev: FlexEvent) => string | null
+  myDept: string | null
   spans: Map<string, VacationSpan>
 }) {
   const days: { key: string; iso: string; items: FlexEvent[] }[] = []
@@ -303,14 +329,18 @@ function WeekSection({
                 </span>
                 <span className="h-px flex-1 bg-border" />
               </div>
-              {day.items.map((ev) => (
-                <EventRow
-                  key={ev.id}
-                  ev={ev}
-                  dept={deptOf(ev)}
-                  span={spans.get(ev.id)}
-                />
-              ))}
+              {day.items.map((ev) => {
+                const dept = deptOf(ev)
+                return (
+                  <EventRow
+                    key={ev.id}
+                    ev={ev}
+                    dept={dept}
+                    sameDept={myDept !== null && dept === myDept}
+                    span={spans.get(ev.id)}
+                  />
+                )
+              })}
             </div>
           ))}
         </div>
@@ -325,7 +355,9 @@ export function FlexView() {
   const {
     byId,
     coworkers,
+    me,
     raw: coworkersRaw,
+    primaryRaw,
     loading: cwLoading,
     error: cwError,
     refresh: refreshCoworkers,
@@ -349,6 +381,9 @@ export function FlexView() {
   const deptOf = (ev: FlexEvent) =>
     (ev.coworkerId ? byId[ev.coworkerId]?.department : null) ??
     (ev.personName ? (deptByName[ev.personName] ?? null) : null)
+
+  // 내 부서 — 설정에서 고른 값이 우선, 없으면 primary 가 준 부서. 둘 다 없으면 강조하지 않는다.
+  const { dept: myDept } = useFlexMyDept(me)
 
   // 연속 휴가 구간은 **표시 범위로 자르기 전의 전체 응답**으로 계산해야 한다 —
   // 지난주·다다음주까지 이어지는 휴가도 온전한 기간으로 보여주기 위해서.
@@ -385,6 +420,18 @@ export function FlexView() {
       <div className="flex flex-wrap items-center gap-2">
         <PalmtreeIcon className="size-4 shrink-0 text-muted-foreground" />
         <span className="text-[15px] font-bold">Flex 휴가 · 일정</span>
+        {/* 칩 색이 무슨 뜻인지 알 수 있게 내 부서명을 같은 칩으로 한 번 보여 준다.
+            부서를 모를 때는(설정 미지정 + primary 에 부서 없음) 어디서 정하는지 알려 준다. */}
+        {myDept ? (
+          <span className="rounded-full bg-ui-mention px-2 py-0.5 text-[11px] font-bold text-ui-mention-fg">
+            {myDept}
+          </span>
+        ) : (
+          <span className="text-[13px] text-muted-foreground">
+            내 부서를 아직 못 읽었습니다 — 구성원 새로고침을 누르거나 설정 →
+            Flex 휴가에서 직접 고르면 같은 부서를 칩으로 강조합니다
+          </span>
+        )}
         <span className="text-[13px] text-muted-foreground">
           구성원 {coworkers.length}명
           {updatedAt &&
@@ -466,12 +513,14 @@ export function FlexView() {
             title="이번주"
             events={thisWeek}
             deptOf={deptOf}
+            myDept={myDept}
             spans={spans}
           />
           <WeekSection
             title="다음주"
             events={nextWeek}
             deptOf={deptOf}
+            myDept={myDept}
             spans={spans}
           />
         </div>
@@ -493,6 +542,13 @@ export function FlexView() {
             <p className="mb-1 font-semibold">coworkers</p>
             <pre className="max-h-64 overflow-auto rounded-lg bg-muted p-2 font-mono text-[12px]">
               {JSON.stringify(coworkersRaw, null, 2)}
+            </pre>
+          </div>
+          {/* 내 부서 자동 감지가 되는지는 여기서 확인한다 — departmentName 이 있으면 자동, 없으면 설정에서 지정. */}
+          <div>
+            <p className="mb-1 font-semibold">primary (내 정보)</p>
+            <pre className="max-h-64 overflow-auto rounded-lg bg-muted p-2 font-mono text-[12px]">
+              {JSON.stringify(primaryRaw, null, 2)}
             </pre>
           </div>
         </div>
