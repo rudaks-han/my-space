@@ -12,12 +12,14 @@ mod herdr;
 mod intellij;
 mod jira;
 mod kafka;
+mod markdown;
 mod mcp;
 mod orca;
 mod pet;
 mod reminder;
 mod screenshare;
 mod slack;
+mod standalone;
 
 use serde::Serialize;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -55,6 +57,10 @@ fn launched_at_login() -> bool {
 const BROWSER_DATA_STORE_ID: [u8; 16] = [
     0x9a, 0x1c, 0x7e, 0x42, 0x3b, 0x88, 0x4d, 0x5f, 0xa1, 0x02, 0xe6, 0x7c, 0x33, 0x9b, 0xd4, 0x10,
 ];
+
+/// 메모리를 회수할 때 탭 웹뷰를 갈아치울 빈 페이지.
+/// `browser_open` 이 "비워 둔 웹뷰"를 알아보는 표식이기도 하다.
+const BLANK_URL: &str = "about:blank";
 
 /// 브라우저 탭이 이동할 때 프론트엔드(주소창·탭 제목)에 알리는 이벤트 페이로드.
 #[derive(Clone, Serialize)]
@@ -209,6 +215,19 @@ fn browser_open(
         webview
             .set_size(LogicalSize::new(width, height))
             .map_err(|e| e.to_string())?;
+        // 위치를 먼저 잡은 뒤 보이게 한다(반대로 하면 이전 위치가 한 프레임 비친다).
+        set_webview_hidden(&webview, false);
+        // 메모리 회수로 비워 둔(`browser_discard`) 탭이면 원래 주소를 다시 불러온다.
+        // 프론트엔드가 이를 기억할 필요가 없도록 여기서 판단한다.
+        let was_discarded = discarded_labels()
+            .lock()
+            .map(|mut set| set.remove(&label))
+            .unwrap_or(false);
+        if was_discarded {
+            log::info!("회수됐던 탭 되살리기 → {label} → {url}");
+            let parsed: tauri::Url = url.parse().map_err(|_| "invalid url".to_string())?;
+            webview.navigate(parsed).map_err(|e| e.to_string())?;
+        }
         return Ok(());
     }
 
@@ -260,6 +279,160 @@ fn enable_back_forward_gestures<R: tauri::Runtime>(webview: &tauri::webview::Web
     }
 }
 
+/// 탭 웹뷰의 `WebContent` 프로세스를 끝내 그 페이지가 쥐고 있던 메모리를 통째로 돌려받는다.
+/// 웹뷰 껍데기는 그대로 남아 다시 로드하면 되살아난다(크롬의 탭 메모리 해제와 같은 동작).
+///
+/// **프로세스를 끝내는 것 말고는 메모리를 되찾는 방법이 없다.** 실측으로 다음이 전부 실패했다
+/// (daum.net 기준 RSS 370~380MB): `about:blank` 로 이동해도 그대로, `location.replace` 로
+/// bfcache 를 남기지 않아도 그대로, WKWebView 를 완전히 해제(`removeFromSuperview` + nil)해도
+/// 프로세스가 살아남아 그대로였다. WebKit 이 `WebContent` 를 프로세스 캐시에 붙들고, 그
+/// 프로세스는 한 번 잡은 메모리를 OS 에 반환하지 않기 때문이다.
+///
+/// **`_killWebContentProcessAndResetState` 로는 안 된다 — 시도했고 실패했다.** macOS 26
+/// (Darwin 25) 실측에서 그 비공개 셀렉터는 `respondsToSelector:` 가 `true` 를 주고 전송도
+/// 되는데 프로세스가 멀쩡히 살아 있었다(RSS 무변화, wry 의 "web content process terminated"
+/// 로그도 없음). 런루프 타이머(`performSelector:…afterDelay:`)로 미루는 방법은 그보다 더
+/// 확실하게 안 되는데, 그 API 는 *호출한 스레드의* 런루프에 타이머를 얹고 이 함수는 런루프가
+/// 없는 Tauri 커맨드 스레드에서 불리기 때문이다 — 예약만 성공하고 셀렉터는 영영 실행되지
+/// 않는다. GCD 메인 큐로 넘기는 방법도 블록 자체가 실행되지 않았다.
+///
+/// 그래서 셀렉터를 쓰지 않고 **`_webProcessIdentifier` 로 렌더러 pid 를 읽어 직접 끝낸다.**
+/// 읽기 전용 getter 라 중첩 런루프도, 데드락도 없다. 렌더러 프로세스가 죽는 것은 WebKit 이
+/// 정상 처리하는 상황이라(Safari 의 "이 웹페이지를 다시 불러옵니다"와 같다) 앱은 영향받지
+/// 않고, 다시 열 때 `browser_open` 이 저장된 주소로 새 프로세스를 띄운다.
+///
+/// 이것도 비공개 API 이므로 `respondsToSelector:` 로 확인하고 쓴다 — 없으면 아무 일도 하지
+/// 않는다(메모리를 못 돌려받을 뿐 동작은 그대로).
+#[allow(unexpected_cfgs)]
+fn kill_web_content<R: tauri::Runtime>(webview: &tauri::webview::Webview<R>) {
+    #[cfg(target_os = "macos")]
+    {
+        let label = webview.label().to_string();
+        let res = webview.with_webview(move |platform_webview| {
+            use objc::{msg_send, sel, sel_impl};
+            let wk = platform_webview.inner() as *mut objc::runtime::Object;
+            unsafe {
+                let selector = sel!(_webProcessIdentifier);
+                let responds: bool = msg_send![wk, respondsToSelector: selector];
+                if !responds {
+                    log::warn!("_webProcessIdentifier 없음 — 메모리 회수를 건너뜁니다");
+                    return;
+                }
+                let pid: i32 = msg_send![wk, _webProcessIdentifier];
+                if pid <= 0 {
+                    // 이미 회수된 탭(프로세스 없음)에 다시 회수가 온 경우다.
+                    log::info!("WebContent 프로세스가 이미 없음 — 건너뜁니다");
+                    return;
+                }
+                // **SIGKILL 을 보내기 전에** 표식을 남긴다. 순서가 뒤집히면 종료 훅이 먼저
+                // 돌아 페이지를 자동 새로고침해 버려(`with_process_terminate_hook` 참고)
+                // 회수한 메모리가 그대로 되살아난다.
+                if let Ok(mut set) = killed_labels().lock() {
+                    set.insert(label);
+                }
+                // 이 클로저는 tao 이벤트 루프 콜백 안에서 돌기 때문에 여기서 기다리지 않는다.
+                std::thread::spawn(move || {
+                    if libc::kill(pid, libc::SIGKILL) == 0 {
+                        log::info!("WebContent 프로세스 종료 pid={pid}");
+                    } else {
+                        log::warn!("WebContent 프로세스 종료 실패 pid={pid}");
+                    }
+                });
+            }
+        });
+        if let Err(e) = res {
+            log::warn!("with_webview 실패 — 메모리 회수 못 함: {e}");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = webview;
+    }
+}
+
+/// 프로세스를 죽여 비워 둔 탭들(`browser_discard`). `browser_open` 이 이 목록을 보고
+/// 원래 주소를 다시 불러온다 — 프로세스를 죽이면 웹뷰의 URL 도 초기화되므로, 무엇을 되살려야
+/// 하는지 웹뷰에게 물어볼 수 없어 따로 기억한다.
+fn discarded_labels() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static DISCARDED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    DISCARDED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// 우리가 **일부러** `WebContent` 프로세스를 죽인 웹뷰들. 종료 훅
+/// (`with_process_terminate_hook`)이 이 표식을 보고 자동 새로고침을 건너뛴다 —
+/// 확인하면서 지우므로 한 번만 쓰인다(다음 번 진짜 크래시는 정상적으로 되살아난다).
+fn killed_labels() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static KILLED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    KILLED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// `WebContent` 프로세스가 끝났을 때 무엇을 할지 앱 차원에서 정한다.
+///
+/// **이 훅을 달지 않으면 회수가 통째로 무효가 된다.** tauri-runtime-wry 는 훅이 없을 때
+/// 기본 핸들러를 심는데, 그 핸들러가 하는 일이 `webview.reload()` 다. 그래서
+/// `kill_web_content` 로 프로세스를 끝내는 순간 tauri 가 같은 페이지를 새 프로세스로 다시
+/// 실었다 — 실측 로그가 `WebContent 프로세스 종료 pid=…` 바로 다음 줄에 wry 의
+/// `webview reloaded` 와 원래 URL 재로드를 남겼고, 메모리는 제자리로 돌아왔다.
+///
+/// 그래서 훅을 직접 단다. 일부러 죽인 웹뷰(`killed_labels`)는 되살리지 않고 — 다시 볼 때
+/// `browser_open` 이 저장된 주소로 띄운다 — 진짜 크래시만 예전 기본 동작대로 새로고침한다.
+///
+/// macOS/iOS 전용 API 라 다른 OS 에서는 빌더를 그대로 돌려준다.
+fn with_process_terminate_hook<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        builder.on_web_content_process_terminate(|webview| {
+            let label = webview.label().to_string();
+            let intended = killed_labels()
+                .lock()
+                .map(|mut set| set.remove(&label))
+                .unwrap_or(false);
+            if intended {
+                log::info!("메모리 회수로 끝낸 프로세스 — 자동 새로고침하지 않음 → {label}");
+                return;
+            }
+            log::warn!("WebContent 프로세스가 예기치 않게 종료됨 — 다시 불러옵니다 → {label}");
+            if let Err(e) = webview.reload() {
+                log::error!("웹뷰 재로드 실패 → {label}: {e}");
+            }
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    {
+        builder
+    }
+}
+
+/// 자식 웹뷰를 네이티브 레벨에서 숨기거나 다시 보이게 한다.
+///
+/// **좌표를 화면 밖으로 옮기는 것만으로는 메모리가 줄지 않는다.** WKWebView 는 여전히
+/// 창에 붙어 있는 뷰이므로 WebKit 은 그 페이지를 "보이는 상태"로 보고 렌더 백킹스토어·
+/// GPU 리소스를 들고 있고, 타이머·애니메이션도 전속력으로 돈다. `setHidden:YES` 를 주면
+/// WebKit 이 활동 상태를 백그라운드로 내려(`ActivityState::IsVisible` 해제) 백킹스토어를
+/// 버리고 타이머를 throttle 한다 — 탭당 수십 MB 와 유휴 CPU 가 여기서 빠진다.
+///
+/// Tauri 가 노출하지 않는 동작이라 `enable_back_forward_gestures` 와 같은 방식으로
+/// 네이티브 핸들(WKWebView 는 NSView 하위)에 직접 보낸다.
+#[allow(unexpected_cfgs)]
+fn set_webview_hidden<R: tauri::Runtime>(webview: &tauri::webview::Webview<R>, hidden: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = webview.with_webview(move |platform_webview| {
+            use objc::{msg_send, sel, sel_impl};
+            let wk = platform_webview.inner() as *mut objc::runtime::Object;
+            unsafe {
+                let _: () = msg_send![wk, setHidden: hidden];
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (webview, hidden);
+    }
+}
+
 /// 주소창 입력 등 명시적 이동. 존재하는 탭 웹뷰를 해당 URL로 이동시킨다.
 #[tauri::command]
 fn browser_navigate(app: tauri::AppHandle, label: String, url: String) -> Result<(), String> {
@@ -292,11 +465,16 @@ fn browser_set_bounds(
     Ok(())
 }
 
-/// 탭을 숨긴다. 임베드 웹뷰는 창 영역 밖으로 이동시켜 화면에서 가린다
-/// (다른 메뉴로 전환하거나 비활성 탭일 때 사용 — 웹뷰 자체는 살아 있어 상태가 유지된다).
+/// 탭을 숨긴다. 다른 메뉴로 전환하거나 비활성 탭일 때 쓴다 — 웹뷰 자체는 살아 있어
+/// 상태(스크롤·입력·로그인)가 유지된다.
+///
+/// 두 가지를 같이 한다: (1) `setHidden:YES` 로 WebKit 을 백그라운드로 내려 메모리·CPU 를
+/// 돌려받고, (2) 창 영역 밖으로 옮긴다. 둘째는 macOS 밖(또는 네이티브 핸들 접근이 실패할 때)의
+/// 안전망이다 — 숨김이 먹지 않아도 화면은 가려져야 한다.
 #[tauri::command]
 fn browser_hide(app: tauri::AppHandle, label: String) -> Result<(), String> {
     if let Some(webview) = app.get_webview(&label) {
+        set_webview_hidden(&webview, true);
         webview
             .set_position(LogicalPosition::new(0.0, 1_000_000.0))
             .map_err(|e| e.to_string())?;
@@ -304,11 +482,58 @@ fn browser_hide(app: tauri::AppHandle, label: String) -> Result<(), String> {
     Ok(())
 }
 
-/// 탭을 닫고 웹뷰를 파기한다.
+/// 오래 안 본 탭의 메모리를 되돌려받는다 — 숨긴 뒤 `WebContent` 프로세스를 죽인다.
+/// 껍데기는 남으므로 다시 볼 때 `browser_open` 이 원래 주소로 되살린다.
+///
+/// **웹뷰를 닫아서는 안 된다.** 닫아도 메모리는 돌아오지 않으면서(위 `kill_web_content`
+/// 참고) wry 0.55 가 네이티브 WKWebView 를 일부러 `retain()` 하기 때문에
+/// (`wkwebview/mod.rs` 의 `impl Drop for InnerWebView` — `removeFromSuperview()` 직후
+/// `self.webview.retain()`) 객체가 해제되지 않는다. Tauri 레지스트리에서만 사라지므로 그
+/// 탭을 다시 열면 **웹뷰가 하나 더 생기고 프로세스는 두 개가 된다** — 회수하려던 것이 도리어
+/// 누적된다.
+#[tauri::command]
+fn browser_discard(app: tauri::AppHandle, label: String) -> Result<(), String> {
+    if let Some(webview) = app.get_webview(&label) {
+        log::info!("메모리 회수 → {label}");
+        set_webview_hidden(&webview, true);
+        webview
+            .set_position(LogicalPosition::new(0.0, 1_000_000.0))
+            .map_err(|e| e.to_string())?;
+        kill_web_content(&webview);
+        if let Ok(mut set) = discarded_labels().lock() {
+            set.insert(label);
+        }
+    } else {
+        log::warn!("메모리 회수 대상 웹뷰가 없음 → {label}");
+    }
+    Ok(())
+}
+
+/// 탭을 닫는다(사용자가 탭의 X 를 눌렀을 때). 라벨은 탭 id 라 다시 쓰이지 않으므로
+/// 여기서는 정말로 닫는다.
+///
+/// 닫기 **전에** 프로세스를 죽이는 것이 중요하다: wry 가 WKWebView 를 놓아 주지 않아 껍데기는
+/// 어차피 남는데(위 `browser_discard` 참고), 그냥 닫으면 무거운 페이지를 실은 채로 남는다.
 #[tauri::command]
 fn browser_close(app: tauri::AppHandle, label: String) -> Result<(), String> {
+    if let Ok(mut set) = discarded_labels().lock() {
+        set.remove(&label);
+    }
     if let Some(webview) = app.get_webview(&label) {
-        webview.close().map_err(|e| e.to_string())?;
+        // 세 동작을 **서로 다른 런루프 틱으로 떼어 놓는다.** 한 틱에 몰면 프로세스를 죽이는
+        // 중첩 런루프와 웹뷰를 파기하는 이벤트 루프가 맞물려 앱이 멈춘다.
+        //  ① 지금: 화면에서 치운다 — 닫기는 비동기라 숨기지 않으면 닫힌 탭이 그 자리에 남는다.
+        set_webview_hidden(&webview, true);
+        let _ = webview.set_position(LogicalPosition::new(0.0, 1_000_000.0));
+        //  ② 다음 틱: 프로세스를 죽여 메모리를 돌려받는다.
+        kill_web_content(&webview);
+        //  ③ 넉넉히 뒤: 웹뷰를 닫아 Tauri 레지스트리를 정리한다. ②가 끝난 뒤여야 한다.
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            if let Some(w) = app.get_webview(&label) {
+                let _ = w.close();
+            }
+        });
     }
     Ok(())
 }
@@ -408,7 +633,7 @@ fn external_navigation_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    with_process_terminate_hook(tauri::Builder::default())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([
@@ -450,6 +675,9 @@ pub fn run() {
         .manage(intellij::RunTracking::default())
         .manage(intellij::WatchProject::default())
         .manage(intellij::SequenceState::default())
+        .manage(standalone::StandaloneState::default())
+        .manage(standalone::StandaloneTracking::default())
+        .manage(standalone::StandaloneSequence::default())
         .manage(screenshare::ShareState::default())
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -480,6 +708,7 @@ pub fn run() {
             browser_navigate,
             browser_set_bounds,
             browser_hide,
+            browser_discard,
             browser_close,
             browser_back,
             browser_forward,
@@ -563,10 +792,22 @@ pub fn run() {
             intellij::intellij_logs,
             intellij::intellij_clear_logs,
             intellij::intellij_enable_log_sync,
+            standalone::standalone_model_status,
+            standalone::standalone_list_services,
+            standalone::standalone_start_service,
+            standalone::standalone_stop_service,
+            standalone::standalone_restart_service,
+            standalone::standalone_running,
+            standalone::standalone_logs,
+            standalone::standalone_clear_logs,
+            standalone::standalone_start_sequence,
+            standalone::standalone_cancel_sequence,
+            standalone::standalone_sequence_status,
             cowork::cowork_list_specs,
             cowork::cowork_read_spec_file,
             cowork::cowork_search_specs,
             cowork::cowork_read_css,
+            markdown::markdown_read_file,
             es::es_request,
             kafka::kafka_connect,
             kafka::kafka_disconnect,
@@ -655,6 +896,12 @@ pub fn run() {
             // 브라우저 탭: 메인 프레임 로드 시작/완료 시 최종 URL 을 주소창·탭 제목에 반영.
             // on_page_load 는 메인 프레임(WKNavigationDelegate)만 트리거되므로 iframe 노이즈가 없다.
             if label.starts_with(BROWSER_PREFIX) {
+                // 빈 페이지는 알리지 않는다. 메모리 회수(`browser_discard`)로 프로세스를
+                // 죽이면 웹뷰가 `about:blank` 로 초기화되는데, 그걸 알리면 프론트엔드가 탭의
+                // URL 을 덮어써(=저장된 주소를 잃어) 다시 열었을 때 원래 페이지로 못 돌아간다.
+                if payload.url().as_str() == BLANK_URL {
+                    return;
+                }
                 // 임베드 웹뷰가 실제로 어디로 갔는지 남긴다 — 로그인 리다이렉트처럼
                 // "왜 이 화면이 뜨지" 하는 상황을 로그만 보고 판별할 수 있게.
                 log::info!("{label} → {}", payload.url());

@@ -112,7 +112,11 @@ function StickyCard({
           <span className="min-w-0 flex-1 truncate text-[15px] font-bold">
             삭제할까요?
           </span>
-          <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setConfirming(false)}
+          >
             취소
           </Button>
           <Button
@@ -304,7 +308,7 @@ function DeletedCard({ note, api }: { note: StickyNote; api: Api }) {
             <Checkbox checked={t.done} disabled className="mt-[3px] shrink-0" />
             <span
               className={cn(
-                "min-w-0 flex-1 py-0.5 text-[15px] text-muted-foreground wrap-anywhere",
+                "min-w-0 flex-1 py-0.5 text-[15px] wrap-anywhere text-muted-foreground",
                 t.done && "line-through"
               )}
             >
@@ -447,24 +451,22 @@ function CategoryRail({ api }: { api: Api }) {
               </button>
 
               {/* 삭제 — 마지막 한 개는 남겨 둔다. 확인 후 안의 포스트잇은 휴지통으로. */}
-              {categories.length > 1 &&
-                !confirming &&
-                (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmId(cat.id)}
-                    aria-label={`${cat.name} 카테고리 삭제`}
-                    title="카테고리 삭제"
-                    className={cn(
-                      "absolute top-1/2 right-2 flex size-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full opacity-0 transition-all group-hover/cat:opacity-100",
-                      active
-                        ? "text-ui-selection-fg hover:bg-white/20"
-                        : "text-muted-foreground hover:bg-ui-list-hover hover:text-foreground"
-                    )}
-                  >
-                    <Trash2Icon className="size-3.5" />
-                  </button>
-                )}
+              {categories.length > 1 && !confirming && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmId(cat.id)}
+                  aria-label={`${cat.name} 카테고리 삭제`}
+                  title="카테고리 삭제"
+                  className={cn(
+                    "absolute top-1/2 right-2 flex size-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full opacity-0 transition-all group-hover/cat:opacity-100",
+                    active
+                      ? "text-ui-selection-fg hover:bg-white/20"
+                      : "text-muted-foreground hover:bg-ui-list-hover hover:text-foreground"
+                  )}
+                >
+                  <Trash2Icon className="size-3.5" />
+                </button>
+              )}
 
               {/* 삭제 확인 — 행 위에 겹쳐 표시한다. */}
               {confirming && (
@@ -627,11 +629,10 @@ export function TodoView() {
           </Button>
         </div>
 
-        {activeNotes.length === 0 &&
-        !(showTrash && visibleTrash.length > 0) ? (
+        {activeNotes.length === 0 && !(showTrash && visibleTrash.length > 0) ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center text-[15px] text-muted-foreground">
-            <StickyNoteIcon className="size-6" />
-            이 카테고리에는 포스트잇이 없습니다. “포스트잇 추가”로 시작하세요.
+            <StickyNoteIcon className="size-6" />이 카테고리에는 포스트잇이
+            없습니다. “포스트잇 추가”로 시작하세요.
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

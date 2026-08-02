@@ -4,10 +4,12 @@ import {
   BellIcon,
   LayoutDashboardIcon,
   BracesIcon,
+  BookOpenTextIcon,
   FileTextIcon,
   PalmtreeIcon,
   HistoryIcon,
   ScreenShareIcon,
+  ServerIcon,
 } from "lucide-react"
 
 import {
@@ -39,10 +41,14 @@ import { ReminderView } from "@/features/reminder/reminder-view"
 import { ScreenShareView } from "@/features/screen-share/screen-share-view"
 import { ClaudeBridgeView } from "@/features/claude-bridge/claude-bridge-view"
 import { ClaudeMenuBadge } from "@/features/claude-bridge/claude-menu-badge"
-import { IntellijServicesView } from "@/features/intellij/intellij-services-view"
+import {
+  IntellijServicesView,
+  StandaloneServicesView,
+} from "@/features/intellij/intellij-services-view"
 import { CoworkAiView } from "@/features/cowork-ai/cowork-ai-view"
 import { CcHistoryView } from "@/features/cc-history/cc-history-view"
 import { JsonFormatterView } from "@/features/json-formatter/json-formatter-view"
+import { MarkdownViewerView } from "@/features/markdown-viewer/markdown-viewer-view"
 import { CoworkSpecView } from "@/features/cowork-spec/cowork-spec-view"
 import { EsViewerView } from "@/features/es-viewer/es-viewer-view"
 import { KafkaViewerView } from "@/features/kafka-viewer/kafka-viewer-view"
@@ -196,6 +202,17 @@ export const MENU_GROUPS: MenuGroup[] = [
         },
       },
       {
+        id: "cowork-services",
+        title: "Cowork 서비스",
+        icon: ServerIcon,
+        element: <StandaloneServicesView />,
+        unsupported: {
+          on: ["windows", "linux"],
+          reason:
+            "IntelliJ 가 임포트해 둔 프로젝트 모델을 읽어 클래스패스를 만드는데, 그 위치(~/Library/Caches/JetBrains)가 macOS 전용입니다. 서비스 포트를 찾는 lsof 와 중지에 쓰는 프로세스 시그널(SIGINT)도 Unix 전용입니다.",
+        },
+      },
+      {
         id: "cowork-spec",
         title: "Cowork Spec 문서",
         icon: FileTextIcon,
@@ -218,6 +235,12 @@ export const MENU_GROUPS: MenuGroup[] = [
         title: "Kafka 뷰어",
         icon: KafkaBrandIcon,
         element: <KafkaViewerView />,
+      },
+      {
+        id: "markdown-viewer",
+        title: "마크다운 뷰어",
+        icon: BookOpenTextIcon,
+        element: <MarkdownViewerView />,
       },
       {
         id: "json-formatter",

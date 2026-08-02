@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event"
 
 import { isTauri, trackedInvoke } from "@/lib/tauri"
 import { useLocalStorage } from "@/lib/use-local-storage"
+import { useSettings } from "@/features/settings/settings-context"
 
 /** IntelliJ 실행 설정 하나. Rust 의 Service 와 대응. */
 export interface Service {
@@ -82,9 +83,33 @@ interface StatusEvent {
   failed: string | null
 }
 
-const PROJECT_KEY = "myspace.intellij.project"
-/** 최근 실행 목록(프로젝트 경로 → 이름들, 최근 것이 앞). */
-const RECENT_KEY = "myspace.intellij.recentServices"
+/**
+ * 어느 백엔드로 서비스를 다룰지.
+ *
+ * - `ide`        — IntelliJ 내장 MCP 서버에 실행을 시킨다(IDE 가 켜져 있어야 한다).
+ * - `standalone` — IntelliJ 없이 우리가 직접 `java` 로 띄운다(`src-tauri/src/standalone.rs`).
+ *
+ * 두 백엔드는 **같은 실행 설정 XML** 을 읽으므로 프로필·VM 옵션·클래스패스 수정이 같고,
+ * 화면도 같은 컴포넌트를 쓴다. 커맨드 이름과 이벤트 이름, 그리고 저장 키만 다르다.
+ */
+export type ServicesBackend = "ide" | "standalone"
+
+/** 백엔드별로 다른 것들 — 커맨드 접두사, 이벤트 접두사, localStorage 키. */
+const BACKENDS = {
+  ide: {
+    prefix: "intellij",
+    event: "intellij",
+    projectKey: "myspace.intellij.project",
+    recentKey: "myspace.intellij.recentServices",
+  },
+  standalone: {
+    prefix: "standalone",
+    event: "standalone",
+    projectKey: "myspace.standalone.project",
+    recentKey: "myspace.standalone.recentServices",
+  },
+} as const satisfies Record<ServicesBackend, unknown>
+
 /** 최근 실행 스트립에 남겨 두는 최대 개수. */
 const MAX_RECENT = 10
 /** 서비스별 로그 링버퍼 최대 줄 수(메모리 보호). */
@@ -93,17 +118,42 @@ const MAX_LOG_LINES = 2000
 const inTauri = isTauri()
 
 /**
- * IntelliJ 실행 설정을 다루는 훅.
+ * 실행 설정을 다루는 훅.
  *
- * 목록·실행 모두 **IntelliJ 내장 MCP 서버**를 통해 IDE 가 직접 처리한다
- * (Maven/Gradle 로 재현하지 않는다). 상태와 로그는 Rust 가 방출하는
- * `intellij:status`·`intellij:log` 이벤트로 실시간 갱신한다.
+ * `backend` 가 `ide` 면 IntelliJ 내장 MCP 서버를 통해 IDE 가 직접 실행하고,
+ * `standalone` 이면 IntelliJ 없이 Rust 가 `java` 를 띄운다. 어느 쪽이든 상태와 로그는
+ * Rust 가 방출하는 `<backend>:status`·`<backend>:log` 이벤트로 실시간 갱신한다.
  */
-export function useServices() {
-  const [projectPath, setProjectPath] = useLocalStorage<string | null>(
-    PROJECT_KEY,
+export function useServices(backend: ServicesBackend = "ide") {
+  const b = BACKENDS[backend]
+  const isIde = backend === "ide"
+
+  // 프로젝트를 정하는 방식이 백엔드마다 다르다.
+  //  - ide        — IntelliJ 최근 프로젝트 중에서 고른다(드롭다운). 선택은 localStorage.
+  //  - standalone — **설정값 하나**를 쓴다(`settings.coworkService.projectPath`). IDE 를
+  //    켜지 않고 쓰는 기능이라 "최근 프로젝트" 라는 개념에 의존하면 안 되고, 다른 사람이
+  //    앱을 설치했을 때 손으로 지정할 자리가 필요하다.
+  const { settings, setCoworkService } = useSettings()
+  const [storedProject, setStoredProject] = useLocalStorage<string | null>(
+    b.projectKey,
     null
   )
+  const configured = settings.coworkService.projectPath.trim()
+  const projectPath = isIde ? storedProject : configured || null
+  const setProjectPath = useMemo<
+    (v: string | null | ((cur: string | null) => string | null)) => void
+  >(
+    () =>
+      isIde
+        ? setStoredProject
+        : (v) =>
+            setCoworkService({
+              projectPath:
+                (typeof v === "function" ? v(configured || null) : v) ?? "",
+            }),
+    [isIde, setStoredProject, setCoworkService, configured]
+  )
+
   const [projects, setProjects] = useState<RecentProject[]>([])
   const [services, setServices] = useState<Service[]>([])
   const [running, setRunning] = useState<Set<string>>(new Set())
@@ -117,22 +167,29 @@ export function useServices() {
   const [loading, setLoading] = useState(false)
   const [sequence, setSequence] = useState<SequenceProgress | null>(null)
 
-  // 최근 프로젝트 로드 + 저장된 선택이 없으면 기본값(cowork 우선) 지정.
+  // 최근 프로젝트 로드 + 아직 정해진 게 없으면 기본값 지정.
+  //
+  // standalone 도 이 목록을 쓰지만 **비어 있을 때 한 번 채우는 용도로만** 쓴다.
+  // 설정값이 사람마다 다른 절대경로여서 기본값을 박아 둘 수 없는데, 이 프로젝트를
+  // IntelliJ 로 열어 본 사람이라면(= 이 기능이 동작하는 전제) 여기서 바로 찾아진다.
+  // 못 찾으면 비워 두고 화면이 "경로를 지정하세요" 라고 말한다 — 남의 경로로 추측하지 않는다.
   useEffect(() => {
     if (!inTauri) return
     trackedInvoke<RecentProject[]>("intellij_recent_projects")
       .then((ps) => {
         setProjects(ps)
-        setProjectPath(
-          (cur) =>
-            cur ??
-            ps.find((p) => p.name === "cowork")?.path ??
-            ps[0]?.path ??
-            null
-        )
+        const cowork = ps.filter((p) => p.name === "cowork")
+        setProjectPath((cur) => {
+          if (isIde) return cur ?? cowork[0]?.path ?? ps[0]?.path ?? null
+          // 이름이 `cowork` 인 프로젝트가 **정확히 하나일 때만** 자동으로 채운다.
+          // 이 머신에는 실제로 두 개(`spectrakr/cowork`, `_ENOMIX_GIT/cowork`)가 있고,
+          // 그중 하나를 골라 주면 사용자가 지정하지도 않은 소스로 서비스를 띄우게 된다.
+          // 여러 개면 비워 두고 화면이 "경로를 지정하세요" 라고 말하는 편이 안전하다.
+          return cur ?? (cowork.length === 1 ? cowork[0].path : null)
+        })
       })
       .catch((e) => setError(String(e)))
-  }, [setProjectPath])
+  }, [setProjectPath, isIde])
 
   const refresh = useCallback(async () => {
     if (!inTauri || !projectPath) {
@@ -142,19 +199,27 @@ export function useServices() {
     setLoading(true)
     setError(null)
     try {
-      const status = await trackedInvoke<McpStatus>("intellij_mcp_status")
+      // ide: MCP 연결 상태 · standalone: 프로젝트 모델을 읽을 수 있는지. 모양이 같다.
+      const status = isIde
+        ? await trackedInvoke<McpStatus>("intellij_mcp_status")
+        : await trackedInvoke<McpStatus>("standalone_model_status", {
+            project: projectPath,
+          })
       setMcp(status)
+      // 쓸 수 없는 상태면 목록도 비운다. standalone 은 경로가 틀렸을 때 목록 조회도
+      // 같은 이유로 실패하는데, 그러면 경고 패널과 에러 패널에 같은 문장이 두 번 뜬다.
       if (!status.connected) {
         setServices([])
         return
       }
       const [list, run] = await Promise.all([
-        trackedInvoke<Service[]>("intellij_list_services", {
+        trackedInvoke<Service[]>(`${b.prefix}_list_services`, {
           project: projectPath,
         }),
-        // IntelliJ 에서 직접 띄운 서비스도 여기서 찾아 실행 중으로 잡아 준다.
+        // 밖에서 띄운 서비스도 여기서 찾아 실행 중으로 잡아 준다 —
+        // ide 는 IntelliJ 로 띄운 것, standalone 은 **앱을 재기동하기 전에** 우리가 띄운 것.
         trackedInvoke<{ name: string; pid: number; port: number | null }[]>(
-          "intellij_running",
+          `${b.prefix}_running`,
           { project: projectPath }
         ),
       ])
@@ -181,7 +246,7 @@ export function useServices() {
     } finally {
       setLoading(false)
     }
-  }, [projectPath])
+  }, [projectPath, isIde, b.prefix])
 
   // 프로젝트가 바뀌면 목록 재조회.
   useEffect(() => {
@@ -193,27 +258,28 @@ export function useServices() {
   // IntelliJ 에서 직접 시작한 실행을 Rust 가 계속 따라잡도록 감시 대상을 알려준다.
   // 감시 스레드는 이 화면을 떠나도 계속 돌기 때문에 언마운트 시 끄지 않는다 —
   // 다시 들어왔을 때 이미 상태가 맞아 있고, 상태 이벤트는 어차피 구독 중일 때만 쓰인다.
+  // standalone 은 프로세스를 우리가 낳으므로 "밖에서 띄운 것" 을 흡수할 일이 없다.
   useEffect(() => {
-    if (!inTauri || !projectPath) return
+    if (!inTauri || !projectPath || !isIde) return
     void trackedInvoke("intellij_watch_project", {
       project: projectPath,
     }).catch(() => {
       // 감시 등록 실패는 치명적이지 않다(수동 새로고침으로 여전히 따라잡을 수 있다).
     })
-  }, [projectPath])
+  }, [projectPath, isIde])
 
   // 순차 실행은 화면과 무관하게 Rust 에서 계속 진행된다. 화면에 들어왔을 때 아직
   // 돌고 있으면 진행 표시를 복원한다(이벤트는 단계가 바뀔 때만 오므로 몇 분을 기다릴 수 있다).
   useEffect(() => {
     if (!inTauri) return
-    void trackedInvoke<SequenceStatus>("intellij_sequence_status")
+    void trackedInvoke<SequenceStatus>(`${b.prefix}_sequence_status`)
       .then((s) => {
         if (s.running && s.last) setSequence(s.last)
       })
       .catch(() => {
         // 복원 실패는 표시만 비는 것이라 무해하다(진행 자체는 계속된다).
       })
-  }, [])
+  }, [b.prefix])
 
   // 상태/로그 이벤트 구독.
   useEffect(() => {
@@ -221,7 +287,7 @@ export function useServices() {
     const unlisteners: Array<() => void> = []
     let disposed = false
 
-    listen<StatusEvent>("intellij:status", (e) => {
+    listen<StatusEvent>(`${b.event}:status`, (e) => {
       const {
         name,
         running: isRunning,
@@ -264,11 +330,11 @@ export function useServices() {
       })
     }).then((un) => (disposed ? un() : unlisteners.push(un)))
 
-    listen<SequenceProgress>("intellij:sequence", (e) => {
+    listen<SequenceProgress>(`${b.event}:sequence`, (e) => {
       setSequence(e.payload)
     }).then((un) => (disposed ? un() : unlisteners.push(un)))
 
-    listen<LogEvent>("intellij:log", (e) => {
+    listen<LogEvent>(`${b.event}:log`, (e) => {
       const { name, line } = e.payload
       setLogs((prev) => {
         const cur = prev[name] ?? []
@@ -285,7 +351,7 @@ export function useServices() {
       disposed = true
       unlisteners.forEach((un) => un())
     }
-  }, [])
+  }, [b.event])
 
   /** 진행 중인 시작/재시작/종료 요청. 버튼 중복 클릭을 막는다. */
   const [pending, setPending] = useState<Set<string>>(new Set())
@@ -317,7 +383,7 @@ export function useServices() {
    * 채워져 버리기 때문이다 — "여기서 눌러 띄운 것" 만 담아야 순서가 뜻을 갖는다.
    */
   const [recentMap, setRecentMap] = useLocalStorage<Record<string, string[]>>(
-    RECENT_KEY,
+    b.recentKey,
     {}
   )
 
@@ -376,16 +442,25 @@ export function useServices() {
       pushRecent([name])
       // HTTP Request 설정은 장기 서비스가 아니라 한 번 실행 → 응답 표시라, Rust 가
       // 종류에 따라 실행 방식을 달리한다(waitForExit). 종류를 함께 넘긴다.
+      // HTTP Request 는 ide 백엔드에만 있는 개념이다(standalone 은 java 만 띄운다).
       const kind = services.find((s) => s.name === name)?.type ?? null
       return withPending(name, () =>
-        trackedInvoke("intellij_start_service", {
+        trackedInvoke(`${b.prefix}_start_service`, {
           project: projectPath,
           name,
-          kind,
+          ...(isIde ? { kind } : {}),
         })
       )
     },
-    [projectPath, withPending, clearFailed, pushRecent, services]
+    [
+      projectPath,
+      withPending,
+      clearFailed,
+      pushRecent,
+      services,
+      b.prefix,
+      isIde,
+    ]
   )
 
   /**
@@ -400,20 +475,34 @@ export function useServices() {
       pushRecent([name])
       const kind = services.find((s) => s.name === name)?.type ?? null
       return withPending(name, () =>
-        trackedInvoke("intellij_restart_service", {
+        trackedInvoke(`${b.prefix}_restart_service`, {
           project: projectPath,
           name,
-          kind,
+          ...(isIde ? { kind } : {}),
         })
       )
     },
-    [projectPath, withPending, clearFailed, pushRecent, services]
+    [
+      projectPath,
+      withPending,
+      clearFailed,
+      pushRecent,
+      services,
+      b.prefix,
+      isIde,
+    ]
   )
 
   const stop = useCallback(
     (name: string) =>
-      withPending(name, () => trackedInvoke("intellij_stop_service", { name })),
-    [withPending]
+      withPending(name, () =>
+        // standalone 은 Multirun 하위를 찾으려고 프로젝트 경로가 필요하다.
+        trackedInvoke(`${b.prefix}_stop_service`, {
+          name,
+          ...(isIde ? {} : { project: projectPath }),
+        })
+      ),
+    [withPending, b.prefix, isIde, projectPath]
   )
 
   /**
@@ -454,17 +543,22 @@ export function useServices() {
    * 프론트의 로그 상태는 이 화면을 떠나면(메뉴 전환 → 언마운트) 사라진다. Rust 는
    * 계속 tail 하며 버퍼에 쌓아 두므로, 화면에 들어오거나 서비스를 고를 때 여기서 받아온다.
    */
-  const loadLogs = useCallback(async (name: string) => {
-    if (!inTauri) return
-    try {
-      const lines = await trackedInvoke<string[]>("intellij_logs", { name })
-      // 버퍼가 지금까지의 전부이므로 그대로 교체한다. 이 호출과 겹쳐 도착한 줄은
-      // 이벤트로 뒤에 덧붙는다(경계에서 한 줄이 겹칠 수 있으나 무해하다).
-      setLogs((prev) => ({ ...prev, [name]: lines }))
-    } catch {
-      // 로그 복원 실패는 치명적이지 않다(라이브 이벤트는 계속 들어온다).
-    }
-  }, [])
+  const loadLogs = useCallback(
+    async (name: string) => {
+      if (!inTauri) return
+      try {
+        const lines = await trackedInvoke<string[]>(`${b.prefix}_logs`, {
+          name,
+        })
+        // 버퍼가 지금까지의 전부이므로 그대로 교체한다. 이 호출과 겹쳐 도착한 줄은
+        // 이벤트로 뒤에 덧붙는다(경계에서 한 줄이 겹칠 수 있으나 무해하다).
+        setLogs((prev) => ({ ...prev, [name]: lines }))
+      } catch {
+        // 로그 복원 실패는 치명적이지 않다(라이브 이벤트는 계속 들어온다).
+      }
+    },
+    [b.prefix]
+  )
 
   /**
    * 실행 설정의 "Save console output to file"(Logs 탭)을 켠다.
@@ -509,7 +603,7 @@ export function useServices() {
         message: null,
       })
       try {
-        await trackedInvoke("intellij_start_sequence", {
+        await trackedInvoke(`${b.prefix}_start_sequence`, {
           project: projectPath,
           stages,
         })
@@ -518,22 +612,25 @@ export function useServices() {
         setSequence(null)
       }
     },
-    [projectPath, pushRecent]
+    [projectPath, pushRecent, b.prefix]
   )
 
   /** 다음 단계로 넘어가기 전에 멈춘다. 이미 뜬 서비스는 그대로 둔다. */
   const cancelSequence = useCallback(() => {
-    void trackedInvoke("intellij_cancel_sequence").catch(() => {})
-  }, [])
+    void trackedInvoke(`${b.prefix}_cancel_sequence`).catch(() => {})
+  }, [b.prefix])
 
   /** 완료·실패 표시를 닫는다. */
   const dismissSequence = useCallback(() => setSequence(null), [])
 
-  const clearLogs = useCallback((name: string) => {
-    setLogs((prev) => ({ ...prev, [name]: [] }))
-    // Rust 버퍼도 비운다. 남겨 두면 화면을 다시 열 때 지운 로그가 되살아난다.
-    void trackedInvoke("intellij_clear_logs", { name }).catch(() => {})
-  }, [])
+  const clearLogs = useCallback(
+    (name: string) => {
+      setLogs((prev) => ({ ...prev, [name]: [] }))
+      // Rust 버퍼도 비운다. 남겨 두면 화면을 다시 열 때 지운 로그가 되살아난다.
+      void trackedInvoke(`${b.prefix}_clear_logs`, { name }).catch(() => {})
+    },
+    [b.prefix]
+  )
 
   return {
     projects,

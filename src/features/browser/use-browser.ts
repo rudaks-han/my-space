@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { useCallback, useMemo } from "react"
 
 import { useLocalStorage } from "@/lib/use-local-storage"
 import { browserLabel } from "@/lib/window-role"
@@ -13,6 +13,12 @@ export interface BrowserTab {
 
 /** 새 탭 기본 페이지 */
 export const HOME_URL = "https://www.google.com"
+
+/**
+ * 메모리 회수용 빈 페이지(Rust 의 `BLANK_URL`). 탭의 주소로 저장돼서는 안 되는 값이다 —
+ * 저장되면 그 탭이 원래 어디였는지 잃는다.
+ */
+const BLANK_URL = "about:blank"
 
 /**
  * 탭 id → Rust 쪽 웹뷰 라벨. lib.rs 의 BROWSER_PREFIX 와 일치해야 하고,
@@ -62,9 +68,24 @@ export function hostLabel(url: string): string {
 }
 
 export function useBrowser() {
-  const [tabs, setTabs] = useLocalStorage<BrowserTab[]>(
+  const [stored, setTabs] = useLocalStorage<BrowserTab[]>(
     "myspace.browser.tabs",
     []
+  )
+
+  // 주소가 `about:blank` 로 저장된 탭은 홈으로 되돌린다. 메모리 회수가 비워 둔 페이지를
+  // 탭 주소로 받아 적던 시절(이제 Rust 의 on_page_load 가 그 알림을 걸러낸다)에 생긴
+  // 저장값을 복구하기 위한 것으로, 그대로 두면 그 탭은 영영 빈 페이지만 연다.
+  const tabs = useMemo(
+    () =>
+      stored.some((t) => t.url === BLANK_URL)
+        ? stored.map((t) =>
+            t.url === BLANK_URL
+              ? { ...t, url: HOME_URL, title: hostLabel(HOME_URL) }
+              : t
+          )
+        : stored,
+    [stored]
   )
   const [activeId, setActiveId] = useLocalStorage<string | null>(
     "myspace.browser.activeTab",

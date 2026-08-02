@@ -36,7 +36,8 @@ pub struct SpecDir {
 }
 
 /// `~` 를 HOME 으로 펼친다.
-fn expand_home(path: &str) -> PathBuf {
+/// (`standalone.rs` 도 같은 `settings.cowork.home` 값을 받으므로 함께 쓴다.)
+pub(crate) fn expand_home(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         if let Ok(home) = std::env::var("HOME") {
             return PathBuf::from(home).join(rest);

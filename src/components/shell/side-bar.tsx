@@ -192,93 +192,89 @@ export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
 
       <div className="min-h-0 flex-1 overflow-y-auto pt-1 pb-2">
         {groups.map((group) => {
-            const isFolded = sections[group.id] === true
-            return (
-              <div key={group.id}>
-                <button
-                  type="button"
-                  onClick={() => toggleSection(group.id)}
-                  className="mx-1.5 flex h-7 w-[calc(100%-0.75rem)] cursor-pointer items-center gap-1.5 rounded-lg px-3 text-left text-[14px] font-semibold text-ui-section-header-fg transition-colors hover:bg-ui-list-hover"
-                >
-                  {isFolded ? (
-                    <ChevronRightIcon className="size-4 shrink-0" />
-                  ) : (
-                    <ChevronDownIcon className="size-4 shrink-0" />
-                  )}
-                  {/* label 이 null 인 그룹(general)도 섹션 구조를 맞추려고 "일반"으로 표시한다. */}
-                  <span className="truncate">{group.label ?? "일반"}</span>
-                </button>
+          const isFolded = sections[group.id] === true
+          return (
+            <div key={group.id}>
+              <button
+                type="button"
+                onClick={() => toggleSection(group.id)}
+                className="mx-1.5 flex h-7 w-[calc(100%-0.75rem)] cursor-pointer items-center gap-1.5 rounded-lg px-3 text-left text-[14px] font-semibold text-ui-section-header-fg transition-colors hover:bg-ui-list-hover"
+              >
+                {isFolded ? (
+                  <ChevronRightIcon className="size-4 shrink-0" />
+                ) : (
+                  <ChevronDownIcon className="size-4 shrink-0" />
+                )}
+                {/* label 이 null 인 그룹(general)도 섹션 구조를 맞추려고 "일반"으로 표시한다. */}
+                <span className="truncate">{group.label ?? "일반"}</span>
+              </button>
 
-                {!isFolded &&
-                  group.items.map((m) => {
-                    const Icon = m.icon
-                    const isDragging = dragId === m.id
-                    // 이 OS 에서 못 쓰는 메뉴: 아이콘·이름만 흐리게 하고 "사용불가" 칩을
-                    // 붙인다. 행 전체에 opacity 를 주면 활성 상태(와인색 알약)일 때
-                    // 칩까지 같이 옅어져 읽기 어려워진다.
-                    const blocked = unsupportedReason(m)
-                    // 같은 그룹의 다른 항목 위에 있을 때만 삽입 위치를 그린다.
-                    const drop =
-                      dragGroup === group.id &&
-                      dropAt?.id === m.id &&
-                      !isDragging
-                        ? dropAt
-                        : null
-                    return (
-                      // WKWebView(Tauri)에서는 HTML5 draggable 이벤트가 잘 발생하지
-                      // 않아 pointer 이벤트로 직접 재정렬한다(폭 조절 핸들과 동일한 방식).
-                      // data-menu-* 로 포인터 아래의 대상 행을 elementFromPoint 로 찾는다.
-                      <div
-                        key={m.id}
-                        role="button"
-                        tabIndex={0}
-                        data-menu-item={m.id}
-                        data-menu-group={group.id}
-                        onPointerDown={(e) => startItemDrag(e, m.id, group.id)}
-                        onKeyDown={(e) => {
-                          if (e.key !== "Enter" && e.key !== " ") return
-                          e.preventDefault()
-                          onSelectMenu(m.id)
-                        }}
+              {!isFolded &&
+                group.items.map((m) => {
+                  const Icon = m.icon
+                  const isDragging = dragId === m.id
+                  // 이 OS 에서 못 쓰는 메뉴: 아이콘·이름만 흐리게 하고 "사용불가" 칩을
+                  // 붙인다. 행 전체에 opacity 를 주면 활성 상태(와인색 알약)일 때
+                  // 칩까지 같이 옅어져 읽기 어려워진다.
+                  const blocked = unsupportedReason(m)
+                  // 같은 그룹의 다른 항목 위에 있을 때만 삽입 위치를 그린다.
+                  const drop =
+                    dragGroup === group.id && dropAt?.id === m.id && !isDragging
+                      ? dropAt
+                      : null
+                  return (
+                    // WKWebView(Tauri)에서는 HTML5 draggable 이벤트가 잘 발생하지
+                    // 않아 pointer 이벤트로 직접 재정렬한다(폭 조절 핸들과 동일한 방식).
+                    // data-menu-* 로 포인터 아래의 대상 행을 elementFromPoint 로 찾는다.
+                    <div
+                      key={m.id}
+                      role="button"
+                      tabIndex={0}
+                      data-menu-item={m.id}
+                      data-menu-group={group.id}
+                      onPointerDown={(e) => startItemDrag(e, m.id, group.id)}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" && e.key !== " ") return
+                        e.preventDefault()
+                        onSelectMenu(m.id)
+                      }}
+                      className={cn(
+                        rowClass(activeId === m.id, true),
+                        "relative touch-none select-none",
+                        isDragging && "opacity-40",
+                        // 드롭 위치는 알약 폭에 맞춘 2px 둥근 선으로 표시한다.
+                        drop &&
+                          "before:absolute before:inset-x-0 before:h-0.5 before:rounded-full before:bg-ui-selection",
+                        drop &&
+                          (drop.before ? "before:-top-px" : "before:-bottom-px")
+                      )}
+                    >
+                      <Icon
                         className={cn(
-                          rowClass(activeId === m.id, true),
-                          "relative touch-none select-none",
-                          isDragging && "opacity-40",
-                          // 드롭 위치는 알약 폭에 맞춘 2px 둥근 선으로 표시한다.
-                          drop &&
-                            "before:absolute before:inset-x-0 before:h-0.5 before:rounded-full before:bg-ui-selection",
-                          drop &&
-                            (drop.before
-                              ? "before:-top-px"
-                              : "before:-bottom-px")
+                          "size-4 shrink-0",
+                          blocked && "opacity-55"
                         )}
-                      >
-                        <Icon
-                          className={cn(
-                            "size-4 shrink-0",
-                            blocked && "opacity-55"
-                          )}
-                        />
-                        <span className={cn("truncate", blocked && "opacity-55")}>
-                          {m.title}
-                        </span>
-                        {/* 사용불가일 때는 안 읽음 배지 자리를 칩이 가져간다 — 어차피
+                      />
+                      <span className={cn("truncate", blocked && "opacity-55")}>
+                        {m.title}
+                      </span>
+                      {/* 사용불가일 때는 안 읽음 배지 자리를 칩이 가져간다 — 어차피
                             데이터가 오지 않으므로 둘을 같이 띄울 이유가 없다. */}
-                        {blocked ? (
-                          <span
-                            title={blocked}
-                            className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-px text-[11px] font-bold text-muted-foreground"
-                          >
-                            사용불가
-                          </span>
-                        ) : (
-                          m.badge
-                        )}
-                      </div>
-                    )
-                  })}
-              </div>
-            )
+                      {blocked ? (
+                        <span
+                          title={blocked}
+                          className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-px text-[11px] font-bold text-muted-foreground"
+                        >
+                          사용불가
+                        </span>
+                      ) : (
+                        m.badge
+                      )}
+                    </div>
+                  )
+                })}
+            </div>
+          )
         })}
       </div>
 

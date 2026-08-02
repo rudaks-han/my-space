@@ -34,9 +34,60 @@ import { isTauri } from "@/lib/tauri"
 import { useLocalStorage } from "@/lib/use-local-storage"
 import { sequenceFor } from "./start-sequences"
 import { StagePlanDialog } from "./stage-plan-dialog"
-import { useAutoScroll, useServices, type Service } from "./use-services"
+import {
+  useAutoScroll,
+  useServices,
+  type Service,
+  type ServicesBackend,
+} from "./use-services"
 
 type Api = ReturnType<typeof useServices>
+
+/**
+ * 백엔드별로 다른 문구.
+ *
+ * 화면 구조는 두 백엔드가 완전히 같다 — 다른 것은 "이 기능이 지금 쓸 수 있는가" 를
+ * 무엇으로 판단하는지다(IDE 연결 vs 프로젝트 모델). 그 배지와 안내만 갈아 끼운다.
+ */
+const BACKEND_TEXT: Record<
+  ServicesBackend,
+  {
+    /** 상단 상태 배지. */
+    on: string
+    off: string
+    /** 준비되지 않았을 때의 경고 패널. */
+    warnTitle: string
+    warnBody: React.ReactNode
+  }
+> = {
+  ide: {
+    on: "IntelliJ 연결됨",
+    off: "IntelliJ 연결 안 됨",
+    warnTitle: "IntelliJ MCP 서버에 연결할 수 없습니다.",
+    warnBody: (
+      <>
+        IntelliJ 를 실행한 뒤 Settings → Tools → MCP Server 에서 서버를 켜고
+        새로고침하세요. 자세한 설정 방법과 연결 상태는 <b>설정 → IntelliJ</b>{" "}
+        에서 확인할 수 있습니다.
+      </>
+    ),
+  },
+  standalone: {
+    on: "프로젝트 모델 읽음",
+    off: "프로젝트 모델 없음",
+    // 경로 오류와 모델 없음이 같은 배지를 쓰므로 제목도 둘을 다 덮는 문장이어야 한다
+    // (구체적인 이유는 아래 `api.mcp.error` 에 그대로 나온다).
+    warnTitle: "지금은 서비스를 띄울 수 없습니다.",
+    warnBody: (
+      <>
+        이 기능은 IntelliJ 를 띄우지 않지만, IDE 가 <b>한 번 임포트해 둔</b>{" "}
+        클래스패스를 읽어 씁니다. 위 경로가 맞는지 확인하고, 그 프로젝트를
+        IntelliJ 에서 한 번 열어 Maven/Gradle 임포트를 끝낸 뒤 새로고침하세요.
+        (그 뒤로는 IntelliJ 가 꺼져 있어도 됩니다.)
+      </>
+    ),
+  },
+}
 
 /** 좌측 트리에서 설정을 묶는 그룹. IntelliJ Services 창의 분류와 같은 순서. */
 const GROUPS: Array<{ kind: string; label: string }> = [
@@ -54,7 +105,10 @@ const GROUPS: Array<{ kind: string; label: string }> = [
  */
 const ROW = "min-h-9 shrink-0 rounded-lg px-3 text-[15px] transition-colors"
 
-const TREE_WIDTH_KEY = "myspace.intellij.treeWidth"
+const TREE_WIDTH_KEY: Record<ServicesBackend, string> = {
+  ide: "myspace.intellij.treeWidth",
+  standalone: "myspace.standalone.treeWidth",
+}
 const DEFAULT_TREE = 260
 const MIN_TREE = 180
 const MAX_TREE = 520
@@ -862,6 +916,50 @@ function SequenceStrip({ api }: { api: Api }) {
 }
 
 /**
+ * cowork 프로젝트 경로 입력 — standalone 백엔드의 상단 툴바.
+ *
+ * 타이핑마다 설정을 쓰면 글자 하나에 목록·모델 조회가 한 번씩 돌아간다. 그래서 편집 중에는
+ * 로컬 상태만 들고 있다가 **blur 나 Enter 에서 한 번** 반영한다.
+ */
+function ProjectPathInput({ api }: { api: Api }) {
+  const saved = api.projectPath ?? ""
+  const [draft, setDraft] = useState(saved)
+  // 다른 창(설정 화면)에서 값이 바뀌면 따라간다 — 편집 중이 아닐 때만.
+  const [editing, setEditing] = useState(false)
+  const shown = editing ? draft : saved
+
+  const commit = (value: string) => {
+    setEditing(false)
+    const next = value.trim()
+    if (next !== saved) api.setProjectPath(next || null)
+  }
+
+  return (
+    <input
+      value={shown}
+      spellCheck={false}
+      placeholder="cowork 를 클론한 폴더 경로 (예: ~/git/cowork)"
+      onFocus={() => {
+        setDraft(saved)
+        setEditing(true)
+      }}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={(e) => commit(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur()
+        // Esc 는 편집을 버린다(저장된 값으로 되돌아간다).
+        if (e.key === "Escape") {
+          setEditing(false)
+          setDraft(saved)
+        }
+      }}
+      title="cowork 프로젝트 루트. 설정 → Cowork 서비스 와 같은 값입니다."
+      className="h-8 min-w-0 flex-1 rounded-lg border border-input bg-background px-2.5 font-mono text-[13px] focus-visible:border-ring focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring/40 focus-visible:outline-solid"
+    />
+  )
+}
+
+/**
  * 목록 선택 상태. `names` 는 고른 순서 그대로이고, `focused` 는 그중 콘솔에 띄운 하나
  * (= 마지막으로 누른 것). ⌘ 클릭으로 여러 개를 담아 한 번에 시작/종료한다.
  */
@@ -872,11 +970,16 @@ interface Selection {
 
 const EMPTY_SELECTION: Selection = { names: [], focused: null }
 
-export function IntellijServicesView() {
-  const api = useServices()
+/**
+ * 실행 설정 목록 + 콘솔. `backend` 로 IDE 경유(기존)와 독립 실행(IntelliJ 없이)을
+ * 모두 그린다 — 두 메뉴가 같은 화면을 공유한다.
+ */
+function ServicesView({ backend }: { backend: ServicesBackend }) {
+  const api = useServices(backend)
+  const text = BACKEND_TEXT[backend]
   const [sel, setSel] = useState<Selection>(EMPTY_SELECTION)
   const [treeWidth, setTreeWidth] = useLocalStorage<number>(
-    TREE_WIDTH_KEY,
+    TREE_WIDTH_KEY[backend],
     DEFAULT_TREE
   )
   const [dragging, setDragging] = useState(false)
@@ -1021,20 +1124,27 @@ export function IntellijServicesView() {
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[10px] border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
       {/* 상단: 프로젝트 선택 + 새로고침 + MCP 연결 상태 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-        <select
-          value={api.projectPath ?? ""}
-          onChange={(e) => api.setProjectPath(e.target.value || null)}
-          className="h-8 min-w-0 flex-1 rounded-lg border border-input bg-background px-2.5 text-[15px] focus-visible:border-ring focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring/40 focus-visible:outline-solid"
-        >
-          {api.projects.length === 0 && (
-            <option value="">최근 프로젝트 없음</option>
-          )}
-          {api.projects.map((p) => (
-            <option key={p.path} value={p.path}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        {backend === "standalone" ? (
+          // IDE 를 켜지 않고 쓰는 기능이라 "최근 프로젝트" 목록에 기댈 수 없다.
+          // 경로를 여기서 바로 고친다 — 설정 화면까지 가지 않아도 되고, 값은
+          // 설정(`coworkService.projectPath`)에 저장되어 설정 화면과 같은 것을 가리킨다.
+          <ProjectPathInput api={api} />
+        ) : (
+          <select
+            value={api.projectPath ?? ""}
+            onChange={(e) => api.setProjectPath(e.target.value || null)}
+            className="h-8 min-w-0 flex-1 rounded-lg border border-input bg-background px-2.5 text-[15px] focus-visible:border-ring focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring/40 focus-visible:outline-solid"
+          >
+            {api.projects.length === 0 && (
+              <option value="">최근 프로젝트 없음</option>
+            )}
+            {api.projects.map((p) => (
+              <option key={p.path} value={p.path}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        )}
 
         {api.mcp && (
           <span
@@ -1047,7 +1157,7 @@ export function IntellijServicesView() {
             title={api.mcp.error ?? api.mcp.url ?? ""}
           >
             <span className="size-1.5 rounded-full bg-current" />
-            IntelliJ {api.mcp.connected ? "연결됨" : "연결 안 됨"}
+            {api.mcp.connected ? text.on : text.off}
           </span>
         )}
 
@@ -1141,19 +1251,31 @@ export function IntellijServicesView() {
 
       <SequenceStrip api={api} />
 
+      {/* 경로가 아예 없을 때. 모델 상태를 물어볼 대상조차 없으니 배지 대신 이걸 띄운다. */}
+      {backend === "standalone" && !api.projectPath && (
+        <div className="flex shrink-0 items-start gap-2 border-b border-ui-warning/40 bg-ui-warning/10 px-4 py-3 text-[13px]">
+          <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-ui-warning" />
+          <div>
+            <div className="font-bold text-ui-warning">
+              cowork 프로젝트 경로를 지정하세요.
+            </div>
+            <div className="mt-0.5 text-muted-foreground">
+              위 입력란에 cowork 를 클론한 폴더(= IntelliJ 로 여는 프로젝트
+              루트)를 적으면 됩니다. <span className="font-mono">~</span> 로
+              시작하는 경로도 됩니다. 같은 값이 <b>설정 → Cowork 서비스</b> 에도
+              있습니다.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MCP 미연결 안내 — 이 기능의 전제 조건이라 눈에 띄게 알린다. */}
       {api.mcp && !api.mcp.connected && (
         <div className="flex shrink-0 items-start gap-2 border-b border-ui-warning/40 bg-ui-warning/10 px-4 py-3 text-[13px]">
           <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-ui-warning" />
           <div>
-            <div className="font-bold text-ui-warning">
-              IntelliJ MCP 서버에 연결할 수 없습니다.
-            </div>
-            <div className="mt-0.5 text-muted-foreground">
-              IntelliJ 를 실행한 뒤 Settings → Tools → MCP Server 에서 서버를
-              켜고 새로고침하세요. 자세한 설정 방법과 연결 상태는{" "}
-              <b>설정 → IntelliJ</b> 에서 확인할 수 있습니다.
-            </div>
+            <div className="font-bold text-ui-warning">{text.warnTitle}</div>
+            <div className="mt-0.5 text-muted-foreground">{text.warnBody}</div>
             {api.mcp.error && (
               <div className="mt-1 font-mono text-[13px] opacity-80">
                 {api.mcp.error}
@@ -1234,4 +1356,14 @@ export function IntellijServicesView() {
       )}
     </div>
   )
+}
+
+/** 개발 → IntelliJ 서비스 — IDE(MCP)에 실행을 시킨다. */
+export function IntellijServicesView() {
+  return <ServicesView backend="ide" />
+}
+
+/** 개발 → Cowork 서비스 — IntelliJ 없이 직접 java 로 띄운다. */
+export function StandaloneServicesView() {
+  return <ServicesView backend="standalone" />
 }

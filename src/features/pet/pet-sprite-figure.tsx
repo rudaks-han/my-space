@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react"
 
-import type { PetMood } from "./use-pet-mood"
+import type { PetAlert, PetMood } from "./use-pet-mood"
 import {
-  MOOD_STATE,
   SHEET_COLS,
   SHEET_STATES,
+  sheetStateFor,
   stateRow,
   type PetSprite,
 } from "./pet-sprite"
@@ -21,13 +21,16 @@ import {
 export function PetSpriteFigure({
   sprite,
   mood,
+  alert,
   width,
 }: {
   sprite: PetSprite
   mood: PetMood
+  /** 대기 중일 때 무엇을 기다리는지 — 동작이 알림 종류로 갈린다(`sheetStateFor`). */
+  alert: PetAlert | null
   width: number
 }) {
-  const row = stateRow(MOOD_STATE[mood], sprite.rows)
+  const row = stateRow(sheetStateFor(mood, alert), sprite.rows)
   const spec = SHEET_STATES[row] ?? SHEET_STATES[0]
   // 실제로 그려져 있는 프레임 수를 우선한다(규격을 어긋나게 만든 패키지가 있을 수 있다).
   // 표의 값은 스캔이 실패했을 때의 보루.

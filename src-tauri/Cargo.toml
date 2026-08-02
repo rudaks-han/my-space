@@ -1,6 +1,6 @@
 [package]
 name = "my-space"
-version = "0.0.4"
+version = "0.0.5"
 description = "My Space - 업무용 통합 앱"
 authors = ["rudaks"]
 edition = "2021"

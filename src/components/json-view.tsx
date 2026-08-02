@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react"
 import { ChevronRightIcon } from "lucide-react"
 
-import { highlightJson } from "@/lib/highlight-json"
+import { highlightJsonText } from "@/lib/highlight-json"
 import { cn } from "@/lib/utils"
 
 /**
@@ -164,11 +164,26 @@ export function JsonTree({
 }
 
 /** 구문 강조된 원본 JSON. */
-export function JsonRaw({ value }: { value: unknown }) {
+export function JsonRaw({
+  value,
+  indent = 2,
+}: {
+  value: unknown
+  indent?: number | string
+}) {
+  return <JsonText text={JSON.stringify(value, null, indent)} />
+}
+
+/**
+ * 이미 문자열로 만들어 둔 JSON 을 구문 강조해 보여 준다.
+ * (들여쓰기·키 정렬을 호출 쪽이 정하는 JSON 포맷터가 쓴다 — 같은 문자열을
+ *  복사·크기 표시에도 써야 해서 두 번 stringify 하지 않도록 문자열을 받는다.)
+ */
+export function JsonText({ text }: { text: string }) {
   return (
     <pre
       className="overflow-auto font-mono text-[13px] leading-relaxed whitespace-pre-wrap [&_.jbool]:text-ui-info [&_.jkey]:text-ui-link [&_.jnull]:text-muted-foreground [&_.jnum]:text-ui-warning [&_.jstr]:text-ui-success"
-      dangerouslySetInnerHTML={{ __html: highlightJson(value) }}
+      dangerouslySetInnerHTML={{ __html: highlightJsonText(text) }}
     />
   )
 }

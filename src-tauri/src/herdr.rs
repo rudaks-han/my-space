@@ -330,6 +330,27 @@ fn herdr_bin() -> String {
     "herdr".into()
 }
 
+/// herdr 가 **없는** 상태(미설치 또는 데몬 미실행)를 뜻하는 오류 메시지의 접두사.
+/// herdr 는 셋 다 켜 두는 게 기본값인 선택 백엔드라 이건 고장이 아니라 정상 상태다 —
+/// `is_absent` 로 구분해 로그 레벨을 낮추는 데 쓴다.
+const ABSENT: &str = "herdr 없음";
+
+/// `run_herdr` 오류가 "herdr 가 없어서"인지. 문구가 아니라 `ABSENT` 접두사로 판단한다.
+fn is_absent(err: &str) -> bool {
+    err.starts_with(ABSENT)
+}
+
+/// 목록 조회 실패 로그. herdr 부재는 경고가 아니므로 debug 로 남긴다 —
+/// 감시 루프가 800ms 마다 도는 탓에, warn 으로 남기면 herdr 를 안 쓰는 사람의 로그가
+/// 시작 직후부터 ConnectionRefused 로 덮인다.
+fn log_list_err(what: &str, err: &str) {
+    if is_absent(err) {
+        log::debug!("{what}: {err}");
+    } else {
+        log::warn!("{what}: {err}");
+    }
+}
+
 /// herdr CLI 를 호출하고 stdout 을 JSON 으로 파싱한다.
 /// session 을 주면 `--session <name>` 전역 플래그를 서브커맨드 앞에 붙여 해당 세션 소켓을 대상으로 한다.
 fn run_herdr(session: Option<&str>, args: &[&str]) -> Result<Value, String> {
@@ -342,34 +363,46 @@ fn run_herdr(session: Option<&str>, args: &[&str]) -> Result<Value, String> {
     let out = Command::new(herdr_bin())
         .args(&full)
         .output()
-        .map_err(|e| format!("herdr 실행 실패: {e}"))?;
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => format!("{ABSENT}(실행 파일 미설치)"),
+            _ => format!("herdr 실행 실패: {e}"),
+        })?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     if stdout.trim().is_empty() {
         let stderr = String::from_utf8_lossy(&out.stderr);
+        // 소켓 connection refused = herdr 데몬이 안 떠 있음. 응답이 없는 다른 이유들과
+        // 섞으면 "정상 상태"와 "진짜 오류"를 로그에서 구분할 수 없다.
+        if stderr.contains("ConnectionRefused") || stderr.contains("Connection refused") {
+            return Err(format!("{ABSENT}(데몬 미실행)"));
+        }
         return Err(format!("herdr 응답 없음: {stderr}"));
     }
     serde_json::from_str::<Value>(&stdout).map_err(|e| format!("herdr JSON 파싱 실패: {e}"))
 }
 
-/// running 상태인 herdr 세션 이름들(default 포함). 조회 실패/빈 결과면 ["default"] 로 폴백한다.
-/// 사용자가 `herdr --session <name>` 으로 여러 세션을 띄우면 각각 별도 소켓을 쓰므로,
-/// 목록/명령을 세션마다 반복해 합쳐야 전체가 보인다.
+/// running 상태인 herdr 세션 이름들. 사용자가 `herdr --session <name>` 으로 여러 세션을 띄우면
+/// 각각 별도 소켓을 쓰므로, 목록/명령을 세션마다 반복해 합쳐야 전체가 보인다.
+///
+/// **하나도 안 돌면 빈 목록**을 낸다 — 예전에는 빈 결과를 `["default"]` 로 채웠는데, 그러면
+/// 감시 루프가 800ms 마다 죽은 소켓을 찔러 ConnectionRefused 경고를 로그에 쏟아부었다.
+/// `session list` 는 소켓 파일만 보므로 **데몬 없이도 동작**하고(rc 0, `running: false`),
+/// 따라서 이 판단은 실패하는 호출 없이 끝난다.
+///
+/// `sessions` 배열을 못 얻은 경우에만 `["default"]` 로 폴백한다 — `session list --json` 이
+/// 없는 옛 herdr 도 계속 동작해야 하므로, "조회 실패"와 "세션이 없음"은 구분해야 한다.
 fn running_sessions() -> Vec<String> {
-    let names = run_herdr(None, &["session", "list", "--json"])
-        .ok()
-        .and_then(|v| v.get("sessions").and_then(|s| s.as_array()).cloned())
-        .map(|arr| {
-            arr.iter()
-                .filter(|s| s.get("running").and_then(|r| r.as_bool()).unwrap_or(false))
-                .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    if names.is_empty() {
-        vec!["default".into()]
-    } else {
-        names
-    }
+    sessions_from(run_herdr(None, &["session", "list", "--json"]).ok().as_ref())
+}
+
+/// `herdr session list --json` 응답 → 조회할 세션 이름들. 위 규칙의 순수 함수 부분.
+fn sessions_from(listed: Option<&Value>) -> Vec<String> {
+    let Some(arr) = listed.and_then(|v| v.get("sessions")).and_then(|s| s.as_array()) else {
+        return vec!["default".into()];
+    };
+    arr.iter()
+        .filter(|s| s.get("running").and_then(|r| r.as_bool()).unwrap_or(false))
+        .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
+        .collect()
 }
 
 /// 한 herdr 세션의 agent 목록.
@@ -410,7 +443,7 @@ fn list_agents_herdr() -> Result<Vec<HerdrAgent>, String> {
     for session in running_sessions() {
         match list_agents_in(&session) {
             Ok(mut a) => out.append(&mut a),
-            Err(e) => log::warn!("herdr agent list 실패 (session={session}): {e}"),
+            Err(e) => log_list_err(&format!("herdr agent list 실패 (session={session})"), &e),
         }
     }
     Ok(out)
@@ -467,7 +500,7 @@ fn list_agents() -> Result<Vec<HerdrAgent>, String> {
     }
     let mut out = if b.herdr {
         list_agents_herdr().unwrap_or_else(|e| {
-            log::warn!("herdr agent 목록 실패: {e}");
+            log_list_err("herdr agent 목록 실패", &e);
             Vec::new()
         })
     } else {
@@ -809,7 +842,7 @@ fn list_workspaces_herdr() -> Result<Vec<HerdrWorkspace>, String> {
     for session in running_sessions() {
         match list_workspaces_in(&session) {
             Ok(mut w) => out.append(&mut w),
-            Err(e) => log::warn!("herdr workspace list 실패 (session={session}): {e}"),
+            Err(e) => log_list_err(&format!("herdr workspace list 실패 (session={session})"), &e),
         }
     }
     Ok(out)
@@ -824,7 +857,7 @@ fn list_workspaces() -> Result<Vec<HerdrWorkspace>, String> {
     }
     let mut out = if b.herdr {
         list_workspaces_herdr().unwrap_or_else(|e| {
-            log::warn!("herdr 워크스페이스 목록 실패: {e}");
+            log_list_err("herdr 워크스페이스 목록 실패", &e);
             Vec::new()
         })
     } else {
@@ -1760,5 +1793,39 @@ mod tests {
         assert_eq!(crate::cmux::SESSION, "cmux");
         // route_of 는 저장된 설정을 읽으므로 여기서는 이름 상수만 고정한다 —
         // 이 둘이 바뀌면 혼합 모드의 이동·전송이 조용히 엉뚱한 앱으로 간다.
+    }
+
+    /// herdr 가 설치돼 있지만 데몬이 안 떠 있으면 **찔러 볼 세션이 없다**. 여기서 `["default"]`
+    /// 로 폴백하면 감시 루프가 800ms 마다 죽은 소켓에 붙어 ConnectionRefused 경고를 쏟는다.
+    /// 반대로 `sessions` 를 못 읽은 경우(옛 CLI)는 폴백이 유지돼야 한다.
+    #[test]
+    fn lists_no_session_when_herdr_daemon_is_down() {
+        let down = serde_json::json!({
+            "sessions": [{ "name": "default", "running": false, "default": true }]
+        });
+        assert!(sessions_from(Some(&down)).is_empty());
+
+        let up = serde_json::json!({
+            "sessions": [
+                { "name": "default", "running": true },
+                { "name": "side", "running": false },
+                { "name": "work", "running": true },
+            ]
+        });
+        assert_eq!(sessions_from(Some(&up)), vec!["default", "work"]);
+
+        // 조회 실패(옛 herdr 는 `session list --json` 이 없다) → 기존 동작 유지.
+        assert_eq!(sessions_from(None), vec!["default"]);
+        assert_eq!(sessions_from(Some(&serde_json::json!({}))), vec!["default"]);
+    }
+
+    /// herdr 부재는 정상 상태라 로그를 낮춰야 한다 — 그 판단은 `ABSENT` 접두사로만 한다
+    /// (문구로 판단하면 메시지를 다듬는 순간 조용히 깨진다).
+    #[test]
+    fn marks_missing_herdr_as_absent_not_failure() {
+        assert!(is_absent(&format!("{ABSENT}(데몬 미실행)")));
+        assert!(is_absent(&format!("{ABSENT}(실행 파일 미설치)")));
+        assert!(!is_absent("herdr JSON 파싱 실패: expected value"));
+        assert!(!is_absent("herdr 응답 없음: usage: herdr ..."));
     }
 }

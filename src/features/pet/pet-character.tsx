@@ -90,7 +90,12 @@ export function PetCharacter({
     >
       {art.kind === "sheet" ? (
         sprite ? (
-          <PetSpriteFigure sprite={sprite} mood={mood} width={size} />
+          <PetSpriteFigure
+            sprite={sprite}
+            mood={mood}
+            alert={alert}
+            width={size}
+          />
         ) : (
           // 아직 읽는 중(또는 폴더가 잘못됨) — 자리만 비워 둔다.
           <div style={{ width: size, height }} />
@@ -175,16 +180,10 @@ function MoodMark({
       ) : (
         <Badge className="bg-ui-warning text-[14px] font-bold">!</Badge>
       )
-    ) : mood === "busy" ? (
-      // 바쁨 — 몇 건이 동시에 돌고 있는지 숫자로.
-      <Badge className="bg-ui-success text-[12px] font-bold">{running}</Badge>
     ) : (
-      // 동작 중 — 흐르는 점 세 개.
-      <span className="flex items-center gap-[3px] rounded-full bg-white/95 px-1.5 py-1 shadow-[0_2px_6px_rgba(0,0,0,0.2)]">
-        {[0, 1, 2].map((i) => (
-          <i key={i} className="pet-dot size-[4px] rounded-full bg-ui-chrome" />
-        ))}
-      </span>
+      // 동작 중·바쁨 — 몇 건이 돌고 있는지 숫자로. 1건이든 여러 건이든 같은 배지라서
+      // "지금 몇 개 돌고 있나"를 셀 필요 없이 바로 읽힌다(동작 자체는 mood 로 갈린다).
+      <Badge className="bg-ui-success text-[12px] font-bold">{running}</Badge>
     )
 
   if (!onClick) {

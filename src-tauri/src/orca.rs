@@ -77,38 +77,36 @@ fn status_path() -> Option<PathBuf> {
     p.exists().then_some(p)
 }
 
-/// Orca 런타임(데몬)이 살아 있는가.
+/// CLI 가 붙을 런타임의 접속 정보(소켓·토큰·pid)를 담은 파일. Orca 가 뜰 때 쓰고 내려갈 때
+/// 지운다.
+const RUNTIME_META: &str = "orca-runtime.json";
+
+/// Orca 런타임이 살아 있는가 — CLI 를 띄우기 전의 값싼 사전 확인.
 ///
-/// CLI 를 헛돌리지 않기 위한 값싼 사전 확인이다. 데몬은 `daemon-v<N>.pid` 에 자기 pid 를
-/// JSON 으로 남기는데, 그 파일은 비정상 종료 시 남을 수 있으므로 **pid 가 실제로 살아 있는지**
-/// 까지 본다(`kill(pid, 0)`). 버전 접미사는 Orca 가 올라가면 바뀌므로 이름을 박지 않고 훑는다.
-fn daemon_alive() -> bool {
-    let Some(dir) = support_dir().map(|d| d.join("daemon")) else {
+/// **데몬 pid(`daemon/daemon-v<N>.pid`)를 보면 안 된다.** 그 데몬은 Orca 앱을 닫아도 살아남고
+/// (앱 종료 뒤에도 `Orca Helper` 로 계속 돈다), 버전이 올라가면 옛 pid 파일까지 그대로 남는다.
+/// 그래서 앱이 꺼진 흔한 상태에서 게이트가 통과되고, 감시 루프가 캐시 만료마다(2 초) CLI 를
+/// 띄워 `Could not read Orca runtime metadata … Start the Orca app first.` 를 무한히 쌓는다.
+/// CLI 가 실제로 요구하는 것은 `orca-runtime.json` 이므로 그 파일의 유무를 그대로 게이트로 쓴다.
+///
+/// 파일은 비정상 종료 시 남을 수 있어 적힌 pid 가 실제로 살아 있는지까지 본다(`kill(pid, 0)`).
+fn runtime_alive() -> bool {
+    let Some(path) = support_dir().map(|d| d.join(RUNTIME_META)) else {
         return false;
     };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+    let Ok(text) = std::fs::read_to_string(&path) else {
         return false;
     };
-    for e in entries.flatten() {
-        let name = e.file_name();
-        let name = name.to_string_lossy();
-        if !(name.starts_with("daemon-") && name.ends_with(".pid")) {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(e.path()) else {
-            continue;
-        };
-        let Some(pid) = serde_json::from_str::<Value>(&text)
-            .ok()
-            .and_then(|v| v.get("pid").and_then(|p| p.as_i64()))
-        else {
-            continue;
-        };
-        if pid_alive(pid as i32) {
-            return true;
-        }
-    }
-    false
+    runtime_pid(&text).is_some_and(pid_alive)
+}
+
+/// 런타임 메타데이터에서 pid 를 뽑는다(파일 접근과 분리해 테스트할 수 있게).
+fn runtime_pid(text: &str) -> Option<i32> {
+    serde_json::from_str::<Value>(text)
+        .ok()?
+        .get("pid")?
+        .as_i64()
+        .map(|p| p as i32)
 }
 
 /// pid 가 살아 있는가. 시그널 0 은 아무것도 보내지 않고 존재/권한만 확인한다.
@@ -212,6 +210,26 @@ struct TermRow {
 /// `(캐시 시각, 목록)`. 실패도 빈 목록으로 캐시해 실패를 반복하지 않는다.
 static TERMS: Mutex<Option<(u64, Vec<TermRow>)>> = Mutex::new(None);
 
+/// 마지막으로 로그에 남긴 CLI 실패 메시지.
+static LAST_FAIL: Mutex<Option<String>> = Mutex::new(None);
+
+/// CLI 실패를 **내용이 바뀔 때만** 남긴다. 감시 루프는 2 초마다 목록을 다시 읽으므로 같은
+/// 실패를 그대로 찍으면 로그가 같은 줄로 뒤덮인다(`runtime_alive` 가 막지 못하는 실패 —
+/// 권한 문제나 CLI 부재 등 — 이 남아 있다). 성공하면 기억을 지워 다음 실패는 다시 보이게 한다.
+fn note_fail(err: Option<&str>) {
+    let Ok(mut last) = LAST_FAIL.lock() else {
+        return;
+    };
+    match err {
+        Some(e) if last.as_deref() != Some(e) => {
+            log::warn!("orca terminal list 실패: {e}");
+            *last = Some(e.to_string());
+        }
+        Some(_) => {}
+        None => *last = None,
+    }
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -229,11 +247,17 @@ fn terminals() -> Vec<TermRow> {
             }
         }
     }
-    let rows = if daemon_alive() {
-        fetch_terminals().unwrap_or_else(|e| {
-            log::warn!("orca terminal list 실패: {e}");
-            Vec::new()
-        })
+    let rows = if runtime_alive() {
+        match fetch_terminals() {
+            Ok(rows) => {
+                note_fail(None);
+                rows
+            }
+            Err(e) => {
+                note_fail(Some(&e));
+                Vec::new()
+            }
+        }
     } else {
         Vec::new()
     };
@@ -536,10 +560,24 @@ mod tests {
     /// 실제로 돌고 있는 Orca 를 상대로 조인 결과를 눈으로 확인하는 진단용 테스트.
     /// (Orca 가 떠 있어야 하고 결과가 환경마다 달라 CI 에서는 돌리지 않는다.)
     /// `cargo test --lib orca::tests::live -- --ignored --nocapture`
+    /// 게이트는 런타임 메타데이터의 pid 를 본다. 형식이 어긋나면 "Orca 가 꺼져 있다" 로
+    /// 읽혀야 한다 — 통과시키면 감시 루프가 실패하는 CLI 를 2 초마다 띄운다.
+    #[test]
+    fn runtime_pid_comes_from_metadata() {
+        let raw = r#"{"runtimeId":"r-1","pid":68285,"transports":[],
+            "authToken":"t","startedAt":1785500178652}"#;
+        assert_eq!(runtime_pid(raw), Some(68285));
+        assert_eq!(runtime_pid("{}"), None);
+        assert_eq!(runtime_pid("깨진 json"), None);
+        // 데몬 pid 파일을 잘못 물려도(같은 디렉터리 이웃이다) pid 는 나오지만, 게이트가 보는
+        // 파일은 orca-runtime.json 하나뿐이다.
+        assert!(!pid_alive(0));
+    }
+
     #[test]
     #[ignore]
     fn live_snapshot() {
-        println!("daemon_alive = {}", daemon_alive());
+        println!("runtime_alive = {}", runtime_alive());
         for a in list_agents().unwrap() {
             println!(
                 "agent  status={:<8} session_id={:?} pane={}",

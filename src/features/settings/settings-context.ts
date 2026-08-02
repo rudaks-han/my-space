@@ -134,6 +134,26 @@ export interface FlexSettings {
   vacationUrl: string
 }
 
+/** 내장 브라우저(웹 탭) 설정. */
+export interface BrowserSettings {
+  /**
+   * 이 시간(분) 동안 보지 않은 탭의 웹뷰를 파기해 메모리를 돌려준다. **0 = 파기 안 함.**
+   *
+   * 탭 하나가 곧 WKWebView 하나이고, 그 하나가 `WebContent` 프로세스 하나(요즘 페이지는
+   * 200~400MB)다. 숨겨 두는 것만으로는 프로세스가 사라지지 않으므로, 오래 안 본 탭은
+   * 웹뷰를 닫고 **탭 목록에만 남긴다** — 다시 누르면 저장된 URL 로 새로 연다.
+   *
+   * 대가는 복귀 시 재로드(스크롤 위치·입력 중인 폼이 사라진다)라서 시간을 넉넉히 준다.
+   * 탭을 오가는 동안에는 파기되지 않고, 브라우저 메뉴를 아예 닫으면 시간과 무관하게 즉시
+   * 전부 파기된다(닫았다는 건 안 보겠다는 뜻이다).
+   *
+   * "안 본다"에는 **다른 앱을 쓰는 중(창이 포커스를 잃은 상태)** 도 포함된다. 트레이 상주
+   * 앱이라 브라우저 탭을 켜 둔 채 다른 앱을 쓰는 시간이 대부분이고, 앱 안에서 메뉴를
+   * 옮겼는지만 따지면 그 시간 내내 수백 MB 를 쥔 채로 영원히 회수되지 않는다.
+   */
+  discardMinutes: number
+}
+
 /** Gmail 관련 설정 — "관심 대상" 메일을 정의하는 필터. */
 export interface GmailSettings {
   /**
@@ -163,6 +183,25 @@ export interface CoworkSettings {
   markdownCss: string
   /** "스타일 가져오기" 가 읽어올 Typora 테마 css 경로(`~` 지원). */
   cssPath: string
+}
+
+/**
+ * Cowork 서비스(IntelliJ 없이 서비스 기동) 설정.
+ *
+ * **`CoworkSettings.home` 과 일부러 분리했다.** 스펙 문서를 보는 폴더와 서비스를 띄우는
+ * 소스 폴더는 같을 이유가 없다 — 문서만 따로 클론해 두거나, 여러 워크트리 중 하나에서만
+ * 서비스를 띄우는 게 흔하다.
+ */
+export interface CoworkServiceSettings {
+  /**
+   * cowork 를 클론한 폴더(= IntelliJ 로 여는 프로젝트 루트). `~` 는 홈으로 펼쳐진다.
+   *
+   * 기본값이 **빈 문자열**인 이유: 이 값은 사람마다 다른 절대경로다. 누군가의 경로를
+   * 박아 두면 다른 사람 머신에서는 조용히 실패하므로, 비워 두고 화면이 "지정하세요" 라고
+   * 말하게 한다. 처음 열 때 IntelliJ 최근 프로젝트에서 `cowork` 를 찾으면 자동으로
+   * 채워 주므로(`use-services.ts`), 대부분은 손으로 적을 일이 없다.
+   */
+  projectPath: string
 }
 
 /**
@@ -276,9 +315,11 @@ export interface AppSettings {
   menus: MenuSettings
   claudeCode: ClaudeCodeSettings
   slack: SlackSettings
+  browser: BrowserSettings
   gmail: GmailSettings
   flex: FlexSettings
   cowork: CoworkSettings
+  coworkService: CoworkServiceSettings
   pet: PetSettings
 }
 
@@ -306,6 +347,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   slack: {
     pollSeconds: 120,
   },
+  browser: {
+    // 5분. 탭을 오가는 정도로는 절대 걸리지 않으면서, 아침에 열어 둔 탭이 오후까지
+    // 300MB 를 쥐고 있는 일은 막는 선.
+    discardMinutes: 5,
+  },
   gmail: {
     senders: [],
     keywords: [],
@@ -319,6 +365,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     markdownCss: "",
     cssPath:
       "~/Library/Application Support/abnerworks.Typora/themes/rudaks.css",
+  },
+  coworkService: {
+    projectPath: "",
   },
   pet: {
     enabled: false,
@@ -369,9 +418,14 @@ export function withDefaults(
       ...(stored?.claudeCode ?? {}),
     }),
     slack: { ...DEFAULT_SETTINGS.slack, ...(stored?.slack ?? {}) },
+    browser: { ...DEFAULT_SETTINGS.browser, ...(stored?.browser ?? {}) },
     gmail: { ...DEFAULT_SETTINGS.gmail, ...(stored?.gmail ?? {}) },
     flex: { ...DEFAULT_SETTINGS.flex, ...(stored?.flex ?? {}) },
     cowork: { ...DEFAULT_SETTINGS.cowork, ...(stored?.cowork ?? {}) },
+    coworkService: {
+      ...DEFAULT_SETTINGS.coworkService,
+      ...(stored?.coworkService ?? {}),
+    },
     pet: migratePet({
       ...DEFAULT_SETTINGS.pet,
       ...(stored?.pet ?? {}),
@@ -423,12 +477,16 @@ export interface SettingsContextValue {
   setClaudeCode: (patch: Partial<ClaudeCodeSettings>) => void
   /** Slack 설정 일부를 갱신한다. */
   setSlack: (patch: Partial<SlackSettings>) => void
+  /** 내장 브라우저 설정 일부를 갱신한다. */
+  setBrowser: (patch: Partial<BrowserSettings>) => void
   /** Gmail 설정 일부를 갱신한다. */
   setGmail: (patch: Partial<GmailSettings>) => void
   /** Flex 설정 일부를 갱신한다. */
   setFlex: (patch: Partial<FlexSettings>) => void
   /** Cowork spec 설정 일부를 갱신한다. */
   setCowork: (patch: Partial<CoworkSettings>) => void
+  /** Cowork 서비스 설정 일부를 갱신한다. */
+  setCoworkService: (patch: Partial<CoworkServiceSettings>) => void
   /** 데스크톱 펫 설정 일부를 갱신한다. */
   setPet: (patch: Partial<PetSettings>) => void
 }

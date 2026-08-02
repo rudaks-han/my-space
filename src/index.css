@@ -516,26 +516,6 @@ html.pet-window #root {
   }
 }
 
-/* 진행 중 표시(…) — 점 세 개가 차례로 밝아진다. */
-.pet-dot {
-  animation: pet-dot 1.2s ease-in-out infinite;
-}
-.pet-dot:nth-child(2) {
-  animation-delay: 0.15s;
-}
-.pet-dot:nth-child(3) {
-  animation-delay: 0.3s;
-}
-@keyframes pet-dot {
-  0%,
-  100% {
-    opacity: 0.25;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
 /* 빠른 이동 다이얼 — 아래에서 위로 하나씩 튀어 오른다(항목별 지연은 inline style).
    backwards 가 없으면 지연 동안 최종 상태로 먼저 보여 계단 효과가 사라진다. */
 .pet-dial-item {
@@ -600,7 +580,6 @@ html.pet-window #root {
 
 @media (prefers-reduced-motion: reduce) {
   .pet-figure,
-  .pet-dot,
   .pet-zzz,
   .pet-bubble,
   .pet-dial-item {

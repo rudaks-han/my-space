@@ -6,8 +6,10 @@ import {
   SettingsContext,
   withDefaults,
   type AppSettings,
+  type BrowserSettings,
   type ClaudeCodeSettings,
   type CoworkSettings,
+  type CoworkServiceSettings,
   type FlexSettings,
   type GeneralSettings,
   type GmailSettings,
@@ -71,6 +73,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [setRaw]
   )
 
+  const setBrowser = useCallback(
+    (patch: Partial<BrowserSettings>) => {
+      setRaw((prev) => {
+        const base = withDefaults(prev)
+        return { ...base, browser: { ...base.browser, ...patch } }
+      })
+    },
+    [setRaw]
+  )
+
   const setGmail = useCallback(
     (patch: Partial<GmailSettings>) => {
       setRaw((prev) => {
@@ -101,6 +113,19 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [setRaw]
   )
 
+  const setCoworkService = useCallback(
+    (patch: Partial<CoworkServiceSettings>) => {
+      setRaw((prev) => {
+        const base = withDefaults(prev)
+        return {
+          ...base,
+          coworkService: { ...base.coworkService, ...patch },
+        }
+      })
+    },
+    [setRaw]
+  )
+
   const setPet = useCallback(
     (patch: Partial<PetSettings>) => {
       setRaw((prev) => {
@@ -118,9 +143,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setMenus,
       setClaudeCode,
       setSlack,
+      setBrowser,
       setGmail,
       setFlex,
       setCowork,
+      setCoworkService,
       setPet,
     }),
     [
@@ -129,9 +156,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setMenus,
       setClaudeCode,
       setSlack,
+      setBrowser,
       setGmail,
       setFlex,
       setCowork,
+      setCoworkService,
       setPet,
     ]
   )

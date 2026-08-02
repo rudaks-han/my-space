@@ -36,7 +36,7 @@ use crate::mcp;
 /// IntelliJ 가 Make(컴파일)를 먼저 하므로 첫 실행은 오래 걸릴 수 있다.
 const PID_WAIT: Duration = Duration::from_secs(180);
 /// 프로세스 탐색·생존 확인 폴링 주기.
-const POLL: Duration = Duration::from_millis(500);
+pub(crate) const POLL: Duration = Duration::from_millis(500);
 /// IntelliJ 에서 직접 띄운 실행을 찾아내는 폴링 주기(`intellij_watch_project`).
 /// MCP 는 "실행이 시작됐다" 는 알림을 주지 않으므로 주기적으로 훑는 수밖에 없다.
 const ADOPT_POLL: Duration = Duration::from_secs(3);
@@ -46,21 +46,21 @@ const ADOPT_POLL_IDLE: Duration = Duration::from_secs(20);
 /// 로그 파일 tail 폴링 주기.
 const TAIL_POLL: Duration = Duration::from_millis(300);
 /// 재시작 시 SIGINT 로 곱게 죽기를 기다리는 시간. 넘으면 SIGKILL.
-const STOP_GRACE: Duration = Duration::from_secs(20);
+pub(crate) const STOP_GRACE: Duration = Duration::from_secs(20);
 /// 재시작 시 종료를 포기하는 시각(여기까지 살아 있으면 에러).
-const STOP_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const STOP_TIMEOUT: Duration = Duration::from_secs(60);
 /// 이전 실행의 감시 스레드가 상태를 정리하기를 기다리는 시간.
 const WATCHER_CLEANUP: Duration = Duration::from_secs(5);
 /// 임시 포트(ephemeral) 영역의 시작. 이 이상은 JMX·디버그용으로 JVM 이 잡는 포트라
 /// 서비스 포트로 보지 않는다(macOS 기본 임시 포트 영역은 49152~65535 이지만,
 /// 여유를 두어 32768 이상을 임시 포트로 취급한다).
-const EPHEMERAL_FROM: u16 = 32768;
+pub(crate) const EPHEMERAL_FROM: u16 = 32768;
 /// 고정 포트가 이 시간 안에 안 나타나면(고정 포트를 안 쓰는 서비스) 임시 포트라도 표시한다.
-const PORT_FALLBACK_AFTER: Duration = Duration::from_secs(30);
+pub(crate) const PORT_FALLBACK_AFTER: Duration = Duration::from_secs(30);
 /// 서비스별로 Rust 쪽에 보관하는 로그 줄 수 상한.
 /// 화면(메뉴)을 벗어나면 프론트 상태가 사라지므로, 다시 들어왔을 때 복원할 수 있게
 /// 여기에 쌓아 둔다.
-const LOG_BUFFER_MAX: usize = 4000;
+pub(crate) const LOG_BUFFER_MAX: usize = 4000;
 /// tail 한 번에 프론트로 흘려보낼 최대 바이트. 이보다 많이 밀려 있으면 **끝부분만** 읽고
 /// 나머지는 건너뛴다.
 ///
@@ -127,34 +127,34 @@ pub struct WatchProject {
 #[derive(Serialize, Clone)]
 pub struct Service {
     /// 설정 이름(예: "UaaApplication").
-    name: String,
+    pub(crate) name: String,
     /// 정규화한 종류: "spring-boot" | "multirun" | "junit" | "java" | "http" | "other".
     #[serde(rename = "type")]
-    kind: String,
+    pub(crate) kind: String,
     /// IntelliJ 가 준 설정 설명(예: "Spring Boot Application").
-    description: Option<String>,
+    pub(crate) description: Option<String>,
     /// IntelliJ 모듈명(XML 이 있을 때만).
-    module: Option<String>,
+    pub(crate) module: Option<String>,
     /// 메인 클래스. 종료 대상 프로세스를 찾는 열쇠다.
-    main_class: Option<String>,
+    pub(crate) main_class: Option<String>,
     /// 활성 스프링 프로필(예: "local,kmhan").
-    profiles: Option<String>,
+    pub(crate) profiles: Option<String>,
     /// VM 옵션(예: "-Xms128m -Xmx256m").
-    vm_parameters: Option<String>,
+    pub(crate) vm_parameters: Option<String>,
     /// Multirun 이 참조하는 하위 설정 이름들.
-    children: Vec<String>,
+    pub(crate) children: Vec<String>,
     /// 이 앱에서 **종료**까지 가능한지. 메인 클래스를 알아야 프로세스를 찾을 수 있다.
-    stoppable: bool,
+    pub(crate) stoppable: bool,
     /// 프로젝트 규약(`attic-port.yml`)에서 알아낸 예상 서비스 포트.
     /// 실행 전에도 어떤 포트로 뜰지 보여 주고, 여러 포트를 여는 서비스에서
     /// 대표 포트를 고르는 근거가 된다. 규약이 없는 프로젝트에서는 None.
-    expected_port: Option<u16>,
+    pub(crate) expected_port: Option<u16>,
     /// IDE 로그 동기화("Save console output to file") 상태.
     /// - `Some(true)`  — 켜져 있다. IntelliJ 의 Run 버튼으로 띄운 실행도 여기서 볼 수 있다.
     /// - `Some(false)` — 꺼져 있다. `intellij_enable_log_sync` 로 켤 수 있다.
     /// - `None`        — 실행 설정이 프로젝트 파일(`.idea/runConfigurations/*.xml`)로
     ///   저장돼 있지 않아 손댈 수 없다(임시 설정 등).
-    log_sync: Option<bool>,
+    pub(crate) log_sync: Option<bool>,
 }
 
 /// 최근 IntelliJ 프로젝트(프로젝트 선택 드롭다운용).
@@ -208,21 +208,32 @@ struct LogPayload {
 
 /// XML 에서 뽑아낸 설정 메타데이터.
 #[derive(Default, Clone)]
-struct Meta {
-    kind: Option<String>,
+pub(crate) struct Meta {
+    pub(crate) kind: Option<String>,
     /// 이 설정이 나온 XML 파일. 로그 동기화를 켤 때 여기에 써 넣는다.
     /// 프로젝트 파일로 저장되지 않은 설정(MCP 목록에만 있는 것)은 None 이다.
-    file: Option<PathBuf>,
+    pub(crate) file: Option<PathBuf>,
     /// 실행 설정의 "콘솔 출력을 파일로 저장"(Logs 탭) 경로. IntelliJ XML 의
     /// `<output_file path="…" is_save="true"/>` 에서 읽는다. 매크로 미확장 원본.
     /// 이 옵션이 켜져 있으면 **IDE 의 Run 버튼으로 띄운 실행도** 콘솔이 파일로 남아
     /// my-space 에서 그대로 이어 볼 수 있다.
-    output_file: Option<String>,
-    module: Option<String>,
-    main_class: Option<String>,
-    profiles: Option<String>,
-    vm_parameters: Option<String>,
-    children: Vec<String>,
+    pub(crate) output_file: Option<String>,
+    pub(crate) module: Option<String>,
+    pub(crate) main_class: Option<String>,
+    pub(crate) profiles: Option<String>,
+    pub(crate) vm_parameters: Option<String>,
+    pub(crate) children: Vec<String>,
+    /// 프로그램 인자(`PROGRAM_PARAMETERS`). IDE 없이 띄울 때 메인 클래스 뒤에 붙인다.
+    pub(crate) program_parameters: Option<String>,
+    /// 작업 디렉터리(`WORKING_DIRECTORY`). 매크로 미확장 원본.
+    /// 비어 있거나 `$MODULE_WORKING_DIR$` 이면 모듈 디렉터리를 쓴다.
+    pub(crate) working_directory: Option<String>,
+    /// 실행 설정에 적어 둔 환경변수(`<envs><env name= value=/></envs>`).
+    pub(crate) envs: Vec<(String, String)>,
+    /// 클래스패스 수정(`<classpathModifications><entry path= exclude=/></…>`).
+    /// cowork 의 mysql 커넥터처럼 모듈 의존성에는 없는 jar 를 IDE 가 덧붙이는 자리다.
+    /// 매크로 미확장 원본 경로와 "제외인가" 플래그.
+    pub(crate) classpath_mods: Vec<(String, bool)>,
 }
 
 /// IntelliJ 설정 type 속성을 우리 종류로 정규화한다.
@@ -285,9 +296,36 @@ fn parse_config_file(path: &Path) -> Option<(String, Meta)> {
             Some("VM_PARAMETERS") => {
                 meta.vm_parameters = opt.attribute("value").map(str::to_string)
             }
+            Some("PROGRAM_PARAMETERS") => {
+                meta.program_parameters = opt.attribute("value").map(str::to_string)
+            }
+            Some("WORKING_DIRECTORY") => {
+                meta.working_directory = opt.attribute("value").map(str::to_string)
+            }
             _ => {}
         }
     }
+
+    // <envs><env name="FOO" value="bar" /></envs>
+    meta.envs = config
+        .children()
+        .filter(|n| n.has_tag_name("envs"))
+        .flat_map(|n| n.children())
+        .filter(|n| n.has_tag_name("env"))
+        .filter_map(|n| Some((n.attribute("name")?.to_string(), n.attribute("value")?.to_string())))
+        .collect();
+
+    // <classpathModifications><entry path="…" exclude="true" /></classpathModifications>
+    meta.classpath_mods = config
+        .children()
+        .filter(|n| n.has_tag_name("classpathModifications"))
+        .flat_map(|n| n.children())
+        .filter(|n| n.has_tag_name("entry"))
+        .filter_map(|n| {
+            let path = n.attribute("path")?;
+            Some((path.to_string(), n.attribute("exclude") == Some("true")))
+        })
+        .collect();
 
     // <output_file path="$PROJECT_DIR$/logs/registry.log" is_save="true" />
     meta.output_file = config
@@ -313,7 +351,7 @@ fn parse_config_file(path: &Path) -> Option<(String, Meta)> {
 }
 
 /// 프로젝트의 `.idea/runConfigurations/*.xml` 을 모두 파싱한 메타데이터 맵.
-fn read_metas(project: &str) -> HashMap<String, Meta> {
+pub(crate) fn read_metas(project: &str) -> HashMap<String, Meta> {
     let dir = Path::new(project).join(".idea").join("runConfigurations");
     let mut out = HashMap::new();
     if let Ok(rd) = fs::read_dir(&dir) {
@@ -347,7 +385,7 @@ fn sanitize(name: &str) -> String {
 
 /// Multirun 을 재귀적으로 펼쳐, XML 을 손댈 수 있는 말단 설정 이름들을 모은다.
 /// Multirun 자체는 콘솔이 없으므로 로그 동기화는 언제나 말단 설정에 걸어야 한다.
-fn leaf_configs(metas: &HashMap<String, Meta>, name: &str) -> Vec<String> {
+pub(crate) fn leaf_configs(metas: &HashMap<String, Meta>, name: &str) -> Vec<String> {
     fn walk(
         metas: &HashMap<String, Meta>,
         name: &str,
@@ -542,7 +580,7 @@ const PORT_MAP_REL: &str = "biz/dworks-common-resource/registry-config/attic-por
 ///
 /// yaml 파서를 새로 들이지 않고 이 2단 매핑만 훑는다 — 형식이 고정돼 있고,
 /// 다른 키(`attic.xxx`)나 주석은 그냥 지나친다.
-fn read_port_map(project: &str) -> HashMap<String, u16> {
+pub(crate) fn read_port_map(project: &str) -> HashMap<String, u16> {
     let mut out = HashMap::new();
     let Ok(text) = fs::read_to_string(Path::new(project).join(PORT_MAP_REL)) else {
         return out;
@@ -590,7 +628,7 @@ fn read_port_map(project: &str) -> HashMap<String, u16> {
 /// 키는 IntelliJ 모듈 이름에서 `-boot` 를 뗀 것이다(uaa-boot → uaa). 한 모듈을 프로필로
 /// 나눠 쓰는 경우(apigateway 의 agent/customer/mobile → apigateway-agent …)가 있으므로
 /// `<모듈>-<프로필>` 을 먼저 찾고, 없으면 `<모듈>` 로 떨어진다.
-fn expected_port(ports: &HashMap<String, u16>, meta: &Meta) -> Option<u16> {
+pub(crate) fn expected_port(ports: &HashMap<String, u16>, meta: &Meta) -> Option<u16> {
     let module = meta.module.as_deref()?;
     let base = module.strip_suffix("-boot").unwrap_or(module);
     if let Some(profiles) = meta.profiles.as_deref() {
@@ -679,7 +717,7 @@ pub async fn intellij_list_services(project: String) -> Result<Vec<Service>, Str
 }
 
 /// `$HOME` 를 돌려준다(없으면 에러).
-fn home_dir() -> Result<PathBuf, String> {
+pub(crate) fn home_dir() -> Result<PathBuf, String> {
     std::env::var("HOME")
         .map(PathBuf::from)
         .map_err(|_| "HOME 환경변수를 찾을 수 없습니다".to_string())
@@ -789,7 +827,7 @@ pub async fn intellij_mcp_status() -> McpStatus {
 // ──────────────────────── 프로세스 식별 / 생존 확인 ────────────────────────
 
 /// 실행 중인 프로세스 목록에서 (pid, 커맨드라인)을 읽는다.
-fn ps_list() -> Vec<(u32, String)> {
+pub(crate) fn ps_list() -> Vec<(u32, String)> {
     let out = match std::process::Command::new("ps")
         .args(["-axo", "pid=,command="])
         .output()
@@ -877,7 +915,7 @@ fn profile_list(value: &str) -> Vec<&str> {
 
 /// 프로세스가 LISTEN 중인 TCP 포트들을 읽는다.
 /// `lsof -Fn` 은 `n*:8888` / `n127.0.0.1:8888` 형태의 줄을 준다.
-fn listening_ports(pid: u32) -> Vec<u16> {
+pub(crate) fn listening_ports(pid: u32) -> Vec<u16> {
     let out = match std::process::Command::new("lsof")
         .args([
             "-nP",
@@ -919,7 +957,7 @@ fn primary_port(pid: u32, expect: Option<u16>) -> Option<u16> {
 ///
 /// `expect` (설정에서 알아낸 예상 포트)가 열려 있으면 그것을 쓴다. 고정 포트를 여럿
 /// 여는 서비스에서 "가장 작은 것" 추측이 어긋나는 경우를 없애 준다.
-fn pick_service_port(ports: &[u16], expect: Option<u16>) -> Option<u16> {
+pub(crate) fn pick_service_port(ports: &[u16], expect: Option<u16>) -> Option<u16> {
     if let Some(want) = expect {
         if ports.contains(&want) {
             return Some(want);
@@ -930,13 +968,13 @@ fn pick_service_port(ports: &[u16], expect: Option<u16>) -> Option<u16> {
 
 /// 고정 포트가 끝까지 안 나타날 때(고정 포트를 쓰지 않는 서비스) 마지막 수단.
 /// 가장 작은 포트를 쓴다 — `listening_ports` 는 오름차순이다.
-fn pick_any_port(ports: &[u16]) -> Option<u16> {
+pub(crate) fn pick_any_port(ports: &[u16]) -> Option<u16> {
     ports.first().copied()
 }
 
 /// 종료에 쓰는 신호. Unix 가 아니면 아무 일도 하지 않는다.
 #[derive(Clone, Copy)]
-enum Sig {
+pub(crate) enum Sig {
     /// Ctrl+C 와 같은 신호. **IntelliJ 의 정지 버튼이 보내는 것과 같다** — JVM 종료 훅이
     /// 돌아 Spring Boot 가 graceful shutdown 을 하고 종료 코드 130 으로 끝난다.
     Int,
@@ -986,7 +1024,7 @@ fn process_tree(roots: &[u32]) -> Vec<u32> {
 }
 
 /// 프로세스 트리에 신호를 보낸다.
-fn signal_tree(pids: &[u32], sig: Sig) {
+pub(crate) fn signal_tree(pids: &[u32], sig: Sig) {
     #[cfg(unix)]
     for pid in process_tree(pids) {
         let signum = match sig {
@@ -1002,7 +1040,7 @@ fn signal_tree(pids: &[u32], sig: Sig) {
 }
 
 /// 프로세스가 살아 있는지 확인한다(시그널 0).
-fn is_alive(pid: u32) -> bool {
+pub(crate) fn is_alive(pid: u32) -> bool {
     #[cfg(unix)]
     unsafe {
         libc::kill(pid as i32, 0) == 0
@@ -1199,12 +1237,12 @@ fn note_log_signal(app: &tauri::AppHandle, name: &str, line: &str) {
 }
 
 /// Spring Boot 성공 기동 로그인지("Started XxxApplication in 1.23 seconds").
-fn is_started_line(line: &str) -> bool {
+pub(crate) fn is_started_line(line: &str) -> bool {
     line.contains("Started ") && line.contains(" in ") && line.contains("second")
 }
 
 /// 실행 실패를 뜻하는 로그면 사용자에게 보일 사유를 돌려준다.
-fn detect_failure(line: &str) -> Option<String> {
+pub(crate) fn detect_failure(line: &str) -> Option<String> {
     const MARKERS: &[(&str, &str)] = &[
         ("APPLICATION FAILED TO START", "APPLICATION FAILED TO START"),
         ("Error starting ApplicationContext", "ApplicationContext 시작 오류"),
@@ -1494,7 +1532,7 @@ fn process_age_secs(pid: u32) -> Option<u64> {
 }
 
 /// IntelliJ 설정 파일의 경로 매크로를 실제 경로로 펼친다.
-fn expand_macros(raw: &str, project: &str) -> PathBuf {
+pub(crate) fn expand_macros(raw: &str, project: &str) -> PathBuf {
     let mut s = raw.replace("$PROJECT_DIR$", project);
     if let Ok(home) = home_dir() {
         s = s.replace("$USER_HOME$", &home.to_string_lossy());
@@ -2763,8 +2801,6 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// 위 규칙이 **실제** cowork 파일에도 맞는지 확인한다(모듈 이름 규약이 어긋나면 여기서 걸린다).
-    #[test]
     /// 실제 cowork 의 실행 설정 XML 을 그대로 패치해 보고, 다시 파싱해 켜진 것으로
     /// 읽히는지 확인한다(원본은 건드리지 않고 사본으로만 검증한다).
     #[test]
@@ -2802,6 +2838,7 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
+    /// 위 규칙이 **실제** cowork 파일에도 맞는지 확인한다(모듈 이름 규약이 어긋나면 여기서 걸린다).
     #[test]
     fn expected_ports_match_the_real_cowork_project() {
         if !Path::new(COWORK).join(PORT_MAP_REL).is_file() {

@@ -14,6 +14,9 @@
 //! 안 읽음 판정: conversations.info 의 unread_count_display 는 항상 채워지지 않으므로,
 //! last_read 이후의 메시지를 conversations.history 로 가져와 (내 메시지·시스템 메시지 제외)
 //! 남는 게 있으면 안 읽음으로 본다.
+//!
+//! 스레드(댓글)는 채널과 읽음 상태가 별개이고, **구독 중인 스레드만** 셀 수 있다 —
+//! Slack 이 스레드 읽음 위치를 구독 스레드에만 알려 주기 때문이다(`slack_unreads` 참고).
 
 use serde::Serialize;
 use serde_json::Value;
@@ -672,15 +675,27 @@ pub async fn slack_unreads(app: tauri::AppHandle) -> Result<Vec<ChannelUnread>, 
                 .and_then(|x| x.as_str())
                 .and_then(|s| s.parse::<f64>().ok())
                 .unwrap_or(0.0);
-            // 스레드(댓글) 읽음 상태는 채널 읽음과 별개다. 구독 중인 스레드면 부모 메시지에
-            // last_read(마지막으로 읽은 답글 ts)가 담겨 온다. 채널을 다 읽었어도 스레드 답글은
-            // 안 읽음일 수 있으므로, 채널 last_read 가 아니라 이 스레드 기준으로 판단한다.
-            // (스레드 last_read 가 없으면 - 미구독 등 - 채널 last_read 로 폴백.)
-            let thread_read_str = m
+            // 스레드(댓글) 읽음 상태는 채널 읽음과 **별개**다. 채널을 다 읽어도 스레드 답글은
+            // 안 읽음일 수 있으므로 채널 last_read 로는 판단할 수 없다.
+            //
+            // ⚠️ **구독하지 않은 스레드는 건너뛴다. 채널 last_read 로 폴백하면 안 된다.**
+            // Slack 은 스레드 읽음 위치(last_read)를 **구독 중인 스레드에만** 실어 준다
+            // (선택 채널 41개 스레드 전수 확인: `subscribed == true` ⟺ `last_read` 있음,
+            //  예외 없음 — `conversations.replies` 의 부모도 똑같아서 거기서 다시 얻을 수 없다).
+            // 미구독 스레드에서 채널 last_read 로 폴백하면 **그 답글은 영원히 안 읽음으로 남는다**:
+            // 답글은 채널 타임라인에 없으므로 채널을 아무리 읽어도 채널 last_read 가 답글 ts 를
+            // 넘지 못하고, 사용자가 Slack 에서 그 스레드를 열어 읽어도 읽음 위치가 기록되지 않아
+            // 앱이 알 방법이 자체가 없다(실제로 그렇게 안 읽음이 안 사라졌다).
+            // 건너뛰는 것이 Slack 본체와도 같은 규칙이다 — 구독하지 않은 스레드의 답글은 Slack 의
+            // 안 읽음 배지에도 스레드 탭에도 잡히지 않는다. 나를 멘션한 답글은 Slack 이 자동으로
+            // 구독시키므로 이 규칙으로도 놓치지 않는다.
+            let Some(thread_read_str) = m
                 .get("last_read")
                 .and_then(|x| x.as_str())
                 .map(String::from)
-                .unwrap_or_else(|| last_read_str.clone());
+            else {
+                continue;
+            };
             let thread_read: f64 = thread_read_str.parse().unwrap_or(0.0);
             if latest_reply <= thread_read {
                 continue;
@@ -712,18 +727,13 @@ pub async fn slack_unreads(app: tauri::AppHandle) -> Result<Vec<ChannelUnread>, 
                 .get("messages")
                 .and_then(|x| x.as_array())
                 .unwrap_or(&rempty);
-            // conversations.replies 는 부모(스레드 루트)를 항상 첫 요소로 포함하며, 인증 사용자의
-            // 스레드 읽음 위치(last_read)를 담아 준다. conversations.history 의 부모에는 이 값이
-            // 없어 채널 last_read 로 잘못 폴백됐고(→ 스레드를 읽어도 안 읽음이 안 사라짐), 여기서
-            // replies 부모의 last_read 를 권위값으로 다시 잡는다(없으면 기존 thread_read 로 폴백).
+            // conversations.replies 는 부모(스레드 루트)를 항상 첫 요소로 포함한다. 부모의
+            // last_read 를 여기서 다시 읽지는 않는다 — 위 history 의 값과 **항상 같기 때문이다**
+            // (전수 확인: 구독 스레드는 양쪽 다 같은 값, 미구독은 양쪽 다 없음). 부모를 찾는 건
+            // 원문(작성자·본문)을 맥락용으로 쓰기 위해서다(안 읽음 여부와는 무관).
             let parent_msg = rmsgs
                 .iter()
                 .find(|r| r.get("ts").and_then(|x| x.as_str()) == Some(parent_ts.as_str()));
-            let thread_read_acc = parent_msg
-                .and_then(|p| p.get("last_read").and_then(|x| x.as_str()))
-                .and_then(|s| s.parse::<f64>().ok())
-                .unwrap_or(thread_read);
-            // 부모(스레드 루트) 원문을 맥락용으로 보관(안 읽음 여부와 무관).
             if let Some(p) = parent_msg {
                 thread_parents_raw.entry(parent_ts.clone()).or_insert_with(|| {
                     (
@@ -735,8 +745,8 @@ pub async fn slack_unreads(app: tauri::AppHandle) -> Result<Vec<ChannelUnread>, 
             }
             for r in rmsgs.iter() {
                 let rts = r.get("ts").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                // 부모 자신 제외 + 이 스레드 기준 안 읽음(ts > thread_read_acc) + 이미 수집된 건 제외.
-                if rts.is_empty() || rts == parent_ts || ts_f(r) <= thread_read_acc {
+                // 부모 자신 제외 + 이 스레드 기준 안 읽음(ts > thread_read) + 이미 수집된 건 제외.
+                if rts.is_empty() || rts == parent_ts || ts_f(r) <= thread_read {
                     continue;
                 }
                 // 시스템/멤버십 이벤트·내 답글 제외(is_unread 는 채널 기준이라 여기선 직접 검사).

@@ -73,7 +73,21 @@ table { border-collapse: collapse; }
 }
 `
 
-export function MarkdownViewer({ html, css }: { html: string; css: string }) {
+export function MarkdownViewer({
+  html,
+  css,
+  scrollResetKey,
+}: {
+  html: string
+  css: string
+  /**
+   * "다른 문서로 바뀌었다"를 알리는 값 — 이게 바뀔 때만 스크롤을 맨 위로 되돌린다.
+   * 생략하면 본문(html)이 바뀔 때마다 되돌린다(스펙 문서 뷰처럼 읽기 전용인 화면의 동작).
+   * 마크다운 뷰어처럼 원문을 고쳐 가며 보는 화면은 문서 식별자를 넘겨야 한다 —
+   * 그렇지 않으면 한 글자 칠 때마다 미리보기가 맨 위로 튄다.
+   */
+  scrollResetKey?: string
+}) {
   const hostRef = useRef<HTMLDivElement>(null)
   const shadowRef = useRef<ShadowRoot | null>(null)
   const styleRef = useRef<HTMLStyleElement | null>(null)
@@ -102,17 +116,22 @@ export function MarkdownViewer({ html, css }: { html: string; css: string }) {
     }
   }, [css])
 
-  // 문서가 바뀌면 본문을 갈아 끼우고 스크롤을 맨 위로 되돌린다.
+  // 본문이 바뀌면 갈아 끼운다.
   useEffect(() => {
     const write = writeRef.current
     if (!write) return
     write.innerHTML = html
-    // :host 가 overflow:auto 이므로 스크롤 컨테이너는 호스트 요소 자신이다.
-    hostRef.current?.scrollTo(0, 0)
     // mermaid 코드펜스가 있으면 다이어그램으로 그린다(mermaid 는 이때만 동적 로드).
     const blocks = write.querySelectorAll<HTMLElement>(".mermaid-diagram")
     if (blocks.length) void renderMermaid(blocks)
   }, [html])
+
+  // 다른 문서로 바뀌었으면 처음부터 보여 준다(본문 교체 이펙트 다음에 와야 한다).
+  // :host 가 overflow:auto 이므로 스크롤 컨테이너는 호스트 요소 자신이다.
+  const resetKey = scrollResetKey ?? html
+  useEffect(() => {
+    hostRef.current?.scrollTo(0, 0)
+  }, [resetKey])
 
   return <div ref={hostRef} className="h-full min-h-0 flex-1" />
 }

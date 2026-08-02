@@ -7,6 +7,7 @@ import {
   CheckIcon,
   DownloadIcon,
   FileTextIcon,
+  GlobeIcon,
   HardDriveIcon,
   ListTreeIcon,
   LogOutIcon,
@@ -586,6 +587,49 @@ function SlackSettingsPanel() {
   )
 }
 
+/**
+ * 브라우저 카테고리 설정 화면 — 메모리 관리가 전부다.
+ *
+ * 탭 하나가 WKWebView 하나이고 그 하나가 `WebContent` 프로세스 하나라서, 탭 두 개면
+ * 600MB 가 그냥 나간다. 이 화면에서 고르는 건 "그 메모리를 언제 돌려받을지" 뿐이다.
+ */
+function BrowserSettingsPanel() {
+  const { settings, setBrowser } = useSettings()
+  const minutes = settings.browser.discardMinutes
+
+  return (
+    <div className="flex flex-col">
+      <PanelHeader
+        title="브라우저"
+        description="웹 탭이 차지하는 메모리를 언제 돌려받을지 정합니다. 탭 하나가 곧 브라우저 프로세스 하나라, 열어 둔 페이지마다 수백 MB 를 씁니다."
+      />
+
+      <div className="mt-4 border-t border-border">
+        <SettingChoiceRow
+          title="안 보는 탭 메모리 해제"
+          description="이 시간 동안 보지 않은 탭은 페이지를 닫아 메모리를 돌려줍니다. 탭 자체는 목록에 남고, 다시 누르면 그 주소를 새로 불러옵니다(스크롤 위치와 입력 중이던 내용은 사라집니다). 다른 앱을 쓰는 동안도 '안 보는' 것으로 셉니다. 탭을 오가는 정도로는 해제되지 않습니다."
+          value={minutes}
+          options={[
+            { label: "1분", value: 1 },
+            { label: "5분", value: 5 },
+            { label: "15분", value: 15 },
+            { label: "30분", value: 30 },
+            { label: "1시간", value: 60 },
+            { label: "해제 안 함", value: 0 },
+          ]}
+          onChange={(v) => setBrowser({ discardMinutes: v })}
+        />
+      </div>
+
+      <p className="mt-3 text-[13px] text-muted-foreground">
+        {minutes === 0
+          ? "해제하지 않으면 열어 둔 탭이 모두 메모리를 계속 차지합니다. 브라우저 메뉴 탭을 닫으면 그때는 전부 해제됩니다."
+          : "브라우저 메뉴 탭을 닫으면 이 시간과 상관없이 모든 웹 탭이 바로 해제됩니다. 지금 화면에 띄워 두고 보고 있는 탭만 해제되지 않습니다."}
+      </p>
+    </div>
+  )
+}
+
 /** Google Calendar 카테고리 설정 화면 — Google 계정 연결/해제. */
 function GoogleCalendarSettingsPanel() {
   return (
@@ -656,10 +700,10 @@ function CmuxPasswordRow() {
         cmux 소켓 비밀번호
       </label>
       <p className="text-[13px] text-muted-foreground">
-        cmux 설정 → Automation 의 소켓 비밀번호와 같은 값을 넣습니다. 세션 목록과
-        상태는 비밀번호 없이도 보입니다 — 이 값은 <b>이동 · 프롬프트 전송 · 터미널
-        로그 보기</b>에만 필요합니다(cmux 소켓은 cmux 안에서 실행된 프로그램만 받아
-        주기 때문입니다).
+        cmux 설정 → Automation 의 소켓 비밀번호와 같은 값을 넣습니다. 세션
+        목록과 상태는 비밀번호 없이도 보입니다 — 이 값은{" "}
+        <b>이동 · 프롬프트 전송 · 터미널 로그 보기</b>에만 필요합니다(cmux
+        소켓은 cmux 안에서 실행된 프로그램만 받아 주기 때문입니다).
       </p>
       <Input
         id="cmux-password"
@@ -723,7 +767,8 @@ function ClaudeCodeSettingsPanel() {
 
 /**
  * 펫이 어떤 상황에서 어떤 동작을 하는지 한 번에 보여 주는 표.
- * 동작 정의는 `use-pet-mood.ts` 의 PetMood 가 원본이고, 여기 문구는 그것과 맞춰 둔다.
+ * 동작 정의는 `use-pet-mood.ts` 의 PetMood 가 원본이고(대기 중을 알림 종류로 나누는 규칙은
+ * `pet-sprite.ts` 의 `sheetStateFor`), 여기 문구는 그것과 맞춰 둔다.
  */
 function PetBehaviorTable() {
   const rows: { name: string; when: string; how: string }[] = [
@@ -735,7 +780,7 @@ function PetBehaviorTable() {
     {
       name: "동작 중",
       when: "Claude 작업 1건 실행 중",
-      how: "일하는 동작으로 움직입니다 (…)",
+      how: "일하는 동작으로 움직이고 건수를 표시합니다",
     },
     {
       name: "바쁨",
@@ -743,9 +788,24 @@ function PetBehaviorTable() {
       how: "더 분주한 동작으로 움직이고 건수를 표시합니다",
     },
     {
-      name: "대기 중",
-      when: "작업 완료·AskUserQuestion·리마인더·받을 알림 — 확인이 필요함",
-      how: "대기 동작으로 바뀌고 확인 표시가 붙습니다 (!)",
+      name: "대기 중 · 입력",
+      when: "AskUserQuestion·권한 요청으로 작업이 멈춤",
+      how: "손을 흔들어 부릅니다 (!)",
+    },
+    {
+      name: "대기 중 · 완료",
+      when: "Claude 작업이 끝남",
+      how: "폴짝 뜁니다 (✨)",
+    },
+    {
+      name: "대기 중 · 알림",
+      when: "Gmail·Slack·캘린더에 볼 것이 생김",
+      how: "읽는 동작으로 바뀝니다 (알림 표시)",
+    },
+    {
+      name: "대기 중 · 리마인더",
+      when: "리마인더 시각이 됨",
+      how: "얌전히 기다립니다 (종 표시)",
     },
   ]
 
@@ -766,6 +826,10 @@ function PetBehaviorTable() {
           <span className="text-[13px] text-muted-foreground">{r.how}</span>
         </div>
       ))}
+      <p className="border-t border-border bg-muted/40 px-3 py-2 text-[13px] text-muted-foreground">
+        대기 중 네 가지의 동작 구분은 애니메이션 캐릭터에서만 나타납니다. 이미지
+        한 장으로 만든 캐릭터는 머리 위 표시로만 구분됩니다.
+      </p>
     </div>
   )
 }
@@ -1288,6 +1352,55 @@ function IntellijSettingsPanel() {
 }
 
 /**
+ * Cowork 서비스 설정 화면 — IntelliJ 없이 서비스를 띄울 프로젝트 경로.
+ *
+ * Cowork Spec 문서의 홈 경로와 **다른 값이다**(`coworkService.projectPath` vs
+ * `cowork.home`). 스펙 문서만 따로 클론해 두거나 여러 워크트리 중 하나에서만 서비스를
+ * 띄우는 게 흔해서, 하나로 묶으면 한쪽을 바꿀 때 다른 쪽이 깨진다.
+ */
+function CoworkServiceSettingsPanel() {
+  const { settings, setCoworkService } = useSettings()
+  const path = settings.coworkService.projectPath
+
+  return (
+    <div className="flex flex-col">
+      <PanelHeader
+        title="Cowork 서비스"
+        description="IntelliJ 를 띄우지 않고 cowork 의 실행 설정(프로필·VM 옵션·클래스패스)을 그대로 기동합니다. IDE 가 한 번 임포트해 둔 프로젝트 모델을 읽어 쓰므로, 프로젝트를 IntelliJ 에서 한 번 열어 둔 상태여야 합니다(그 뒤로는 IDE 를 꺼도 됩니다)."
+      />
+
+      <div className="mt-4 flex flex-col gap-1.5">
+        <label
+          className="text-[15px] font-semibold"
+          htmlFor="cowork-service-path"
+        >
+          cowork 프로젝트 경로
+        </label>
+        <p className="text-[13px] text-muted-foreground">
+          cowork 를 클론한 폴더(= IntelliJ 로 여는 프로젝트 루트)입니다. 이 아래{" "}
+          <span className="font-mono">.idea/runConfigurations</span> 에서 실행
+          설정을 읽습니다. <span className="font-mono">~</span> 는 홈으로
+          펼쳐집니다. 비워 두면 앱을 처음 열 때 IntelliJ 최근 프로젝트에서{" "}
+          <span className="font-mono">cowork</span> 를 찾아 자동으로 채웁니다.
+        </p>
+        <Input
+          id="cowork-service-path"
+          value={path}
+          onChange={(e) => setCoworkService({ projectPath: e.target.value })}
+          placeholder="예: ~/git/cowork"
+          spellCheck={false}
+          className="mt-1 font-mono text-[13px]"
+        />
+        <p className="mt-1 text-[13px] text-muted-foreground">
+          <b>Cowork Spec 문서</b> 의 홈 디렉터리와는 별개의 값입니다 — 문서를
+          보는 폴더와 서비스를 띄우는 폴더가 달라도 됩니다.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/**
  * Cowork spec 문서 설정 화면 — 스펙 문서를 찾을 cowork 홈 경로와, 마크다운 뷰어에
  * 입힐 스타일(css)을 관리한다.
  *
@@ -1548,6 +1661,12 @@ const CATEGORIES: SettingsCategory[] = [
     panel: <SlackSettingsPanel />,
   },
   {
+    id: "browser",
+    label: "브라우저",
+    icon: GlobeIcon,
+    panel: <BrowserSettingsPanel />,
+  },
+  {
     id: "jira",
     label: "Jira",
     icon: SquareKanbanIcon,
@@ -1582,6 +1701,12 @@ const CATEGORIES: SettingsCategory[] = [
     label: "IntelliJ",
     icon: ServerIcon,
     panel: <IntellijSettingsPanel />,
+  },
+  {
+    id: "cowork-service",
+    label: "Cowork 서비스",
+    icon: ServerIcon,
+    panel: <CoworkServiceSettingsPanel />,
   },
   {
     id: "cowork-spec",

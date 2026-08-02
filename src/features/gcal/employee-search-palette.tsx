@@ -1,4 +1,10 @@
-import { CalendarIcon, EyeOffIcon, SearchIcon, UsersIcon, XIcon } from "lucide-react"
+import {
+  CalendarIcon,
+  EyeOffIcon,
+  SearchIcon,
+  UsersIcon,
+  XIcon,
+} from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import { Input } from "@/components/ui/input"
@@ -253,7 +259,9 @@ export function EmployeeSearchPalette() {
                         onMouseMove={() => setActive(i)}
                         className={cn(
                           "flex min-h-9 items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[15px] transition-colors",
-                          i === active ? "bg-ui-list-hover" : "hover:bg-ui-list-hover"
+                          i === active
+                            ? "bg-ui-list-hover"
+                            : "hover:bg-ui-list-hover"
                         )}
                       >
                         <UsersIcon className="size-4 shrink-0 text-muted-foreground" />

@@ -20,7 +20,7 @@ import {
   type BuiltinSpriteId,
 } from "./pet-species"
 import { animPathFor, type PetAnimPaths } from "./pet-anim"
-import type { PetMood } from "./use-pet-mood"
+import type { PetAlert, PetMood } from "./use-pet-mood"
 
 /*
  * Petdex / Codex 펫 스프라이트시트 재생.
@@ -79,7 +79,7 @@ export function stateRow(name: SheetState, rows: number): number {
 }
 
 /**
- * 펫 동작 → 스프라이트 상태.
+ * 펫 동작 → 스프라이트 상태(`waiting` 이 아닐 때).
  *
  * `busy`(2건 이상)는 `running-right` 로 — `running`(6프레임)보다 프레임이 많아(8) 더
  * 바쁘게 보이고, 같은 달리기라 동작이 어색하게 튀지 않는다.
@@ -87,12 +87,47 @@ export function stateRow(name: SheetState, rows: number): number {
  * ⚠️ `idle` 은 "자는 모습"이 되어야 하는데 규격에 잠자는 상태가 없다. 그래서 스프라이트
  * 종류에서는 `idle`(가만히 서 있는 동작)을 쓰고, 자고 있다는 건 머리 위 Zzz 배지가 알린다
  * (pet-character.tsx 의 MoodMark) — 표정을 우리가 그리는 종류는 이제 없다.
+ *
+ * `running-left` 와 `failed` 는 일부러 비워 둔다. `running-left` 는 `running-right` 의
+ * 좌우 반전이라 방향으로는 아무 정보도 전할 수 없고(건수는 머리 위 숫자가 말한다),
+ * `failed` 는 붙일 신호 자체가 없다 — herdr `agent_status` 에 실패 값이 없다
+ * (`agent-status.ts`: working/blocked/done/idle/unknown). 감시가 켜져 있는데 어느
+ * 백엔드도 응답하지 않는 상태를 이벤트로 올리게 되면 그때 `failed` 자리다.
  */
-export const MOOD_STATE: Record<PetMood, SheetState> = {
+const MOOD_STATE: Record<Exclude<PetMood, "waiting">, SheetState> = {
   idle: "idle",
   running: "running",
   busy: "running-right",
-  waiting: "waiting",
+}
+
+/**
+ * 동작 + 알림 종류 → 스프라이트 상태.
+ *
+ * `waiting` 만 알림 종류로 갈린다. 머리 위 배지가 이미 같은 `PetAlert` 로 아이콘을 고르므로
+ * (pet-character.tsx 의 MoodMark) 포즈와 배지가 늘 같은 근거를 말하게 된다.
+ *
+ *  - `input`(AskUserQuestion·권한 요청) → `waving`: 작업이 멈춘 채 사람을 부르는 유일한
+ *    상태라 시트에서 가장 빠른 동작(4프레임/700ms)을 준다.
+ *  - `done`(작업 완료)  → `jumping`
+ *  - `app`(Gmail·Slack·캘린더) → `review`: 작업이 멈춘 게 아니라 "읽을 것이 생겼다"다.
+ *  - 그 밖(리마인더 등) → `waiting`: 시간이 되어 얌전히 기다리는 모습. 종류는 빨간 종
+ *    배지가 말하므로 동작까지 요란할 필요가 없다.
+ */
+export function sheetStateFor(
+  mood: PetMood,
+  alert: PetAlert | null
+): SheetState {
+  if (mood !== "waiting") return MOOD_STATE[mood]
+  switch (alert) {
+    case "input":
+      return "waving"
+    case "done":
+      return "jumping"
+    case "app":
+      return "review"
+    default:
+      return "waiting"
+  }
 }
 
 /**
