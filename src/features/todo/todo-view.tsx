@@ -1,8 +1,9 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import {
   CheckIcon,
+  CircleAlertIcon,
+  FolderSyncIcon,
   GripVerticalIcon,
-  PencilIcon,
   PlusIcon,
   RotateCcwIcon,
   StickyNoteIcon,
@@ -69,8 +70,13 @@ function StickyCard({
   const [editingText, setEditingText] = useState("")
   // 포스트잇 삭제는 되돌리기 쉽지 않으므로 한 번 확인한다(헤더가 확인 바로 바뀐다).
   const [confirming, setConfirming] = useState(false)
+  // 카테고리 이동 목록을 펼쳤는지. 레일로 끌어다 놓는 방법도 있지만 드래그는 눈에 보이는
+  // 단서가 없어 아무도 찾지 못하므로, 사이드바 고정(우클릭 + 드래그)과 같이 둘 다 둔다.
+  const [moving, setMoving] = useState(false)
 
   const remaining = note.todos.filter((t) => !t.done).length
+  // 옮겨 갈 수 있는 카테고리(자기 카테고리는 뺀다).
+  const others = api.categories.filter((c) => c.id !== note.categoryId)
 
   const submitTodo = (e: React.FormEvent) => {
     e.preventDefault()
@@ -131,12 +137,22 @@ function StickyCard({
           </Button>
         </div>
       ) : (
-        <div className="flex shrink-0 items-center gap-1.5 border-b border-[color-mix(in_oklab,var(--sticky-accent)_22%,var(--border))] px-3 py-3">
-          {/* 드래그 핸들 — 제목 입력과 충돌하지 않도록 순서 변경은 여기서만 시작한다. */}
+        <div
+          // 카테고리 이동은 우클릭으로 연다 — 헤더에 아이콘을 하나 더 두면 좁은 카드에서
+          // 제목이 밀리고, 사이드바 고정도 같은 방식(우클릭 + 드래그)이라 관례가 맞는다.
+          onContextMenu={(e) => {
+            if (others.length === 0) return
+            e.preventDefault()
+            setMoving(true)
+          }}
+          className="flex shrink-0 items-center gap-1.5 border-b border-[color-mix(in_oklab,var(--sticky-accent)_22%,var(--border))] px-3 py-3"
+        >
+          {/* 드래그 핸들 — 제목 입력과 충돌하지 않도록 순서 변경은 여기서만 시작한다.
+              카테고리 레일에 놓으면 그 카테고리로 이동한다(TodoView 의 pointerup 이 판단). */}
           <button
             type="button"
             aria-label="포스트잇 순서 변경(드래그)"
-            title="드래그하여 순서 변경"
+            title="드래그하여 순서 변경 · 카테고리로 끌어다 놓으면 이동"
             onPointerDown={(e) => drag.onHandleDown(e, note.id)}
             className="flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-[color-mix(in_oklab,var(--sticky-accent)_20%,transparent)] hover:text-foreground active:cursor-grabbing"
           >
@@ -197,7 +213,9 @@ function StickyCard({
               />
             ) : (
               <>
-                {/* 클릭 한 번으로 편집 — 더블클릭은 단서가 없어 아무도 찾지 못한다.
+                {/* 항목을 누르면 곧바로 편집이다 — 더블클릭은 단서가 없어 아무도 찾지
+                    못하고, 연필 아이콘은 그 단서 역할이었지만 행마다 아이콘이 둘씩
+                    붙어 좁은 카드에서 글자가 밀렸다(클릭 편집은 그대로 남는다).
                     span 이 아니라 button 이라 키보드로도 편집에 들어갈 수 있다. */}
                 <button
                   type="button"
@@ -211,16 +229,6 @@ function StickyCard({
                   )}
                 >
                   {t.text}
-                </button>
-                {/* 연필 — 클릭으로 편집된다는 사실을 hover 때 눈에 보이게 하는 단서. */}
-                <button
-                  type="button"
-                  onClick={() => startEdit(t)}
-                  aria-label="할 일 수정"
-                  title="할 일 수정"
-                  className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-[color-mix(in_oklab,var(--sticky-accent)_28%,transparent)] hover:text-foreground"
-                >
-                  <PencilIcon className="size-3.5" />
                 </button>
                 <button
                   type="button"
@@ -255,6 +263,39 @@ function StickyCard({
           </form>
         </li>
       </ul>
+
+      {/* 카테고리 이동(헤더 우클릭으로 열린다) — 칩 하나가 카테고리 하나다
+          (Slack 의 필터 칩과 같은 rounded-full). 여는 버튼이 없으므로 닫는 X 는 여기 있다. */}
+      {moving && others.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-[color-mix(in_oklab,var(--sticky-accent)_22%,var(--border))] px-4 py-3">
+          <span className="shrink-0 text-[13px] text-muted-foreground">
+            이동:
+          </span>
+          {others.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => {
+                setMoving(false)
+                api.moveNoteToCategory(note.id, c.id)
+              }}
+              title={`${c.name} 카테고리로 이동`}
+              className="max-w-full cursor-pointer truncate rounded-full border border-border bg-background px-2.5 py-0.5 text-[13px] font-bold transition-colors hover:bg-ui-list-hover"
+            >
+              {c.name}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setMoving(false)}
+            aria-label="이동 취소"
+            title="닫기"
+            className="ml-auto flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color-mix(in_oklab,var(--sticky-accent)_28%,transparent)] hover:text-foreground"
+          >
+            <XIcon className="size-4" />
+          </button>
+        </div>
+      )}
 
       {/* 색 선택 — Slack 은 원형 점을 쓴다. 고른 색만 파란 포커스 링으로 표시한다. */}
       <div className="flex items-center gap-2.5 border-t border-[color-mix(in_oklab,var(--sticky-accent)_22%,var(--border))] px-4 py-3">
@@ -353,13 +394,80 @@ function DeletedCard({ note, api }: { note: StickyNote; api: Api }) {
  * Slack 사이드바 톤(28px 알약 행, 선택 시 selection 색). 카테고리를 지우면 그 안의
  * 포스트잇은 휴지통으로 간다. 마지막 하나는 지울 수 없다(항상 하나는 있어야 추가 가능).
  */
-function CategoryRail({ api }: { api: Api }) {
+function CategoryRail({
+  api,
+  noteDragging,
+}: {
+  api: Api
+  /** 포스트잇을 끌고 있는 중인지 — 레일이 드롭 대상으로 자신을 표시한다. */
+  noteDragging: boolean
+}) {
   const { categories, activeCategoryId, notes } = api
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState("")
   const [confirmId, setConfirmId] = useState<string | null>(null)
+
+  // 카테고리 순서 변경(드래그). 포스트잇과 같은 이유로 pointer 이벤트로 직접 구현한다
+  // (WKWebView 에서 HTML5 draggable 이 제대로 동작하지 않는다).
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dropAt, setDropAt] = useState<{ id: string; before: boolean } | null>(
+    null
+  )
+  // 포스트잇을 끌어 왔을 때 지금 어느 행 위에 있는지. pointer capture 를 아무도 잡지
+  // 않으므로 드래그 중에도 onPointerEnter 가 정상적으로 발생한다.
+  const [hoverId, setHoverId] = useState<string | null>(null)
+
+  // 행을 눌러 끌면 순서 변경, 그냥 누르면 선택이다. 둘을 가르는 것은 이동 거리다 —
+  // 별도 그립 핸들을 두기에는 행이 32px 로 좁고, 사이드바도 같은 방식이다.
+  // 드래그였는지는 ref 로 남겨 onClick 에서 확인한다(클릭은 pointerup 뒤에 온다).
+  const draggedRef = useRef(false)
+
+  const startCategoryDrag = (e: React.PointerEvent, catId: string) => {
+    if (e.button !== 0) return
+    draggedRef.current = false
+    const originY = e.clientY
+    let started = false
+
+    const targetAt = (x: number, y: number) => {
+      const row = document
+        .elementFromPoint(x, y)
+        ?.closest<HTMLElement>("[data-category-drop]")
+      const targetId = row?.dataset.categoryDrop
+      if (!targetId || targetId === catId) return null
+      const rect = row!.getBoundingClientRect()
+      // 레일은 세로 목록이라 위/아래 절반으로 삽입 위치를 정한다.
+      return { id: targetId, before: y < rect.top + rect.height / 2 }
+    }
+
+    const onMove = (ev: PointerEvent) => {
+      // 4px 임계값 — 클릭할 때의 미세한 흔들림을 드래그로 오해하지 않는다.
+      if (!started && Math.abs(ev.clientY - originY) < 4) return
+      if (!started) {
+        started = true
+        draggedRef.current = true
+        setDragId(catId)
+        document.body.style.userSelect = "none"
+      }
+      setDropAt(targetAt(ev.clientX, ev.clientY))
+    }
+
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+      document.body.style.userSelect = ""
+      if (started) {
+        const target = targetAt(ev.clientX, ev.clientY)
+        if (target) api.moveCategory(catId, target.id, target.before)
+      }
+      setDragId(null)
+      setDropAt(null)
+    }
+
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+  }
 
   const countOf = (id: string) =>
     notes.filter((n) => n.categoryId === id).length
@@ -422,21 +530,49 @@ function CategoryRail({ api }: { api: Api }) {
               </li>
             )
           }
+          // 포스트잇을 끌어 와 이 행 위에 올린 상태(놓으면 그 카테고리로 이동).
+          const noteDrop = noteDragging && hoverId === cat.id
           return (
-            <li key={cat.id} className="group/cat relative px-1">
+            <li
+              key={cat.id}
+              data-category-drop={cat.id}
+              onPointerEnter={() => setHoverId(cat.id)}
+              onPointerLeave={() =>
+                setHoverId((h) => (h === cat.id ? null : h))
+              }
+              className={cn(
+                "group/cat relative px-1",
+                dragId === cat.id && "opacity-40",
+                // 세로 목록이라 삽입 위치는 행 위/아래 가로선으로 표시한다.
+                dropAt?.id === cat.id &&
+                  dragId !== cat.id &&
+                  "before:absolute before:inset-x-1 before:h-0.5 before:rounded-full before:bg-ui-selection",
+                dropAt?.id === cat.id && dropAt.before
+                  ? "before:-top-0.5"
+                  : dropAt?.id === cat.id && "before:-bottom-0.5"
+              )}
+            >
               <button
                 type="button"
-                onClick={() => api.selectCategory(cat.id)}
+                onPointerDown={(e) => startCategoryDrag(e, cat.id)}
+                onClick={() => {
+                  // 드래그로 끝난 pointerup 뒤에도 클릭이 오므로 걸러 낸다.
+                  if (draggedRef.current) return
+                  api.selectCategory(cat.id)
+                }}
                 onDoubleClick={() => {
                   setEditingId(cat.id)
                   setEditingText(cat.name)
                 }}
-                title={cat.name}
+                title={`${cat.name} — 드래그하여 순서 변경`}
                 className={cn(
-                  "flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-[15px] transition-colors",
+                  "flex h-8 w-full touch-none items-center gap-2 rounded-lg px-2.5 text-left text-[15px] transition-colors",
                   active
                     ? "bg-ui-selection font-bold text-ui-selection-fg"
-                    : "hover:bg-ui-list-hover"
+                    : "hover:bg-ui-list-hover",
+                  // 포스트잇 드롭 대상임을 링으로 알린다(배경색은 선택 상태와 겹친다).
+                  noteDrop &&
+                    "outline-2 outline-offset-1 outline-ring outline-solid"
                 )}
               >
                 <span className="min-w-0 flex-1 truncate">{cat.name}</span>
@@ -581,8 +717,17 @@ export function TodoView() {
       window.removeEventListener("pointerup", onUp)
       document.body.style.userSelect = ""
       if (started) {
-        const target = targetAt(ev.clientX, ev.clientY)
-        if (target) moveNote(noteId, target.id, target.before)
+        // 카테고리 레일 위에 놓았으면 순서 변경이 아니라 **카테고리 이동**이다.
+        // 레일이 먼저다 — 레일 행에는 다른 포스트잇 카드가 없으니 둘이 겹치지 않는다.
+        const catId = document
+          .elementFromPoint(ev.clientX, ev.clientY)
+          ?.closest<HTMLElement>("[data-category-drop]")?.dataset.categoryDrop
+        if (catId) {
+          api.moveNoteToCategory(noteId, catId)
+        } else {
+          const target = targetAt(ev.clientX, ev.clientY)
+          if (target) moveNote(noteId, target.id, target.before)
+        }
       }
       setDragId(null)
       setDropAt(null)
@@ -594,8 +739,8 @@ export function TodoView() {
 
   return (
     <div className="flex w-full gap-5">
-      {/* 왼쪽: 카테고리 레일 */}
-      <CategoryRail api={api} />
+      {/* 왼쪽: 카테고리 레일 — 포스트잇을 끌어와 놓으면 그 카테고리로 이동한다. */}
+      <CategoryRail api={api} noteDragging={dragId !== null} />
 
       {/* 오른쪽: 선택된 카테고리의 포스트잇 */}
       <div className="flex min-w-0 flex-1 flex-col gap-3">
@@ -604,6 +749,29 @@ export function TodoView() {
           <span className="text-[13px] text-muted-foreground tabular-nums">
             포스트잇 {activeNotes.length}개
           </span>
+          {/*
+            마크다운 폴더에 저장 중임을 알린다. 실패는 반드시 보여야 한다 — 조용히
+            실패하면 사용자는 파일이 최신인 줄 알고 Obsidian 쪽을 신뢰하게 된다
+            (앱 안의 데이터는 localStorage 에 그대로 있어 잃지 않는다).
+          */}
+          {api.folder.folder &&
+            (api.folder.error ? (
+              <span
+                className="flex min-w-0 items-center gap-1 text-[13px] text-ui-error"
+                title={api.folder.error}
+              >
+                <CircleAlertIcon className="size-3.5 shrink-0" />
+                <span className="truncate">파일 저장 실패</span>
+              </span>
+            ) : (
+              <span
+                className="flex min-w-0 items-center gap-1 text-[13px] text-muted-foreground"
+                title={`${api.folder.folder} 의 마크다운 파일과 동기화됩니다.`}
+              >
+                <FolderSyncIcon className="size-3.5 shrink-0" />
+                <span className="truncate">파일 동기화</span>
+              </span>
+            ))}
           <Button
             size="sm"
             variant={showTrash ? "secondary" : "outline"}
@@ -635,7 +803,14 @@ export function TodoView() {
             없습니다. “포스트잇 추가”로 시작하세요.
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          /*
+            열 수를 브레이크포인트로 못 박지 않고 **카드 최소 폭**으로 정한다.
+            `lg:grid-cols-3` 은 화면 폭만 보므로 사이드바와 카테고리 레일이 먹는 폭이
+            빠지면서 카드가 좁아져 할 일 한 줄이 두 줄로 접혔다. `auto-fill` 은 남는
+            공간을 카드 폭으로 돌려주므로 넓은 창에서 카드가 같이 넓어진다.
+            (`auto-fit` 이 아닌 이유: 포스트잇이 하나뿐일 때 카드가 창 전체로 늘어난다.)
+          */
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(360px,100%),1fr))] gap-3">
             {activeNotes.map((note) => (
               <StickyCard
                 key={note.id}

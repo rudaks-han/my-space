@@ -10,6 +10,20 @@ export interface GcalStatus {
   can_write: boolean
   /** 도메인 주소록으로 참석자 이름을 채울 수 있는지. false 면 재연결이 필요하다. */
   can_directory: boolean
+  /** 저장된 OAuth 클라이언트 ID(재연결 폼 자동 채움). 없으면 null. */
+  client_id: string | null
+  /** 보안 비밀이 저장돼 있는지. 값 자체는 Rust 밖으로 나오지 않는다. */
+  has_secret: boolean
+}
+
+/** 연결이 전혀 없는 상태(상태 조회 실패 시의 안전한 기본값). */
+const DISCONNECTED: GcalStatus = {
+  connected: false,
+  email: null,
+  can_write: false,
+  can_directory: false,
+  client_id: null,
+  has_secret: false,
 }
 
 /** 내 구글 캘린더 목록 항목(회의실 선택용). */
@@ -82,6 +96,7 @@ export function useGcalConnection() {
       setError(null)
       try {
         // 브라우저 로그인 완료까지 대기(최대 3분) — 완료되면 상태가 채워진다.
+        // 빈 문자열을 넘기면 Rust 가 저장된 클라이언트 정보를 쓴다.
         setStatus(
           await trackedInvoke<GcalStatus>("gcal_start_auth", {
             clientId,
@@ -95,14 +110,11 @@ export function useGcalConnection() {
     []
   )
 
-  const disconnect = useCallback(async () => {
-    await trackedInvoke("gcal_disconnect")
-    setStatus({
-      connected: false,
-      email: null,
-      can_write: false,
-      can_directory: false,
-    })
+  const disconnect = useCallback(async (forgetClient = false) => {
+    // 해제 후 상태는 Rust 가 돌려준다 — 클라이언트 정보가 남았는지 여기서 추측하지 않는다.
+    setStatus(
+      await trackedInvoke<GcalStatus>("gcal_disconnect", { forgetClient })
+    )
     setError(null)
   }, [])
 
@@ -114,13 +126,7 @@ export function useGcalConnection() {
         if (!cancelled) setStatus(s)
       })
       .catch(() => {
-        if (!cancelled)
-          setStatus({
-            connected: false,
-            email: null,
-            can_write: false,
-            can_directory: false,
-          })
+        if (!cancelled) setStatus(DISCONNECTED)
       })
     return () => {
       cancelled = true

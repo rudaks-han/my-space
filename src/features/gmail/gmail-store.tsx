@@ -125,9 +125,12 @@ export function GmailProvider({ children }: { children: ReactNode }) {
     [refreshInbox]
   )
 
-  const disconnect = useCallback(async () => {
-    await trackedInvoke("gmail_disconnect")
-    setStatus({ connected: false, email: null })
+  const disconnect = useCallback(async (forgetClient = false) => {
+    // 해제 후 상태는 Rust 가 돌려준다 — 클라이언트 정보가 남았는지 여기서 추측하지 않는다.
+    const s = await trackedInvoke<GmailStatus>("gmail_disconnect", {
+      forgetClient,
+    })
+    setStatus(s)
     setInbox([])
     setTotalUnread(0)
     setUpdatedAt(null)
@@ -144,7 +147,13 @@ export function GmailProvider({ children }: { children: ReactNode }) {
         if (s.connected) void refreshInbox()
       })
       .catch(() => {
-        if (!cancelled) setStatus({ connected: false, email: null })
+        if (!cancelled)
+          setStatus({
+            connected: false,
+            email: null,
+            client_id: null,
+            has_secret: false,
+          })
       })
     return () => {
       cancelled = true

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -32,6 +32,7 @@ import {
 import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import { useLocalStorage } from "@/lib/use-local-storage"
+import { highlightLogLine } from "./console-highlight"
 import { sequenceFor } from "./start-sequences"
 import { StagePlanDialog } from "./stage-plan-dialog"
 import {
@@ -124,29 +125,36 @@ function KindIcon({ kind, className }: { kind: string; className?: string }) {
   return <TerminalIcon className={className} />
 }
 
-/** 로그 한 줄. 레벨 토큰을 찾아 색을 입힌다(IntelliJ 콘솔과 비슷하게). */
-function LogLine({ line }: { line: string }) {
+/**
+ * 로그 한 줄 — IntelliJ 콘솔과 같은 구문 강조.
+ *
+ * 무엇을 무슨 색으로 칠할지는 `console-highlight.ts` 가 정한다(로그가 찍은 ANSI 를
+ * 우선 쓰고, 없으면 로그 패턴을 뜯는다). 여기서는 그 조각을 그리는 일과, 로그 줄이
+ * 아닌 두 가지만 따로 본다 — 이 앱이 끼워 넣은 안내(`[my-space]`)와 스택트레이스.
+ *
+ * `memo` 인 이유: 콘솔은 수천 줄을 한 배열로 그리는데 줄이 하나 붙을 때마다 그 배열이
+ * 새로 만들어진다. 줄 문자열 자체는 그대로이므로 memo 가 나머지 줄의 재파싱을 전부 막는다.
+ */
+const LogLine = memo(function LogLine({ line }: { line: string }) {
   // 이 앱이 직접 끼워 넣은 안내 줄은 구분해서 보여준다.
   if (line.startsWith("[my-space]")) {
     return (
       <div className="whitespace-pre text-muted-foreground italic">{line}</div>
     )
   }
-  const level = /\b(ERROR|WARN|INFO|DEBUG|TRACE)\b/.exec(line)?.[1]
+  // 스택트레이스는 예외 하나에 수십 줄이 딸려 온다 — 통째로 눌러 본문을 가리지 않게.
+  const trace = line.startsWith("\tat ") || line.startsWith("  at ")
   return (
-    <div
-      className={cn(
-        // IntelliJ 콘솔처럼 줄바꿈하지 않고 가로로 스크롤한다.
-        "whitespace-pre",
-        level === "ERROR" && "text-ui-error",
-        level === "WARN" && "text-ui-warning",
-        !level && line.startsWith("\tat") && "text-muted-foreground"
-      )}
-    >
-      {line}
+    // IntelliJ 콘솔처럼 줄바꿈하지 않고 가로로 스크롤한다.
+    <div className={cn("whitespace-pre", trace && "text-muted-foreground")}>
+      {highlightLogLine(line).map((seg, i) => (
+        <span key={i} className={seg.className}>
+          {seg.text}
+        </span>
+      ))}
     </div>
   )
-}
+})
 
 /**
  * 트리 행 오른쪽에 붙는 실행 버튼 — IntelliJ Services 창의 행 버튼과 같은 자리.
@@ -1127,7 +1135,8 @@ function ServicesView({ backend }: { backend: ServicesBackend }) {
         {backend === "standalone" ? (
           // IDE 를 켜지 않고 쓰는 기능이라 "최근 프로젝트" 목록에 기댈 수 없다.
           // 경로를 여기서 바로 고친다 — 설정 화면까지 가지 않아도 되고, 값은
-          // 설정(`coworkService.projectPath`)에 저장되어 설정 화면과 같은 것을 가리킨다.
+          // 설정(설정 → Cowork 의 `cowork.home`)에 저장되어 설정 화면·스펙 문서 뷰와
+          // 같은 경로를 가리킨다.
           <ProjectPathInput api={api} />
         ) : (
           <select

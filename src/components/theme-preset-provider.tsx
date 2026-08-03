@@ -16,6 +16,13 @@ import {
   type SlackThemeGroup,
 } from "@/lib/slack-themes"
 import { DEFAULT_FONT_ID, FONTS, getFont, type AppFont } from "@/lib/fonts"
+import {
+  DEFAULT_FONT_SIZE_ID,
+  FONT_SIZES,
+  fontScale,
+  getFontSize,
+  type AppFontSize,
+} from "@/lib/font-sizes"
 
 const STORAGE_KEY = "myspace.themePreset"
 const STYLE_ELEMENT_ID = "theme-preset-vars"
@@ -25,6 +32,8 @@ const SLACK_STYLE_ELEMENT_ID = "slack-theme-vars"
 
 const FONT_STORAGE_KEY = "myspace.font"
 const FONT_STYLE_ELEMENT_ID = "font-vars"
+
+const FONT_SIZE_STORAGE_KEY = "myspace.fontSize"
 
 type ThemePresetState = {
   presetId: string
@@ -41,6 +50,11 @@ type ThemePresetState = {
   font: AppFont
   fonts: AppFont[]
   setFont: (id: string) => void
+  /** 선택된 본문 글자 크기 id. */
+  fontSizeId: string
+  fontSize: AppFontSize
+  fontSizes: AppFontSize[]
+  setFontSize: (id: string) => void
 }
 
 const ThemePresetContext = React.createContext<ThemePresetState | undefined>(
@@ -83,8 +97,14 @@ function applySlackThemeStyle(theme: SlackTheme | null) {
   el.textContent = `:root{${vars}}.dark{${vars}}`
 }
 
-/** 선택된 폰트의 font-family 스택을 `--ui-font` 로 주입한다. */
-function applyFontStyle(font: AppFont) {
+/**
+ * 폰트의 font-family 스택을 `--ui-font` 로, 글자 크기 배율을 `--ui-font-scale` 로 주입한다.
+ *
+ * 둘을 한 `<style>` 에 같이 쓰는 이유는 `<head>` 에 style 요소를 하나 더 만들 이유가 없어서다
+ * (순서 싸움이 없는 값들이라 프리셋/Slack 테마처럼 분리할 필요가 없다). 배율이 실제로 무엇을
+ * 키우는지는 전적으로 index.css 가 정한다 — 여기서는 숫자 하나만 넘긴다.
+ */
+function applyFontStyle(font: AppFont, size: AppFontSize) {
   let el = document.getElementById(
     FONT_STYLE_ELEMENT_ID
   ) as HTMLStyleElement | null
@@ -93,7 +113,7 @@ function applyFontStyle(font: AppFont) {
     el.id = FONT_STYLE_ELEMENT_ID
     document.head.appendChild(el)
   }
-  el.textContent = `:root{--ui-font:${font.stack};}`
+  el.textContent = `:root{--ui-font:${font.stack};--ui-font-scale:${fontScale(size)};}`
 }
 
 function readStored(): string {
@@ -110,6 +130,14 @@ function readStoredFont(): string {
     return stored
   }
   return DEFAULT_FONT_ID
+}
+
+function readStoredFontSize(): string {
+  const stored = localStorage.getItem(FONT_SIZE_STORAGE_KEY)
+  if (stored && FONT_SIZES.some((s) => s.id === stored)) {
+    return stored
+  }
+  return DEFAULT_FONT_SIZE_ID
 }
 
 function readStoredSlackTheme(): string | null {
@@ -131,6 +159,7 @@ export function ThemePresetProvider({
     readStoredSlackTheme
   )
   const [fontId, setFontId] = React.useState<string>(readStoredFont)
+  const [fontSizeId, setFontSizeId] = React.useState<string>(readStoredFontSize)
 
   // 첫 페인트 전에 주입해 깜빡임을 줄인다.
   React.useLayoutEffect(() => {
@@ -143,8 +172,8 @@ export function ThemePresetProvider({
   }, [slackThemeId])
 
   React.useLayoutEffect(() => {
-    applyFontStyle(getFont(fontId))
-  }, [fontId])
+    applyFontStyle(getFont(fontId), getFontSize(fontSizeId))
+  }, [fontId, fontSizeId])
 
   const setPreset = React.useCallback((id: string) => {
     localStorage.setItem(STORAGE_KEY, id)
@@ -162,6 +191,11 @@ export function ThemePresetProvider({
     setFontId(id)
   }, [])
 
+  const setFontSize = React.useCallback((id: string) => {
+    localStorage.setItem(FONT_SIZE_STORAGE_KEY, id)
+    setFontSizeId(id)
+  }, [])
+
   // 다른 창(위젯 등)에서 테마를 바꾸면 이 창에도 반영한다.
   React.useEffect(() => {
     const onStorage = (e: StorageEvent) => {
@@ -169,6 +203,7 @@ export function ThemePresetProvider({
       if (e.key === STORAGE_KEY) setPresetId(readStored())
       if (e.key === SLACK_STORAGE_KEY) setSlackThemeId(readStoredSlackTheme())
       if (e.key === FONT_STORAGE_KEY) setFontId(readStoredFont())
+      if (e.key === FONT_SIZE_STORAGE_KEY) setFontSizeId(readStoredFontSize())
     }
     window.addEventListener("storage", onStorage)
     return () => window.removeEventListener("storage", onStorage)
@@ -188,8 +223,21 @@ export function ThemePresetProvider({
       font: getFont(fontId),
       fonts: FONTS,
       setFont,
+      fontSizeId,
+      fontSize: getFontSize(fontSizeId),
+      fontSizes: FONT_SIZES,
+      setFontSize,
     }),
-    [presetId, setPreset, slackThemeId, setSlackTheme, fontId, setFont]
+    [
+      presetId,
+      setPreset,
+      slackThemeId,
+      setSlackTheme,
+      fontId,
+      setFont,
+      fontSizeId,
+      setFontSize,
+    ]
   )
 
   return (

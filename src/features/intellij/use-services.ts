@@ -94,8 +94,12 @@ interface StatusEvent {
  */
 export type ServicesBackend = "ide" | "standalone"
 
-/** 백엔드별로 다른 것들 — 커맨드 접두사, 이벤트 접두사, localStorage 키. */
-const BACKENDS = {
+/**
+ * 백엔드별로 다른 것들 — 커맨드 접두사, 이벤트 접두사, localStorage 키.
+ * 사이드바 배지(`use-running-count.ts`)도 같은 표를 읽는다 — 커맨드 이름과 저장 키를
+ * 두 곳에 적어 두면 한쪽만 고쳤을 때 배지가 조용히 빈 채로 남는다.
+ */
+export const BACKENDS = {
   ide: {
     prefix: "intellij",
     event: "intellij",
@@ -130,15 +134,16 @@ export function useServices(backend: ServicesBackend = "ide") {
 
   // 프로젝트를 정하는 방식이 백엔드마다 다르다.
   //  - ide        — IntelliJ 최근 프로젝트 중에서 고른다(드롭다운). 선택은 localStorage.
-  //  - standalone — **설정값 하나**를 쓴다(`settings.coworkService.projectPath`). IDE 를
-  //    켜지 않고 쓰는 기능이라 "최근 프로젝트" 라는 개념에 의존하면 안 되고, 다른 사람이
-  //    앱을 설치했을 때 손으로 지정할 자리가 필요하다.
-  const { settings, setCoworkService } = useSettings()
+  //  - standalone — **설정값 하나**를 쓴다(설정 → Cowork 의 `settings.cowork.home`).
+  //    IDE 를 켜지 않고 쓰는 기능이라 "최근 프로젝트" 라는 개념에 의존하면 안 되고,
+  //    다른 사람이 앱을 설치했을 때 손으로 지정할 자리가 필요하다. 스펙 문서 뷰도 같은
+  //    값을 보므로 경로를 한 번만 정하면 된다.
+  const { settings, setCowork } = useSettings()
   const [storedProject, setStoredProject] = useLocalStorage<string | null>(
     b.projectKey,
     null
   )
-  const configured = settings.coworkService.projectPath.trim()
+  const configured = settings.cowork.home.trim()
   const projectPath = isIde ? storedProject : configured || null
   const setProjectPath = useMemo<
     (v: string | null | ((cur: string | null) => string | null)) => void
@@ -147,11 +152,10 @@ export function useServices(backend: ServicesBackend = "ide") {
       isIde
         ? setStoredProject
         : (v) =>
-            setCoworkService({
-              projectPath:
-                (typeof v === "function" ? v(configured || null) : v) ?? "",
+            setCowork({
+              home: (typeof v === "function" ? v(configured || null) : v) ?? "",
             }),
-    [isIde, setStoredProject, setCoworkService, configured]
+    [isIde, setStoredProject, setCowork, configured]
   )
 
   const [projects, setProjects] = useState<RecentProject[]>([])

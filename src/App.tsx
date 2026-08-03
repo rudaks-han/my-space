@@ -1,10 +1,7 @@
 import { useEffect, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
 
-import {
-  ActivityBar,
-  type ActivityContainerId,
-} from "@/components/shell/activity-bar"
+import { ActivityBar } from "@/components/shell/activity-bar"
 import { SideBar } from "@/components/shell/side-bar"
 import { StatusBar } from "@/components/shell/status-bar"
 import { TabBar } from "@/components/shell/tab-bar"
@@ -12,6 +9,7 @@ import { TitleBar } from "@/components/shell/title-bar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { SETTINGS_ID, useOpenTabs } from "@/lib/use-open-tabs"
 import { NavigationProvider } from "@/lib/navigation-store"
+import { PinnedMenusProvider } from "@/lib/pinned-menus-store"
 import { ReminderProvider } from "@/features/reminder/reminder-store"
 import { SlackProvider } from "@/features/slack/slack-store"
 import { GmailProvider } from "@/features/gmail/gmail-store"
@@ -21,6 +19,7 @@ import { LoginGate } from "@/features/auth/login-gate"
 import { ClaudeNotifier } from "@/features/claude-bridge/claude-notifier"
 import { ClaudeActivityProvider } from "@/features/claude-bridge/claude-activity-store"
 import { PetController } from "@/features/pet/pet-controller"
+import { FirebasePresence } from "@/features/firebase/firebase-presence"
 import { PetFeedPublisher } from "@/features/pet/pet-feed-publisher"
 import { PetNotifyPublisher } from "@/features/pet/pet-notify-publisher"
 import { useAutoStartSync } from "@/features/settings/use-autostart"
@@ -43,8 +42,7 @@ export default function App() {
   // 열린 탭·활성 탭(활성 탭 id 는 기존 myspace.activeMenu 키를 그대로 쓴다).
   const { openIds, activeId, open, close, closeAll, setActive, move } =
     useOpenTabs()
-  // 사이드바에 어떤 컨테이너를 띄울지와 접힘 여부(셸 레이아웃 상태).
-  const [container, setContainer] = useState<ActivityContainerId>("explorer")
+  // 사이드바 접힘 여부(셸 레이아웃 상태). 접기/펴기는 타이틀 바의 토글이 맡는다.
   const [collapsed, setCollapsed] = useState(false)
 
   const isSettings = activeId === SETTINGS_ID
@@ -62,16 +60,6 @@ export default function App() {
     nextMounted.some((id, i) => id !== mountedIds[i])
   ) {
     setMountedIds(nextMounted)
-  }
-
-  // 활성 컨테이너 아이콘을 다시 누르면 사이드바가 접힌다.
-  const selectContainer = (id: ActivityContainerId) => {
-    if (!collapsed && container === id) {
-      setCollapsed(true)
-      return
-    }
-    setContainer(id)
-    setCollapsed(false)
   }
 
   // 앱 시작 시 GitHub 릴리스에 새 버전이 있는지 한 번 확인한다.
@@ -99,6 +87,9 @@ export default function App() {
                   <ClaudeNotifier />
                   {/* 설정의 "로그인 시 자동 실행" 을 OS 로그인 항목에 반영한다. */}
                   <AutoStartSync />
+                  {/* 누가 켜 놓았는지를 Firebase 실행 기록에 알린다(LoginGate 바깥이어야
+                      로그아웃도 전달된다). */}
+                  <FirebasePresence />
                   {/* 설정의 "상시 표시" 에 맞춰 데스크톱 펫 창을 띄운다/숨긴다. */}
                   <PetController />
                   {/* 이미 폴링해 둔 Slack·Gmail 안읽음 건수를 펫이 볼 수 있게 적어 둔다. */}
@@ -109,61 +100,69 @@ export default function App() {
                   <NavigationProvider onNavigate={open}>
                     {/* 로그인 안 됐으면 셸 대신 로그인 폼을 띄운다. */}
                     <LoginGate>
-                      {/* 라벤더 크롬 위에 흰 패널(사이드바·에디터)이 얹힌 Slack 레이아웃 */}
-                      <div className="flex h-svh flex-col overflow-hidden bg-ui-chrome">
-                        <TitleBar
-                          onToggleSidebar={() => setCollapsed((v) => !v)}
-                        />
-                        <div className="flex min-h-0 min-w-0 flex-1">
-                          <ActivityBar
-                            container={container}
-                            collapsed={collapsed}
-                            onSelectContainer={selectContainer}
-                            onOpenSettings={() => open(SETTINGS_ID)}
-                            settingsActive={isSettings}
+                      {/* 라벤더 크롬 위에 흰 패널(사이드바·에디터)이 얹힌 Slack 레이아웃.
+                          레일에 꽂아 둔 바로가기는 레일과 사이드바가 함께 보는 상태라
+                          둘을 감싸는 자리에서 공급한다(같은 창의 useLocalStorage 끼리는
+                          서로의 변경을 통보받지 못한다). */}
+                      <PinnedMenusProvider>
+                        <div className="flex h-svh flex-col overflow-hidden bg-ui-chrome">
+                          <TitleBar
+                            onToggleSidebar={() => setCollapsed((v) => !v)}
                           />
-                          {!collapsed && (
-                            <SideBar activeId={activeId} onSelectMenu={open} />
-                          )}
-                          {/* 에디터 영역 — 탭 바 + 뷰 헤더 + 활성 뷰.
-                        사이드바가 접혀 있으면 이쪽이 좌상단 라운드를 대신 맡는다. */}
-                          <div
-                            className={cn(
-                              "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
-                              collapsed && "rounded-tl-[var(--ui-panel-radius)]"
-                            )}
-                          >
-                            <TabBar
-                              openIds={openIds}
+                          <div className="flex min-h-0 min-w-0 flex-1">
+                            <ActivityBar
+                              onOpenSettings={() => open(SETTINGS_ID)}
+                              settingsActive={isSettings}
                               activeId={activeId}
-                              onSelect={setActive}
-                              onClose={close}
-                              onCloseAll={closeAll}
-                              onMove={move}
+                              onSelectMenu={open}
                             />
-                            {/* 열린 탭들을 겹쳐 두고 활성 탭만 보인다. display:none 대신
+                            {!collapsed && (
+                              <SideBar
+                                activeId={activeId}
+                                onSelectMenu={open}
+                              />
+                            )}
+                            {/* 에디터 영역 — 탭 바 + 뷰 헤더 + 활성 뷰.
+                        사이드바가 접혀 있으면 이쪽이 좌상단 라운드를 대신 맡는다. */}
+                            <div
+                              className={cn(
+                                "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
+                                collapsed &&
+                                  "rounded-tl-[var(--ui-panel-radius)]"
+                              )}
+                            >
+                              <TabBar
+                                openIds={openIds}
+                                activeId={activeId}
+                                onSelect={setActive}
+                                onClose={close}
+                                onCloseAll={closeAll}
+                                onMove={move}
+                              />
+                              {/* 열린 탭들을 겹쳐 두고 활성 탭만 보인다. display:none 대신
                           visibility 로 감춰야 숨은 탭의 스크롤 위치가 유지된다. */}
-                            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-                              {nextMounted.map((id) => (
-                                <TabActiveProvider
-                                  key={id}
-                                  active={id === activeId}
-                                >
-                                  <div
-                                    className={cn(
-                                      "absolute inset-0 flex flex-col overflow-x-hidden overflow-y-auto p-5",
-                                      id !== activeId && "invisible"
-                                    )}
+                              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+                                {nextMounted.map((id) => (
+                                  <TabActiveProvider
+                                    key={id}
+                                    active={id === activeId}
                                   >
-                                    {viewElement(id)}
-                                  </div>
-                                </TabActiveProvider>
-                              ))}
+                                    <div
+                                      className={cn(
+                                        "absolute inset-0 flex flex-col overflow-x-hidden overflow-y-auto p-5",
+                                        id !== activeId && "invisible"
+                                      )}
+                                    >
+                                      {viewElement(id)}
+                                    </div>
+                                  </TabActiveProvider>
+                                ))}
+                              </div>
                             </div>
                           </div>
+                          <StatusBar onOpen={open} />
                         </div>
-                        <StatusBar onOpen={open} />
-                      </div>
+                      </PinnedMenusProvider>
                     </LoginGate>
                   </NavigationProvider>
                 </ClaudeActivityProvider>

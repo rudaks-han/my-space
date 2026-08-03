@@ -167,41 +167,49 @@ export interface GmailSettings {
   keywords: string[]
 }
 
-/** Cowork spec 문서 관련 설정. */
+/**
+ * Cowork 설정 — **홈 디렉터리 하나**가 cowork 관련 기능 전부의 기준점이다.
+ *
+ * 예전에는 두 개였다(스펙 문서를 찾는 `cowork.home` + 서비스를 띄우는
+ * `coworkService.projectPath`). 문서만 따로 클론해 두는 경우를 위해 나눠 뒀지만
+ * 실제로는 같은 클론을 가리켰고, 설정 화면이 두 개라 한쪽만 바꾸면 다른 쪽이 조용히
+ * 옛 경로를 봤다. 그래서 하나로 합쳤다 — 이 경로 아래에서
+ * `.cowork/specs`(스펙 문서)와 `.idea/runConfigurations`(서비스 실행 설정)를 함께 읽는다.
+ *
+ * 마크다운 스타일은 설정 항목이 아니다: 앱에 번들된 Typora 테마
+ * (`src/assets/typora/rudaks.css`, `cowork-spec/bundled-css.ts`)가 My Space 의 기본
+ * 스타일이고 뷰어가 그것만 주입한다.
+ */
 export interface CoworkSettings {
   /**
-   * cowork 홈 디렉터리. 이 아래 `.cowork/specs` 에서 스펙 문서를 찾는다.
-   * `~` 는 홈으로 펼쳐진다.
+   * cowork 를 클론한 폴더(= IntelliJ 로 여는 프로젝트 루트). `~` 는 홈으로 펼쳐진다.
+   * 비워 두면 앱을 처음 열 때 IntelliJ 최근 프로젝트에서 `cowork` 를 찾아 자동으로
+   * 채운다(`use-services.ts`).
    */
   home: string
-  /**
-   * 마크다운 뷰어에 주입할 스타일(css) 원문 — **덮어쓰기용**이라 기본값은 빈 문자열이다.
-   * 비어 있으면 앱에 번들된 기본 테마(`cowork-spec/bundled-css.ts`)를 쓰므로, Typora 가
-   * 없는 사람도 그대로 잘 보인다. 자기 Typora 테마 css 를 가져오면 여기에 저장되고
-   * 번들 스타일 대신 적용된다.
-   */
-  markdownCss: string
-  /** "스타일 가져오기" 가 읽어올 Typora 테마 css 경로(`~` 지원). */
-  cssPath: string
 }
 
 /**
- * Cowork 서비스(IntelliJ 없이 서비스 기동) 설정.
+ * 할 일(포스트잇 보드) 저장 위치 설정.
  *
- * **`CoworkSettings.home` 과 일부러 분리했다.** 스펙 문서를 보는 폴더와 서비스를 띄우는
- * 소스 폴더는 같을 이유가 없다 — 문서만 따로 클론해 두거나, 여러 워크트리 중 하나에서만
- * 서비스를 띄우는 게 흔하다.
+ * **폴더 하나를 지정할 수 있게 하는 것으로 끝난다.** Obsidian 볼트는 그냥 마크다운
+ * 폴더이고, Dropbox·iCloud·Google Drive 도 로컬에서는 폴더이며, git 저장소도 폴더다 —
+ * 그래서 "폴더 지정" 하나가 Obsidian 편집·기기 간 동기화·변경 이력을 동시에 해결한다.
+ * Dropbox API 를 붙이지 않는 이유도 이것이다(폴더에 쓰면 Dropbox 앱이 훨씬 안정적으로
+ * 올려 준다).
+ *
+ * 비워 두면 지금까지처럼 localStorage 에만 저장한다 — 기본값이 곧 기존 동작이다.
  */
-export interface CoworkServiceSettings {
+export interface TodoSettings {
   /**
-   * cowork 를 클론한 폴더(= IntelliJ 로 여는 프로젝트 루트). `~` 는 홈으로 펼쳐진다.
+   * 카테고리별 `.md` 파일을 둘 폴더. `~` 는 홈으로 펼쳐진다. 비어 있으면 파일 저장을
+   * 하지 않는다.
    *
-   * 기본값이 **빈 문자열**인 이유: 이 값은 사람마다 다른 절대경로다. 누군가의 경로를
-   * 박아 두면 다른 사람 머신에서는 조용히 실패하므로, 비워 두고 화면이 "지정하세요" 라고
-   * 말하게 한다. 처음 열 때 IntelliJ 최근 프로젝트에서 `cowork` 를 찾으면 자동으로
-   * 채워 주므로(`use-services.ts`), 대부분은 손으로 적을 일이 없다.
+   * 하위 폴더는 훑지 않으므로 Obsidian 볼트 루트보다는 볼트 안의 전용 폴더
+   * (예: `~/Obsidian/내볼트/todo`)를 권한다. 폴더 안에서도 frontmatter 에
+   * `myspace-todo` 표식이 있는 파일만 읽고 쓰므로 다른 노트는 건드리지 않는다.
    */
-  projectPath: string
+  folder: string
 }
 
 /**
@@ -264,7 +272,7 @@ export interface PetSettings {
   /**
    * `species: "custom"` 일 때 쓸 이미지의 data URL. 파일 경로를 그대로 두면
    * 파일이 사라졌을 때 빈 창이 되고 창마다 다시 읽어야 하므로, 불러온 시점에
-   * 내용을 박아 둔다(cowork 의 markdownCss 와 같은 방식).
+   * 내용을 박아 둔다.
    */
   customImage: string
   /** "이미지 불러오기" 가 읽어올 파일 경로(`~` 지원). 다시 불러올 때 쓴다. */
@@ -319,7 +327,7 @@ export interface AppSettings {
   gmail: GmailSettings
   flex: FlexSettings
   cowork: CoworkSettings
-  coworkService: CoworkServiceSettings
+  todo: TodoSettings
   pet: PetSettings
 }
 
@@ -362,12 +370,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   cowork: {
     home: "/Users/rudaks/_WORK/_ENOMIX_GIT/spectrakr/cowork",
-    markdownCss: "",
-    cssPath:
-      "~/Library/Application Support/abnerworks.Typora/themes/rudaks.css",
   },
-  coworkService: {
-    projectPath: "",
+  todo: {
+    // 비어 있음 = 지금까지처럼 localStorage 에만 저장(기존 동작 유지).
+    folder: "",
   },
   pet: {
     enabled: false,
@@ -421,11 +427,8 @@ export function withDefaults(
     browser: { ...DEFAULT_SETTINGS.browser, ...(stored?.browser ?? {}) },
     gmail: { ...DEFAULT_SETTINGS.gmail, ...(stored?.gmail ?? {}) },
     flex: { ...DEFAULT_SETTINGS.flex, ...(stored?.flex ?? {}) },
-    cowork: { ...DEFAULT_SETTINGS.cowork, ...(stored?.cowork ?? {}) },
-    coworkService: {
-      ...DEFAULT_SETTINGS.coworkService,
-      ...(stored?.coworkService ?? {}),
-    },
+    cowork: migrateCowork(stored),
+    todo: { ...DEFAULT_SETTINGS.todo, ...(stored?.todo ?? {}) },
     pet: migratePet({
       ...DEFAULT_SETTINGS.pet,
       ...(stored?.pet ?? {}),
@@ -437,6 +440,29 @@ export function withDefaults(
       },
     }),
   }
+}
+
+/** Cowork 설정이 둘로 나뉘어 있던 시절의 저장값 모양. */
+interface LegacyCoworkStore {
+  cowork?: { home?: string }
+  coworkService?: { projectPath?: string }
+}
+
+/**
+ * 설정이 `Cowork Spec 문서`(`cowork.home`) + `Cowork 서비스`
+ * (`coworkService.projectPath`) 두 개였던 시절의 저장값을 홈 디렉터리 하나로 합친다.
+ *
+ * `cowork.home` 이 이긴다 — 그쪽만 기본값이 있어서 늘 채워져 있고, 서비스 경로는
+ * IntelliJ 최근 프로젝트에서 자동으로 채워진 값일 수 있다(사용자가 고른 값이 아니다).
+ * 스펙 문서 홈이 비어 있을 때만 서비스 경로를 승계한다. 없어진 `coworkService` 키는
+ * `withDefaults` 가 새 객체를 만들어 돌려주므로 다음 저장에서 사라진다.
+ */
+function migrateCowork(
+  stored: (Partial<AppSettings> & LegacyCoworkStore) | null | undefined
+): CoworkSettings {
+  const home = stored?.cowork?.home?.trim()
+  const legacy = stored?.coworkService?.projectPath?.trim()
+  return { home: home || legacy || DEFAULT_SETTINGS.cowork.home }
 }
 
 /**
@@ -483,10 +509,10 @@ export interface SettingsContextValue {
   setGmail: (patch: Partial<GmailSettings>) => void
   /** Flex 설정 일부를 갱신한다. */
   setFlex: (patch: Partial<FlexSettings>) => void
-  /** Cowork spec 설정 일부를 갱신한다. */
+  /** Cowork 설정 일부를 갱신한다. */
   setCowork: (patch: Partial<CoworkSettings>) => void
-  /** Cowork 서비스 설정 일부를 갱신한다. */
-  setCoworkService: (patch: Partial<CoworkServiceSettings>) => void
+  /** 할 일 저장 위치 설정 일부를 갱신한다. */
+  setTodo: (patch: Partial<TodoSettings>) => void
   /** 데스크톱 펫 설정 일부를 갱신한다. */
   setPet: (patch: Partial<PetSettings>) => void
 }

@@ -87,6 +87,35 @@ pub struct GcalStatus {
     can_write: bool,
     /// 도메인 주소록으로 참석자 이름을 채울 수 있는지. false 면 재연결이 필요하다.
     can_directory: bool,
+    /// 저장된 OAuth 클라이언트 ID. 재연결 폼을 자동으로 채우는 용도다.
+    client_id: Option<String>,
+    /// 보안 비밀이 저장돼 있는지. 값 자체는 웹뷰로 절대 내보내지 않으므로
+    /// "저장됨"만 알리고, 재연결 때는 빈 값으로 두면 Rust 가 저장분을 쓴다.
+    has_secret: bool,
+}
+
+/// 입력값을 다듬고, 비어 있으면 대체값(보통 저장된 값)을 쓴다.
+fn some_or(input: String, fallback: String) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        fallback
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// 저장된 설정 → 프런트에 보낼 상태. connected 판정은 refresh_token 유무다.
+fn status_of(cfg: &Config) -> GcalStatus {
+    let connected = !cfg.refresh_token.is_empty();
+    GcalStatus {
+        connected,
+        email: (!cfg.email.is_empty()).then(|| cfg.email.clone()),
+        // 미연결이면 저장된 scope 가 남아 있어도 할 수 있는 일은 없다.
+        can_write: connected && scope_can_write(&cfg.scope),
+        can_directory: connected && scope_can_directory(&cfg.scope),
+        client_id: (!cfg.client_id.is_empty()).then(|| cfg.client_id.clone()),
+        has_secret: !cfg.client_secret.is_empty(),
+    }
 }
 
 /// 내 구글 캘린더 목록 항목(회의실 선택용).
@@ -546,39 +575,42 @@ async fn fetch_profile(access: &str) -> (String, String) {
 /// 저장된 연동 상태.
 #[tauri::command]
 pub fn gcal_status(app: tauri::AppHandle) -> Result<GcalStatus, String> {
-    let cfg = read_config(&app);
-    if cfg.refresh_token.is_empty() {
-        Ok(GcalStatus {
-            connected: false,
-            email: None,
-            can_write: false,
-            can_directory: false,
-        })
-    } else {
-        Ok(GcalStatus {
-            connected: true,
-            email: if cfg.email.is_empty() {
-                None
-            } else {
-                Some(cfg.email)
-            },
-            can_write: scope_can_write(&cfg.scope),
-            can_directory: scope_can_directory(&cfg.scope),
-        })
-    }
+    Ok(status_of(&read_config(&app)))
 }
 
-/// 연동 해제(저장 토큰 삭제). 참석자 이름 사전도 함께 버린다.
+/// 연동 해제 — 토큰만 지우고 OAuth 클라이언트 정보는 남긴다(gmail.rs 와 같은 이유:
+/// 동의 화면이 "테스트 중"이면 7일마다 재연결하게 되는데, 그때마다 클라이언트 ID/보안
+/// 비밀을 콘솔에서 다시 복사해 오게 만들 이유가 없다). 클라이언트 자체를 바꿀 때만
+/// forget_client 로 완전히 지운다. 참석자 이름 사전은 계정에 딸린 것이라 항상 버린다.
 #[tauri::command]
-pub fn gcal_disconnect(app: tauri::AppHandle) -> Result<(), String> {
-    if let Ok(path) = config_path(&app) {
-        let _ = std::fs::remove_file(path);
+pub fn gcal_disconnect(
+    app: tauri::AppHandle,
+    forget_client: Option<bool>,
+) -> Result<GcalStatus, String> {
+    let mut cfg = read_config(&app);
+    cfg.refresh_token.clear();
+    cfg.email.clear();
+    cfg.name.clear();
+    cfg.scope.clear();
+    if forget_client.unwrap_or(false) {
+        cfg.client_id.clear();
+        cfg.client_secret.clear();
     }
+
+    // 남길 게 없으면 파일도 남기지 않는다(미연결 상태와 동일).
+    if cfg.client_id.is_empty() && cfg.client_secret.is_empty() {
+        if let Ok(path) = config_path(&app) {
+            let _ = std::fs::remove_file(path);
+        }
+    } else {
+        write_config(&app, &cfg)?;
+    }
+
     if let Ok(path) = directory_path(&app) {
         let _ = std::fs::remove_file(path);
     }
     *directory_lock() = None;
-    Ok(())
+    Ok(status_of(&cfg))
 }
 
 /// OAuth 로그인 시작: 브라우저를 열고 루프백으로 코드를 받아 토큰을 저장한다.
@@ -588,8 +620,11 @@ pub async fn gcal_start_auth(
     client_id: String,
     client_secret: String,
 ) -> Result<GcalStatus, String> {
-    let client_id = client_id.trim().to_string();
-    let client_secret = client_secret.trim().to_string();
+    // 빈 값으로 오면 저장된 값을 쓴다. 보안 비밀은 웹뷰로 내보내지 않으므로
+    // 프런트가 되돌려줄 방법이 없고, 재연결 때 다시 입력하지 않게 하려면 여기서 채워야 한다.
+    let saved = read_config(&app);
+    let client_id = some_or(client_id, saved.client_id);
+    let client_secret = some_or(client_secret, saved.client_secret);
     if client_id.is_empty() || client_secret.is_empty() {
         return Err("client_id 와 client_secret 을 모두 입력하세요".into());
     }
@@ -655,7 +690,7 @@ pub async fn gcal_start_auth(
         refresh_token,
         email: email.clone(),
         name: name.clone(),
-        scope: scope.clone(),
+        scope,
     };
     write_config(&app, &cfg)?;
 
@@ -665,12 +700,7 @@ pub async fn gcal_start_auth(
         merge_names(&app, HashMap::from([(email.to_lowercase(), name)]), None);
     }
 
-    Ok(GcalStatus {
-        connected: true,
-        email: if email.is_empty() { None } else { Some(email) },
-        can_write: scope_can_write(&scope),
-        can_directory: scope_can_directory(&scope),
-    })
+    Ok(status_of(&cfg))
 }
 
 /// 오늘(로컬 타임존) 일정 조회.

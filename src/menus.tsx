@@ -5,7 +5,10 @@ import {
   LayoutDashboardIcon,
   BracesIcon,
   BookOpenTextIcon,
+  DatabaseIcon,
   FileTextIcon,
+  GitBranchIcon,
+  GlobeIcon,
   PalmtreeIcon,
   HistoryIcon,
   ScreenShareIcon,
@@ -45,11 +48,15 @@ import {
   IntellijServicesView,
   StandaloneServicesView,
 } from "@/features/intellij/intellij-services-view"
+import { ServicesMenuBadge } from "@/features/intellij/services-menu-badge"
+import { IntellijHttpView } from "@/features/intellij-http/intellij-http-view"
 import { CoworkAiView } from "@/features/cowork-ai/cowork-ai-view"
 import { CcHistoryView } from "@/features/cc-history/cc-history-view"
 import { JsonFormatterView } from "@/features/json-formatter/json-formatter-view"
 import { MarkdownViewerView } from "@/features/markdown-viewer/markdown-viewer-view"
 import { CoworkSpecView } from "@/features/cowork-spec/cowork-spec-view"
+import { GitView } from "@/features/git/git-view"
+import { DbViewerView } from "@/features/db-viewer/db-viewer-view"
 import { EsViewerView } from "@/features/es-viewer/es-viewer-view"
 import { KafkaViewerView } from "@/features/kafka-viewer/kafka-viewer-view"
 
@@ -195,6 +202,7 @@ export const MENU_GROUPS: MenuGroup[] = [
         title: "IntelliJ 서비스",
         icon: IntellijBrandIcon,
         element: <IntellijServicesView />,
+        badge: <ServicesMenuBadge backend="ide" />,
         unsupported: {
           on: ["windows", "linux"],
           reason:
@@ -202,10 +210,20 @@ export const MENU_GROUPS: MenuGroup[] = [
         },
       },
       {
+        // IntelliJ 서비스 바로 아래 — 같은 IntelliJ 프로젝트를 대상으로 하지만,
+        // 이쪽은 IDE 없이 `.http` 파일만 읽어 실행한다(사이드바는 그룹 → 항목 2단이라
+        // "IntelliJ 서비스 하위"는 이 위치로 표현된다).
+        id: "intellij-http",
+        title: "IntelliJ HTTP",
+        icon: GlobeIcon,
+        element: <IntellijHttpView />,
+      },
+      {
         id: "cowork-services",
         title: "Cowork 서비스",
         icon: ServerIcon,
         element: <StandaloneServicesView />,
+        badge: <ServicesMenuBadge backend="standalone" />,
         unsupported: {
           on: ["windows", "linux"],
           reason:
@@ -218,12 +236,30 @@ export const MENU_GROUPS: MenuGroup[] = [
         icon: FileTextIcon,
         element: <CoworkSpecView />,
       },
+      {
+        // 대상 저장소는 설정 → Cowork 의 홈 디렉터리 하나(스펙 문서·서비스와 같은 값).
+        id: "git",
+        title: "Git",
+        icon: GitBranchIcon,
+        element: <GitView />,
+      },
     ],
   },
   {
     id: "dev-tools",
     label: "개발 도구",
     items: [
+      {
+        id: "db-viewer",
+        title: "데이터베이스 뷰어",
+        icon: DatabaseIcon,
+        element: <DbViewerView />,
+        unsupported: {
+          on: ["windows", "linux"],
+          reason:
+            "JDBC 드라이버로 붙기 때문에 Java 를 실행해야 하는데, java 실행 파일을 찾는 경로(JAVA_HOME → which → /usr/libexec/java_home)와 드라이버 jar 를 찾는 위치(~/.m2 · ~/.gradle)가 모두 Unix 기준으로 돼 있습니다.",
+        },
+      },
       {
         id: "es-viewer",
         title: "Elasticsearch 뷰어",
@@ -284,6 +320,22 @@ export const MENU_GROUPS: MenuGroup[] = [
 
 /** 활성 메뉴 조회용 평탄화 목록(App.tsx 에서 id 로 뷰를 찾는다). */
 export const MENUS: MenuItem[] = MENU_GROUPS.flatMap((g) => g.items)
+
+/**
+ * 설정 → 메뉴 설정에서 끈 메뉴 id 전부(그룹째 끈 경우 그 그룹의 항목까지).
+ * 사이드바 밖에서 메뉴를 나열하는 곳(좌측 레일에 꽂아 둔 바로가기)이 같은 판단을 쓰도록 둔다.
+ */
+export function hiddenMenuIds(
+  hiddenGroups: string[],
+  hiddenItems: string[]
+): Set<string> {
+  const hidden = new Set(hiddenItems)
+  for (const g of MENU_GROUPS) {
+    if (!hiddenGroups.includes(g.id)) continue
+    for (const m of g.items) hidden.add(m.id)
+  }
+  return hidden
+}
 
 /**
  * 지금 OS 에서 이 메뉴를 못 쓰면 그 사유를, 쓸 수 있으면 null 을 준다.

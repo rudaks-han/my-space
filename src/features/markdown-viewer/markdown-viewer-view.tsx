@@ -15,13 +15,14 @@ import {
   XIcon,
 } from "lucide-react"
 
+import { ResizeHandle } from "@/components/resize-handle"
 import { Button } from "@/components/ui/button"
 import { useTabActive } from "@/lib/use-tab-active"
 import { useLocalStorage } from "@/lib/use-local-storage"
-import { useSettings } from "@/features/settings/settings-context"
+import { useResizableWidth } from "@/lib/use-resizable-width"
 // 파서와 뷰어는 Cowork Spec 문서와 같은 것을 쓴다 — 요구가 "같은 Typora 스타일"이라
-// 복제하면 두 화면이 조금씩 어긋난다. 스타일(css)도 같은 설정값(settings.cowork.markdownCss)을
-// 읽으므로, 자기 Typora 테마를 가져오면 두 화면에 함께 적용된다.
+// 복제하면 두 화면이 조금씩 어긋난다. 스타일도 뷰어가 번들 테마를 주입하므로 두 화면이
+// 언제나 같은 모양이다.
 import { renderMarkdown } from "@/features/cowork-spec/markdown"
 import { MarkdownViewer } from "@/features/cowork-spec/markdown-viewer"
 import { MARKDOWN_EXTS, useMarkdownDoc } from "./use-markdown-doc"
@@ -29,8 +30,16 @@ import { useFileDrop } from "./use-file-drop"
 
 const EXT_HINT = MARKDOWN_EXTS.map((e) => `.${e}`).join(" · ")
 
-/** 원문 패널을 열었을 때 그쪽이 가져가는 폭(%). 나머지는 미리보기가 쓴다. */
-const SOURCE_WIDTH = 38
+/**
+ * 원문 패널의 폭(px). 나머지는 미리보기가 쓴다.
+ *
+ * 비율(%) 이 아니라 px 인 이유는 폭 조절 손잡이가 포인터 이동량을 그대로 더하기
+ * 때문이다(`useResizableWidth`). 기본값 420px 은 예전 고정 38% 와 비슷한 자리다.
+ */
+const SOURCE_WIDTH_KEY = "myspace.markdownViewer.sourceWidth"
+const DEFAULT_SOURCE_WIDTH = 420
+const MIN_SOURCE_WIDTH = 240
+const MAX_SOURCE_WIDTH = 900
 
 /** 문서가 없을 때의 안내 — 그대로 드롭 영역이기도 하다. */
 function EmptyState({ onPick }: { onPick: () => void }) {
@@ -65,7 +74,6 @@ function EmptyState({ onPick }: { onPick: () => void }) {
  */
 export function MarkdownViewerView() {
   const tabActive = useTabActive()
-  const { settings } = useSettings()
   const {
     doc,
     docId,
@@ -84,6 +92,16 @@ export function MarkdownViewerView() {
   const [showSource, setShowSource] = useLocalStorage(
     "myspace.markdownViewer.showSource",
     false
+  )
+  const {
+    width: sourceWidth,
+    resizing,
+    startResize,
+  } = useResizableWidth(
+    SOURCE_WIDTH_KEY,
+    DEFAULT_SOURCE_WIDTH,
+    MIN_SOURCE_WIDTH,
+    MAX_SOURCE_WIDTH
   )
   const zoneRef = useRef<HTMLDivElement>(null)
   // 드롭 핸들러는 고정해 둔다 — 매 렌더 새 함수를 넘기면 네이티브 리스너가 다시 붙는다.
@@ -210,19 +228,29 @@ export function MarkdownViewerView() {
       {/* 본문 — 원문 패널(선택) + 미리보기 */}
       <div className="flex min-h-0 flex-1 gap-3">
         {doc && showSource && (
+          // 손잡이는 카드 **밖**(패널과 미리보기 사이 간격)에 뜨므로, 모서리를 자르는
+          // `overflow-hidden` 이 걸린 카드에 직접 붙이면 통째로 잘려 잡히지 않는다.
+          // 그래서 폭은 이 래퍼가 갖고 카드는 그 안을 채운다.
           <div
-            className="flex min-w-0 flex-col overflow-hidden rounded-[10px] border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
-            style={{ width: `${SOURCE_WIDTH}%` }}
+            className="relative flex shrink-0"
+            style={{ width: sourceWidth }}
           >
-            <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-4 py-2 text-[13px] text-muted-foreground">
-              <ClipboardPasteIcon className="size-3.5" />
-              <span>원문 — 여기에 붙여넣거나 고치면 오른쪽에 바로 반영</span>
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
+              <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-4 py-2 text-[13px] text-muted-foreground">
+                <ClipboardPasteIcon className="size-3.5" />
+                <span>원문 — 여기에 붙여넣거나 고치면 오른쪽에 바로 반영</span>
+              </div>
+              <textarea
+                value={doc.source}
+                onChange={(e) => setSource(e.target.value)}
+                spellCheck={false}
+                className="min-h-0 flex-1 resize-none bg-transparent p-4 font-mono text-[13px] leading-relaxed outline-none"
+              />
             </div>
-            <textarea
-              value={doc.source}
-              onChange={(e) => setSource(e.target.value)}
-              spellCheck={false}
-              className="min-h-0 flex-1 resize-none bg-transparent p-4 font-mono text-[13px] leading-relaxed outline-none"
+            <ResizeHandle
+              resizing={resizing}
+              onPointerDown={startResize}
+              label="원문 패널 폭 조절"
             />
           </div>
         )}
@@ -231,7 +259,6 @@ export function MarkdownViewerView() {
           {doc ? (
             <MarkdownViewer
               html={html}
-              css={settings.cowork.markdownCss}
               // 원문을 고치는 동안에는 스크롤을 붙잡아 둔다(문서를 바꿀 때만 맨 위로).
               scrollResetKey={String(docId)}
             />

@@ -9,13 +9,13 @@ import {
   type BrowserSettings,
   type ClaudeCodeSettings,
   type CoworkSettings,
-  type CoworkServiceSettings,
   type FlexSettings,
   type GeneralSettings,
   type GmailSettings,
   type MenuSettings,
   type PetSettings,
   type SlackSettings,
+  type TodoSettings,
 } from "@/features/settings/settings-context"
 import { useLocalStorage } from "@/lib/use-local-storage"
 
@@ -113,14 +113,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [setRaw]
   )
 
-  const setCoworkService = useCallback(
-    (patch: Partial<CoworkServiceSettings>) => {
+  const setTodo = useCallback(
+    (patch: Partial<TodoSettings>) => {
       setRaw((prev) => {
         const base = withDefaults(prev)
-        return {
-          ...base,
-          coworkService: { ...base.coworkService, ...patch },
-        }
+        return { ...base, todo: { ...base.todo, ...patch } }
       })
     },
     [setRaw]
@@ -147,7 +144,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setGmail,
       setFlex,
       setCowork,
-      setCoworkService,
+      setTodo,
       setPet,
     }),
     [
@@ -160,7 +157,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setGmail,
       setFlex,
       setCowork,
-      setCoworkService,
+      setTodo,
       setPet,
     ]
   )

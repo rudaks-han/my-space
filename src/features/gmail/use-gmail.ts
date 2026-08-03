@@ -3,6 +3,10 @@ import { createContext, useContext } from "react"
 export interface GmailStatus {
   connected: boolean
   email: string | null
+  /** 저장된 OAuth 클라이언트 ID(재연결 폼 자동 채움). 없으면 null. */
+  client_id: string | null
+  /** 보안 비밀이 저장돼 있는지. 값 자체는 Rust 밖으로 나오지 않는다. */
+  has_secret: boolean
 }
 
 /** 목록에 표시할 메일 한 통(메타데이터). 본문은 loadBody 로 따로 가져온다. */
@@ -78,8 +82,13 @@ export interface GmailContextValue {
   unreadInterest: number
   /** 받은편지함 전체의 안 읽은 메일 수(정확한 총계, 사이드바 배지 회색). */
   totalUnread: number
+  /**
+   * OAuth 로그인 시작. 빈 문자열을 넘기면 Rust 에 저장된 값을 쓴다
+   * (보안 비밀은 프런트로 오지 않으므로 재연결 시 그렇게 재사용한다).
+   */
   connect: (clientId: string, clientSecret: string) => Promise<void>
-  disconnect: () => Promise<void>
+  /** 연결 해제. forgetClient 면 저장된 클라이언트 ID/보안 비밀까지 지운다. */
+  disconnect: (forgetClient?: boolean) => Promise<void>
   /** 받은편지함(배지용 첫 페이지)을 지금 새로고침한다. */
   refreshInbox: () => Promise<void>
   /** 폴더 메일 한 페이지를 서버에서 가져온다(pageToken 으로 다음 페이지). */

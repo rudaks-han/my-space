@@ -6,6 +6,18 @@ import { useTabActive } from "@/lib/use-tab-active"
 export interface GdriveStatus {
   connected: boolean
   email: string | null
+  /** 저장된 OAuth 클라이언트 ID(재연결 폼 자동 채움). 없으면 null. */
+  client_id: string | null
+  /** 보안 비밀이 저장돼 있는지. 값 자체는 Rust 밖으로 나오지 않는다. */
+  has_secret: boolean
+}
+
+/** 연결이 전혀 없는 상태(상태 조회 실패 시의 안전한 기본값). */
+const DISCONNECTED: GdriveStatus = {
+  connected: false,
+  email: null,
+  client_id: null,
+  has_secret: false,
 }
 
 /**
@@ -95,6 +107,7 @@ export function useGdriveConnection() {
       setError(null)
       try {
         // 브라우저 로그인 완료까지 대기(최대 3분) — 완료되면 상태가 채워진다.
+        // 빈 문자열을 넘기면 Rust 가 저장된 클라이언트 정보를 쓴다.
         setStatus(
           await trackedInvoke<GdriveStatus>("gdrive_start_auth", {
             clientId,
@@ -108,9 +121,11 @@ export function useGdriveConnection() {
     []
   )
 
-  const disconnect = useCallback(async () => {
-    await trackedInvoke("gdrive_disconnect")
-    setStatus({ connected: false, email: null })
+  const disconnect = useCallback(async (forgetClient = false) => {
+    // 해제 후 상태는 Rust 가 돌려준다 — 클라이언트 정보가 남았는지 여기서 추측하지 않는다.
+    setStatus(
+      await trackedInvoke<GdriveStatus>("gdrive_disconnect", { forgetClient })
+    )
     setError(null)
   }, [])
 
@@ -122,7 +137,7 @@ export function useGdriveConnection() {
         if (!cancelled) setStatus(s)
       })
       .catch(() => {
-        if (!cancelled) setStatus({ connected: false, email: null })
+        if (!cancelled) setStatus(DISCONNECTED)
       })
     return () => {
       cancelled = true

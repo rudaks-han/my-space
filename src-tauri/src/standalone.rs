@@ -284,19 +284,16 @@ fn tracked_pid(app: &tauri::AppHandle, name: &str) -> Option<u32> {
 
 /// 화면에서 넘어온 프로젝트 경로를 실제 경로로 확정한다.
 ///
-/// 이 백엔드의 경로는 **설정 → Cowork 서비스의 프로젝트 경로 하나**다
-/// (`settings.coworkService.projectPath`). 최근 프로젝트 목록에서 고르는 IDE 백엔드와
-/// 달리 사용자가 손으로 적은 문자열이 그대로 들어오므로, `~` 를 펼치고 무엇이 잘못됐는지
-/// 구체적으로 알려 주는 일이 여기서 필요하다. "모델을 못 읽었다" 만 띄우면 경로 오타인지
-/// 임포트를 안 한 것인지 구분할 수 없다.
-///
-/// (Cowork Spec 문서의 `settings.cowork.home` 과는 **다른 값**이다 — 스펙 문서를 보는
-/// 폴더와 서비스를 띄우는 소스 폴더가 같을 이유가 없다.)
+/// 이 백엔드의 경로는 **설정 → Cowork 의 홈 디렉터리 하나**다(`settings.cowork.home`,
+/// 스펙 문서 뷰와 같은 값이다). 최근 프로젝트 목록에서 고르는 IDE 백엔드와 달리 사용자가
+/// 손으로 적은 문자열이 그대로 들어오므로, `~` 를 펼치고 무엇이 잘못됐는지 구체적으로
+/// 알려 주는 일이 여기서 필요하다. "모델을 못 읽었다" 만 띄우면 경로 오타인지 임포트를
+/// 안 한 것인지 구분할 수 없다.
 fn resolve_project(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(
-            "cowork 프로젝트 경로가 지정되지 않았습니다. 위 입력란이나 설정 → Cowork 서비스에서 경로를 입력하세요."
+            "cowork 프로젝트 경로가 지정되지 않았습니다. 위 입력란이나 설정 → Cowork 에서 경로를 입력하세요."
                 .to_string(),
         );
     }
@@ -971,6 +968,16 @@ pub(crate) fn build_launch(
     // IDE 가 항상 붙이는 것들. 없으면 한글 로그가 깨진다.
     if !args.iter().any(|a| a.starts_with("-Dfile.encoding=")) {
         args.push("-Dfile.encoding=UTF-8".into());
+    }
+    // 콘솔 색 — IntelliJ 가 Spring Boot 실행 설정에 붙이는 것과 같은 값이다.
+    // Spring Boot 의 기본값 `detect` 는 stdout 이 터미널일 때만 색을 켜는데, 여기서는
+    // 파이프로 읽으므로 색이 꺼진 채 나온다. 명시적으로 켜야 콘솔이 IDE 와 같은 구문
+    // 강조로 보인다(프론트의 `console-highlight.ts` 가 그 ANSI 를 그대로 그린다).
+    if !args
+        .iter()
+        .any(|a| a.starts_with("-Dspring.output.ansi.enabled="))
+    {
+        args.push("-Dspring.output.ansi.enabled=always".into());
     }
     args.push(format!("@{}", argfile.display()));
     args.push(main_class.to_string());
@@ -1944,6 +1951,11 @@ mod tests {
         assert!(launch
             .args
             .contains(&"-Dspring.profiles.active=local,kmhan".to_string()));
+        // 콘솔을 파이프로 읽으므로 Spring Boot 는 색을 스스로 끈다 — 켜 주지 않으면
+        // 콘솔에 구문 강조가 사라진다.
+        assert!(launch
+            .args
+            .contains(&"-Dspring.output.ansi.enabled=always".to_string()));
         // 메인 클래스는 @argfile 뒤에 와야 한다(그 앞은 전부 JVM 옵션이다).
         let main = "spectra.attic.coreasset.ecosystem.registry.RegistryApplication";
         let at = launch.args.iter().position(|a| a.starts_with('@')).unwrap();

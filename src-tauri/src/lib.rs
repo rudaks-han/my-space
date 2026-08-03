@@ -2,13 +2,17 @@ mod auth;
 mod cc_history;
 mod claude_usage;
 mod cowork;
+mod db;
 mod es;
+mod firebase;
 mod flex;
 mod gcal;
 mod gdrive;
+mod git;
 mod gmail;
 mod cmux;
 mod herdr;
+mod http_file;
 mod intellij;
 mod jira;
 mod kafka;
@@ -20,6 +24,7 @@ mod reminder;
 mod screenshare;
 mod slack;
 mod standalone;
+mod todo_store;
 
 use serde::Serialize;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -682,6 +687,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             auth::ldap_login,
+            firebase::firebase_set_user,
+            firebase::firebase_clear_user,
             minimize_to_tray,
             show_main_window,
             quit_app,
@@ -806,8 +813,30 @@ pub fn run() {
             cowork::cowork_list_specs,
             cowork::cowork_read_spec_file,
             cowork::cowork_search_specs,
-            cowork::cowork_read_css,
+            git::git_status,
+            git::git_diff,
+            git::git_stage,
+            git::git_unstage,
+            git::git_rollback,
+            git::git_commit,
+            git::git_push,
+            git::git_fetch,
+            git::git_pull,
+            git::git_stash_push,
+            git::git_stash_apply,
+            git::git_stash_drop,
             markdown::markdown_read_file,
+            todo_store::todo_folder_read,
+            todo_store::todo_folder_write,
+            todo_store::todo_folder_signature,
+            http_file::http_list_files,
+            http_file::http_read_file,
+            http_file::http_write_file,
+            http_file::http_create_file,
+            http_file::http_env_files,
+            http_file::http_read_include,
+            http_file::http_save_response,
+            http_file::http_send,
             es::es_request,
             kafka::kafka_connect,
             kafka::kafka_disconnect,
@@ -818,6 +847,24 @@ pub fn run() {
             kafka::kafka_groups,
             kafka::kafka_group_offsets,
             kafka::kafka_produce,
+            db::db_bridge_info,
+            db::db_find_drivers,
+            db::db_connect,
+            db::db_disconnect,
+            db::db_has_password,
+            db::db_forget_password,
+            db::db_schemas,
+            db::db_tables,
+            db::db_table_meta,
+            db::db_query,
+            db::db_table_rows,
+            db::db_count,
+            db::db_apply_changes,
+            db::db_set_auto_commit,
+            db::db_commit,
+            db::db_rollback,
+            db::db_cancel,
+            db::db_restart_bridge,
             claude_usage::claude_usage,
             cc_history::cc_history_projects,
             cc_history::cc_history_sessions,
@@ -861,6 +908,10 @@ pub fn run() {
             if !herdr::watch_disabled() {
                 herdr::herdr_start_watch(app.handle().clone());
             }
+
+            // 실행 기록을 Firebase 에 남긴다(access-log 의 login + status online).
+            // 창이 뜨는 걸 붙잡지 않도록 안에서 스레드로 빠진다.
+            firebase::app_started(launched_at_login());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -914,6 +965,14 @@ pub fn run() {
                 );
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // `run(context)` 대신 build + run(콜백)인 이유는 종료 시점을 잡기 위해서다.
+        // 메인 창의 X 는 트레이로 숨기기만 하므로(위 on_window_event), 실제 종료는
+        // ⌘Q 와 트레이의 "종료"뿐이고 둘 다 여기 `Exit` 로 들어온다.
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                firebase::app_exiting();
+            }
+        });
 }

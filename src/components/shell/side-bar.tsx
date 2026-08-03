@@ -3,13 +3,21 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   MoreHorizontalIcon,
+  PinIcon,
+  PinOffIcon,
 } from "lucide-react"
 
+import { PIN_DROP_ATTR } from "@/components/shell/activity-bar"
+import {
+  FloatingMenu,
+  FloatingMenuItem,
+} from "@/components/shell/floating-menu"
 import { useSettings } from "@/features/settings/settings-context"
 import { useLocalStorage } from "@/lib/use-local-storage"
 import { useMenuOrder } from "@/lib/use-menu-order"
+import { usePinnedMenus } from "@/lib/use-pinned-menus"
 import { cn } from "@/lib/utils"
-import { unsupportedReason } from "@/menus"
+import { unsupportedReason, type MenuItem } from "@/menus"
 
 /** 사이드바 폭(px) — 저장 키와 허용 범위. */
 const WIDTH_KEY = "myspace.sidebarWidth"
@@ -39,6 +47,14 @@ function rowClass(active: boolean, nested = false) {
   )
 }
 
+/** 우클릭 메뉴 위치와 대상. */
+interface MenuState {
+  x: number
+  y: number
+  item: MenuItem
+  pinned: boolean
+}
+
 interface SideBarProps {
   /** 활성 탭 id(트리에서 강조). */
   activeId: string
@@ -52,16 +68,19 @@ interface SideBarProps {
  * 라벤더 크롬 위에 얹힌 흰 패널처럼 보이도록 좌상단만 라운드를 준다. 헤더는 17px bold
  * 워크스페이스명이고, 그 아래 그룹(섹션) 트리를 그린다.
  * 항목은 그룹 안에서 드래그로 재정렬 가능하고(순서는 `use-menu-order` 가 localStorage 에 저장),
+ * 왼쪽 레일로 끌어다 놓으면 바로가기로 꽂힌다(`use-pinned-menus`).
  * 우측 끝 4px 는 폭 조절 핸들이다(폭도 localStorage 에 저장).
  */
 export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
   const { groups: allGroups, moveItem } = useMenuOrder()
+  const { isPinned, pin, toggle, setDragMenuId } = usePinnedMenus()
   const { settings } = useSettings()
   const [width, setWidth] = useLocalStorage<number>(WIDTH_KEY, DEFAULT_WIDTH)
   const [sections, setSections] = useLocalStorage<Record<string, boolean>>(
     SECTIONS_KEY,
     {}
   )
+  const [menu, setMenu] = React.useState<MenuState | null>(null)
 
   // 설정 → 메뉴 설정에서 끈 그룹·메뉴는 트리에서 뺀다. 항목이 하나도 남지 않은 그룹은
   // 제목만 남아 빈 섹션이 되므로 그룹째 감춘다.
@@ -91,7 +110,9 @@ export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
     itemId: string,
     groupId: string
   ) => {
-    if (e.button !== 0) return
+    // macOS 의 ctrl+클릭은 왼쪽 버튼으로 들어오면서 contextmenu 도 낸다 — 걸러 내지
+    // 않으면 우클릭 메뉴를 띄우면서 탭까지 열린다.
+    if (e.button !== 0 || e.ctrlKey) return
     const startX = e.clientX
     const startY = e.clientY
     let started = false
@@ -109,6 +130,10 @@ export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
       return { id: targetId, before: y < rect.top + rect.height / 2 }
     }
 
+    /** 포인터가 왼쪽 레일 위에 있으면 true(= 놓으면 바로가기로 꽂힌다). */
+    const overRail = (x: number, y: number) =>
+      !!document.elementFromPoint(x, y)?.closest(`[${PIN_DROP_ATTR}]`)
+
     const onMove = (ev: PointerEvent) => {
       if (
         !started &&
@@ -120,6 +145,8 @@ export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
         started = true
         setDragId(itemId)
         setDragGroup(groupId)
+        // 레일이 "여기에 고정" 자리를 띄우도록 알린다.
+        setDragMenuId(itemId)
         document.body.style.userSelect = "none"
       }
       setDropAt(targetAt(ev.clientX, ev.clientY))
@@ -132,6 +159,9 @@ export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
       if (!started) {
         // 움직이지 않았으면 클릭으로 간주해 탭을 연다.
         onSelectMenu(itemId)
+      } else if (overRail(ev.clientX, ev.clientY)) {
+        // 레일 위에 놓았으면 순서 변경이 아니라 바로가기 고정이다.
+        pin(itemId)
       } else {
         const target = targetAt(ev.clientX, ev.clientY)
         if (target) moveItem(groupId, itemId, target.id, target.before)
@@ -139,6 +169,7 @@ export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
       setDragId(null)
       setDragGroup(null)
       setDropAt(null)
+      setDragMenuId(null)
     }
 
     window.addEventListener("pointermove", onMove)
@@ -233,6 +264,15 @@ export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
                       data-menu-item={m.id}
                       data-menu-group={group.id}
                       onPointerDown={(e) => startItemDrag(e, m.id, group.id)}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        setMenu({
+                          x: e.clientX,
+                          y: e.clientY,
+                          item: m,
+                          pinned: isPinned(m.id),
+                        })
+                      }}
                       onKeyDown={(e) => {
                         if (e.key !== "Enter" && e.key !== " ") return
                         e.preventDefault()
@@ -268,7 +308,14 @@ export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
                           사용불가
                         </span>
                       ) : (
-                        m.badge
+                        // 배지와 "레일에 꽂힘" 표시를 한 상자에 담아 오른쪽 끝으로 민다.
+                        // 둘 다 ml-auto 를 쓰면 남는 공간을 나눠 가져 핀이 가운데로 뜬다.
+                        <span className="ml-auto flex shrink-0 items-center gap-1">
+                          {m.badge}
+                          {isPinned(m.id) && (
+                            <PinIcon className="size-3 shrink-0 opacity-45" />
+                          )}
+                        </span>
                       )}
                     </div>
                   )
@@ -277,6 +324,24 @@ export function SideBar({ activeId, onSelectMenu }: SideBarProps) {
           )
         })}
       </div>
+
+      {menu && (
+        <FloatingMenu
+          x={menu.x}
+          y={menu.y}
+          title={menu.item.title}
+          onClose={() => setMenu(null)}
+        >
+          <FloatingMenuItem
+            icon={menu.pinned ? PinOffIcon : PinIcon}
+            label={menu.pinned ? "왼쪽 레일에서 빼기" : "왼쪽 레일에 고정"}
+            onClick={() => {
+              setMenu(null)
+              toggle(menu.item.id)
+            }}
+          />
+        </FloatingMenu>
+      )}
 
       {/* 폭 조절 핸들 */}
       <div

@@ -1,6 +1,7 @@
-import { useCallback, useEffect } from "react"
+import { useCallback, useEffect, useMemo } from "react"
 
 import { useLocalStorage } from "@/lib/use-local-storage"
+import { useTodoFolderSync, type TodoBoard } from "./use-todo-folder-sync"
 
 /** 포스트잇 색상 키. 실제 색은 뷰(todo-view)의 팔레트에서 매핑한다. */
 export type StickyColor =
@@ -60,6 +61,11 @@ function newId() {
  * 포스트잇(메모) 보드 상태. 여러 개의 포스트잇을 만들고, 각 포스트잇 안에서 할 일을
  * 관리한다(체크박스로 완료 처리). 색상 변경 가능. 모두 localStorage 에 저장된다.
  * 포스트잇을 삭제하면 완전히 지우지 않고 휴지통(trash)으로 옮겨 나중에 복원/완전삭제할 수 있다.
+ *
+ * 설정 → 할 일에서 폴더를 지정하면 그 폴더의 마크다운 파일과 **양방향으로** 맞춰진다
+ * (`use-todo-folder-sync.ts`). localStorage 는 그대로 남는다 — 파일은 저장 위치가 하나
+ * 더 생기는 것이고, 진실의 사본은 계속 여기다. 폴더를 비워 두면 아래 코드는 예전과
+ * 완전히 같게 동작한다.
  */
 export function useStickies() {
   const [notes, setNotes] = useLocalStorage<StickyNote[]>(STORAGE_KEY, [])
@@ -73,12 +79,33 @@ export function useStickies() {
     ""
   )
 
+  // ── 폴더(마크다운 파일) 동기화 ───────────────────────────────────
+  // 설정 → 할 일에서 폴더를 지정했을 때만 동작한다. 파일에 실제로 저장되는 세 가지만
+  // 넘긴다(선택된 카테고리는 창마다 다른 화면 상태라 파일에 담을 것이 아니다).
+  const board = useMemo<TodoBoard>(
+    () => ({ categories, notes, trash }),
+    [categories, notes, trash]
+  )
+  const applyBoard = useCallback(
+    (next: TodoBoard) => {
+      setCategories(next.categories)
+      setNotes(next.notes)
+      setTrash(next.trash)
+    },
+    [setCategories, setNotes, setTrash]
+  )
+  const folder = useTodoFolderSync(board, applyBoard)
+
   // 카테고리가 하나도 없으면 기본 카테고리를 만든다(최초 실행/기존 데이터 마이그레이션).
+  //
+  // 폴더를 쓰는 경우에는 첫 읽기가 끝날 때까지 미룬다. 미루지 않으면 파일에서 읽어 올
+  // 카테고리가 있는데도 기본 카테고리가 잠깐 나타났다 사라지는 깜빡임이 생긴다.
   useEffect(() => {
+    if (folder.folder && !folder.ready) return
     if (categories.length === 0) {
       setCategories([{ id: newId(), name: DEFAULT_CATEGORY_NAME }])
     }
-  }, [categories, setCategories])
+  }, [categories, setCategories, folder.folder, folder.ready])
 
   // 선택된 카테고리가 유효하지 않으면(없거나 삭제됨) 첫 카테고리를 선택한다.
   useEffect(() => {
@@ -169,6 +196,46 @@ export function useStickies() {
   const selectCategory = useCallback(
     (id: string) => setActiveCategoryId(id),
     [setActiveCategoryId]
+  )
+
+  // 카테고리 레일 안에서 순서를 바꾼다(포스트잇 순서 변경과 같은 규칙).
+  // 이 순서가 파일 쪽 `order:` 로 나가므로 다른 기기에서도 같은 순서로 보인다.
+  const moveCategory = useCallback(
+    (draggedId: string, targetId: string, before: boolean) => {
+      if (draggedId === targetId) return
+      setCategories((prev) => {
+        const from = prev.findIndex((c) => c.id === draggedId)
+        if (from === -1) return prev
+        const next = [...prev]
+        const [moved] = next.splice(from, 1)
+        // 제거 후 대상 위치를 다시 찾는다(아래로 끄는 드래그에서 한 칸씩 밀리는 것 방지).
+        const to = next.findIndex((c) => c.id === targetId)
+        if (to === -1) return prev
+        next.splice(before ? to : to + 1, 0, moved)
+        return next
+      })
+    },
+    [setCategories]
+  )
+
+  // 포스트잇을 다른 카테고리로 옮긴다.
+  //
+  // 목록의 **맨 앞**으로 보낸다. `categoryId` 만 바꾸면 배열 위치가 그대로라 옮긴 포스트잇이
+  // 대상 카테고리 중간 어딘가에 끼어들어 "어디로 갔는지" 알 수 없다. 새로 추가한 포스트잇이
+  // 맨 앞에 오는 것과 같은 규칙이다.
+  const moveNoteToCategory = useCallback(
+    (noteId: string, categoryId: string) => {
+      if (!categoryId) return
+      setNotes((prev) => {
+        const from = prev.findIndex((n) => n.id === noteId)
+        if (from === -1) return prev
+        if (prev[from].categoryId === categoryId) return prev
+        const next = [...prev]
+        const [moved] = next.splice(from, 1)
+        return [{ ...moved, categoryId }, ...next]
+      })
+    },
+    [setNotes]
   )
 
   // 완전 삭제가 아니라 휴지통으로 옮긴다(삭제항목 목록 맨 앞에 쌓는다).
@@ -326,15 +393,19 @@ export function useStickies() {
     trash,
     categories,
     activeCategoryId,
+    /** 마크다운 폴더 동기화 상태(폴더를 지정하지 않았으면 `folder` 가 빈 문자열). */
+    folder,
     addNote,
     removeNote,
     restoreNote,
     purgeNote,
     moveNote,
+    moveNoteToCategory,
     addCategory,
     renameCategory,
     removeCategory,
     selectCategory,
+    moveCategory,
     setTitle,
     setColor,
     addTodo,

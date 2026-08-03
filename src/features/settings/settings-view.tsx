@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react"
+import { open as openFolderDialog } from "@tauri-apps/plugin-dialog"
 import {
   BellIcon,
   BotIcon,
   CalendarIcon,
   CatIcon,
   CheckIcon,
-  DownloadIcon,
-  FileTextIcon,
+  FolderIcon,
+  FolderOpenIcon,
   GlobeIcon,
   HardDriveIcon,
+  ListChecksIcon,
   ListTreeIcon,
   LogOutIcon,
   MailIcon,
@@ -20,6 +22,7 @@ import {
   SlidersHorizontalIcon,
   SquareKanbanIcon,
   UserIcon,
+  XIcon,
   type LucideIcon,
 } from "lucide-react"
 
@@ -35,6 +38,8 @@ import { cn } from "@/lib/utils"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
 import { useIsDark } from "@/components/theme-provider"
 import { useThemePreset } from "@/components/theme-preset-provider"
+import { DEFAULT_FONT_ID } from "@/lib/fonts"
+import { DEFAULT_FONT_SIZE_ID } from "@/lib/font-sizes"
 import {
   useSettings,
   watchBackendLabel,
@@ -53,7 +58,6 @@ import { GdriveConnectionPanel } from "@/features/gdrive/gdrive-connection"
 import { GmailSettingsPanel } from "@/features/gmail/gmail-settings"
 import { JiraConnectionPanel } from "@/features/jira/jira-connection"
 import { FlexSettingsPanel } from "@/features/flex/flex-settings"
-import { BUNDLED_MARKDOWN_CSS } from "@/features/cowork-spec/bundled-css"
 import { PetSpeciesRow } from "@/features/pet/pet-species-settings"
 import { MENU_GROUPS } from "@/menus"
 import type { McpStatus } from "@/features/intellij/use-services"
@@ -466,6 +470,9 @@ function AppearanceSettingsPanel() {
     fonts,
     fontId,
     setFont,
+    fontSizes,
+    fontSizeId,
+    setFontSize,
   } = useThemePreset()
 
   return (
@@ -493,8 +500,40 @@ function AppearanceSettingsPanel() {
               )}
             >
               {f.label}
-              {f.id === "lato" && (
+              {f.id === DEFAULT_FONT_ID && (
                 <span className="ml-1 opacity-70">(기본)</span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Font Size — 본문 15px 을 기준으로 화면 전체를 같은 비율로 키우고 줄인다.
+          칩 글자를 그 크기로 그려 두면 고르기 전에 결과를 가늠할 수 있다(Font 칩과 같은 방식). */}
+      <PanelHeader
+        title="Font Size"
+        description="앱 본문 글자 크기입니다. 글자만이 아니라 줄 높이·여백·아이콘도 같은 비율로 커지고 작아집니다."
+      />
+      <div className="mt-3 mb-8 flex flex-wrap items-center gap-1.5">
+        {fontSizes.map((s) => {
+          const isActive = s.id === fontSizeId
+          return (
+            <button
+              key={s.id}
+              type="button"
+              aria-pressed={isActive}
+              onClick={() => setFontSize(s.id)}
+              style={{ fontSize: s.px }}
+              className={cn(
+                "h-8 cursor-pointer rounded-full border px-3.5 font-semibold transition-colors outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring focus-visible:outline-solid",
+                isActive
+                  ? "border-transparent bg-ui-selection text-ui-selection-fg"
+                  : "border-border text-muted-foreground hover:bg-ui-list-hover hover:text-foreground"
+              )}
+            >
+              {s.label}
+              {s.id === DEFAULT_FONT_SIZE_ID && (
+                <span className="ml-1 text-[13px] opacity-70">(기본)</span>
               )}
             </button>
           )
@@ -1352,175 +1391,168 @@ function IntellijSettingsPanel() {
 }
 
 /**
- * Cowork 서비스 설정 화면 — IntelliJ 없이 서비스를 띄울 프로젝트 경로.
+ * Cowork 설정 화면 — **홈 디렉터리 하나**만 받는다.
  *
- * Cowork Spec 문서의 홈 경로와 **다른 값이다**(`coworkService.projectPath` vs
- * `cowork.home`). 스펙 문서만 따로 클론해 두거나 여러 워크트리 중 하나에서만 서비스를
- * 띄우는 게 흔해서, 하나로 묶으면 한쪽을 바꿀 때 다른 쪽이 깨진다.
+ * 예전에는 `Cowork 서비스`(서비스를 띄울 프로젝트 경로)와 `Cowork Spec 문서`(문서를
+ * 찾을 홈 경로)로 나뉘어 있었다. 실제로는 둘 다 같은 클론을 가리켰고 설정이 두 곳이라
+ * 한쪽만 고치면 다른 쪽이 조용히 옛 경로를 봤으므로 하나로 합쳤다 — 이 경로 아래에서
+ * `.cowork/specs`(스펙 문서)와 `.idea/runConfigurations`(서비스 실행 설정)를 함께 읽는다.
+ *
+ * 마크다운 스타일은 여기에 없다. 번들된 Typora 테마
+ * (`src/assets/typora/rudaks.css`)가 My Space 의 기본 스타일이고, 뷰어가 그것만
+ * 주입한다 — 고를 것이 없으므로 설정할 것도 없다.
  */
-function CoworkServiceSettingsPanel() {
-  const { settings, setCoworkService } = useSettings()
-  const path = settings.coworkService.projectPath
+/**
+ * 할 일 저장 위치 설정 — 폴더 하나를 지정하면 카테고리마다 폴더가, 포스트잇마다 파일이 생긴다.
+ *
+ * 여기가 Obsidian·Dropbox·iCloud·git 을 한꺼번에 처리하는 지점이다(각각을 위한 API 는
+ * 없다 — 전부 폴더다). 그래서 화면도 "폴더 하나" 하나뿐이고, 무엇을 가리키면 무엇이
+ * 되는지를 아래 표로 알려 준다.
+ */
+function TodoSettingsPanel() {
+  const { settings, setTodo } = useSettings()
+  const folder = settings.todo.folder
+
+  const pick = async () => {
+    const picked = await openFolderDialog({ directory: true, multiple: false })
+    if (typeof picked === "string") setTodo({ folder: picked })
+  }
 
   return (
     <div className="flex flex-col">
       <PanelHeader
-        title="Cowork 서비스"
-        description="IntelliJ 를 띄우지 않고 cowork 의 실행 설정(프로필·VM 옵션·클래스패스)을 그대로 기동합니다. IDE 가 한 번 임포트해 둔 프로젝트 모델을 읽어 쓰므로, 프로젝트를 IntelliJ 에서 한 번 열어 둔 상태여야 합니다(그 뒤로는 IDE 를 꺼도 됩니다)."
+        title="할 일"
+        description="할 일을 폴더 안의 마크다운 파일로도 저장합니다. 비워 두면 앱 안에만 저장됩니다."
       />
 
       <div className="mt-4 flex flex-col gap-1.5">
-        <label
-          className="text-[15px] font-semibold"
-          htmlFor="cowork-service-path"
-        >
-          cowork 프로젝트 경로
+        <label className="text-[15px] font-semibold" htmlFor="todo-folder">
+          저장 폴더
         </label>
         <p className="text-[13px] text-muted-foreground">
-          cowork 를 클론한 폴더(= IntelliJ 로 여는 프로젝트 루트)입니다. 이 아래{" "}
-          <span className="font-mono">.idea/runConfigurations</span> 에서 실행
-          설정을 읽습니다. <span className="font-mono">~</span> 는 홈으로
-          펼쳐집니다. 비워 두면 앱을 처음 열 때 IntelliJ 최근 프로젝트에서{" "}
-          <span className="font-mono">cowork</span> 를 찾아 자동으로 채웁니다.
+          <strong className="font-semibold">
+            카테고리가 폴더, 포스트잇이 그 안의 노트
+          </strong>{" "}
+          하나가 되고, 할 일은 <span className="font-mono">- [ ]</span>{" "}
+          체크박스로 적힙니다. 앱과 파일은{" "}
+          <strong className="font-semibold">양방향</strong>으로 맞춰집니다 —
+          다른 편집기에서 체크하면 앱에도 반영되고, 같은 항목을 양쪽에서 동시에
+          고치면 나중에 저장한 쪽이 남습니다.{" "}
+          <span className="font-mono">~</span> 는 홈으로 펼쳐집니다.
         </p>
-        <Input
-          id="cowork-service-path"
-          value={path}
-          onChange={(e) => setCoworkService({ projectPath: e.target.value })}
-          placeholder="예: ~/git/cowork"
-          spellCheck={false}
-          className="mt-1 font-mono text-[13px]"
-        />
-        <p className="mt-1 text-[13px] text-muted-foreground">
-          <b>Cowork Spec 문서</b> 의 홈 디렉터리와는 별개의 값입니다 — 문서를
-          보는 폴더와 서비스를 띄우는 폴더가 달라도 됩니다.
-        </p>
+        <div className="mt-1 flex items-center gap-2">
+          <Input
+            id="todo-folder"
+            value={folder}
+            onChange={(e) => setTodo({ folder: e.target.value })}
+            placeholder="예: ~/Obsidian/내볼트/todo (비우면 앱에만 저장)"
+            spellCheck={false}
+            className="font-mono text-[13px]"
+          />
+          {isTauri() && (
+            <Button
+              variant="outline"
+              className="shrink-0 rounded-full"
+              onClick={pick}
+            >
+              <FolderOpenIcon className="size-3.5" />
+              폴더 선택
+            </Button>
+          )}
+          {folder && (
+            <Button
+              variant="ghost"
+              className="shrink-0 rounded-full"
+              onClick={() => setTodo({ folder: "" })}
+            >
+              <XIcon className="size-3.5" />
+              해제
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-5 border-t border-border">
+        <InfoRow title="어디를 가리키면 무엇이 되나">
+          <span className="font-mono">~/Obsidian/볼트/todo</span> → Obsidian
+          에서 체크박스를 그대로 눌러 편집 ·{" "}
+          <span className="font-mono">Dropbox</span>
+          {" · "}
+          <span className="font-mono">iCloud</span> 폴더 → 기기 간
+          동기화(동기화는 그 앱이 담당합니다) · git 저장소 → 변경 이력. 따로
+          연동할 것이 없어 폴더 하나로 모두 됩니다.
+        </InfoRow>
+        <InfoRow title="다른 노트는 건드리지 않습니다">
+          파일 앞머리에 <span className="font-mono">myspace-todo</span> 표시가
+          있는 파일만 읽고 씁니다. 볼트 루트를 지정해도 다른 노트는 읽히지도,
+          지워지지도 않습니다. 다만 하위 폴더는 훑지 않으므로 볼트 안에 전용
+          폴더를 만들어 지정하는 편이 좋습니다.
+        </InfoRow>
+        <InfoRow title="Obsidian 에서 해도 되는 일">
+          노트 이름을 바꾸면 포스트잇 제목이 바뀌고,{" "}
+          <strong className="font-semibold">
+            노트를 다른 폴더로 끌면 카테고리가 바뀝니다
+          </strong>{" "}
+          — 소속은 파일의 위치가 정합니다. 포스트잇이 노트 하나이므로 링크 (
+          <span className="font-mono">[[포스트잇 이름]]</span>)·백링크·검색도
+          그대로 동작합니다.
+        </InfoRow>
+        <InfoRow title="체크박스 목록만 동기화됩니다">
+          노트 본문에서 <span className="font-mono">- [ ]</span> 체크박스만
+          동기화 대상입니다. 그 밖의 문장을 적어 두면 앱에는 담을 곳이 없어 다음
+          저장 때 사라집니다. 색·식별자·순서는 앱에서만 쓰는 값이라 앞머리
+          (frontmatter)에 두므로 Obsidian 본문에는 보이지 않습니다.
+        </InfoRow>
       </div>
     </div>
   )
 }
 
-/**
- * Cowork spec 문서 설정 화면 — 스펙 문서를 찾을 cowork 홈 경로와, 마크다운 뷰어에
- * 입힐 스타일(css)을 관리한다.
- *
- * 스타일은 앱에 번들된 기본 테마(`cowork-spec/bundled-css.ts`)로 시작한다 — Typora 가
- * 깔려 있지 않아도 첫 실행부터 제대로 보인다. 여기서 하는 일은 그 위에 사용자의 Typora
- * 테마 css 를 덮어쓰는 것뿐이고, 뷰어는 그 원문을 섀도 DOM 에 주입한다.
- */
 function CoworkSettingsPanel() {
   const { settings, setCowork } = useSettings()
   const s = settings.cowork
-  const [importing, setImporting] = useState(false)
-  const [result, setResult] = useState<
-    { ok: true; chars: number } | { ok: false; error: string } | null
-  >(null)
-
-  const importCss = useCallback(async () => {
-    if (!isTauri()) return
-    setImporting(true)
-    setResult(null)
-    try {
-      const css = await trackedInvoke<string>("cowork_read_css", {
-        path: s.cssPath,
-      })
-      setCowork({ markdownCss: css })
-      setResult({ ok: true, chars: css.length })
-    } catch (e) {
-      setResult({ ok: false, error: String(e) })
-    } finally {
-      setImporting(false)
-    }
-  }, [s.cssPath, setCowork])
-
-  const hasCss = s.markdownCss.trim().length > 0
 
   return (
     <div className="flex flex-col">
       <PanelHeader
-        title="Cowork Spec 문서"
-        description="cowork 홈 아래 .cowork/specs 의 스펙 문서(md)를 마크다운으로 봅니다. 기본 스타일이 앱에 내장되어 있어 그대로 Typora 와 같은 가독성으로 표시됩니다."
+        title="Cowork"
+        description="cowork 클론 폴더 하나를 지정하면 스펙 문서와 서비스 기동이 모두 그 경로를 씁니다."
       />
 
-      <div className="mt-4 flex flex-col gap-1.5 border-b border-border pb-4">
+      <div className="mt-4 flex flex-col gap-1.5">
         <label className="text-[15px] font-semibold" htmlFor="cowork-home">
           cowork 홈 디렉터리
         </label>
         <p className="text-[13px] text-muted-foreground">
-          이 경로 아래 <span className="font-mono">.cowork/specs</span> 에서
-          스펙 문서를 찾습니다.
+          cowork 를 클론한 폴더(= IntelliJ 로 여는 프로젝트 루트)입니다.{" "}
+          <span className="font-mono">~</span> 는 홈으로 펼쳐집니다. 비워 두면
+          앱을 처음 열 때 IntelliJ 최근 프로젝트에서{" "}
+          <span className="font-mono">cowork</span> 를 찾아 자동으로 채웁니다.
         </p>
         <Input
           id="cowork-home"
           value={s.home}
           onChange={(e) => setCowork({ home: e.target.value })}
+          placeholder="예: ~/git/cowork"
           spellCheck={false}
           className="mt-1 font-mono text-[13px]"
         />
       </div>
 
-      <div className="mt-4 flex flex-col gap-1.5">
-        <div className="text-[15px] font-semibold">
-          마크다운 스타일 (Typora)
-        </div>
-        <p className="text-[13px] text-muted-foreground">
-          기본 스타일은 앱에 내장되어 있어 따로 설정하지 않아도 됩니다. 자기
-          Typora 테마로 바꾸고 싶을 때만 아래 경로의 css 를 “스타일 가져오기” 로
-          읽어 오면, 그 원문이 저장되어 내장 스타일 대신 적용됩니다.
-        </p>
-        <div className="mt-1 flex items-center gap-2">
-          <Input
-            value={s.cssPath}
-            onChange={(e) => setCowork({ cssPath: e.target.value })}
-            spellCheck={false}
-            className="font-mono text-[13px]"
-          />
-          <Button
-            variant="outline"
-            className="shrink-0 rounded-full"
-            onClick={() => void importCss()}
-            disabled={importing}
-          >
-            <DownloadIcon
-              className={cn("size-3.5", importing && "animate-pulse")}
-            />
-            스타일 가져오기
-          </Button>
-        </div>
-
-        {/* 지금 적용 중인 스타일(내장 / 가져온 것) + 방금 가져온 결과 */}
-        <div className="mt-2 flex items-center gap-2 text-[13px]">
-          <span className="size-2 shrink-0 rounded-full bg-ui-success" />
-          <span className="text-muted-foreground">
-            {hasCss
-              ? `가져온 스타일 적용 중 (${s.markdownCss.length.toLocaleString()}자)`
-              : `내장 기본 스타일 적용 중 (${BUNDLED_MARKDOWN_CSS.length.toLocaleString()}자)`}
-          </span>
-          {hasCss && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="ml-auto h-7 rounded-full text-[13px] text-ui-error hover:text-ui-error"
-              onClick={() => {
-                setCowork({ markdownCss: "" })
-                setResult(null)
-              }}
-            >
-              내장 스타일로 되돌리기
-            </Button>
-          )}
-        </div>
-
-        {result?.ok === false && (
-          <div className="mt-1 font-mono text-[13px] break-all text-ui-error">
-            가져오기 실패: {result.error}
-          </div>
-        )}
-        {result?.ok === true && (
-          <div className="mt-1 text-[13px] text-ui-success">
-            {result.chars.toLocaleString()}자를 가져왔습니다.
-          </div>
-        )}
+      <div className="mt-5 border-t border-border">
+        <InfoRow title="Cowork Spec 문서">
+          이 경로 아래 <span className="font-mono">.cowork/specs</span> 의 스펙
+          문서(md)를 마크다운으로 봅니다. 스타일은 앱에 내장된 Typora 테마가
+          기본으로 적용되어 따로 설정할 것이 없습니다.
+        </InfoRow>
+        <InfoRow title="Cowork 서비스">
+          이 경로 아래{" "}
+          <span className="font-mono">.idea/runConfigurations</span> 의 실행
+          설정(프로필·VM 옵션·클래스패스)을 읽어, IntelliJ 를 띄우지 않고 그대로
+          기동합니다. IDE 가 한 번 임포트해 둔 프로젝트 모델을 읽어 쓰므로
+          프로젝트를 IntelliJ 에서 한 번 열어 둔 상태여야 합니다(그 뒤로는 IDE
+          를 꺼도 됩니다).
+        </InfoRow>
       </div>
     </div>
   )
@@ -1703,15 +1735,15 @@ const CATEGORIES: SettingsCategory[] = [
     panel: <IntellijSettingsPanel />,
   },
   {
-    id: "cowork-service",
-    label: "Cowork 서비스",
-    icon: ServerIcon,
-    panel: <CoworkServiceSettingsPanel />,
+    id: "todo",
+    label: "할 일",
+    icon: ListChecksIcon,
+    panel: <TodoSettingsPanel />,
   },
   {
-    id: "cowork-spec",
-    label: "Cowork Spec 문서",
-    icon: FileTextIcon,
+    id: "cowork",
+    label: "Cowork",
+    icon: FolderIcon,
     panel: <CoworkSettingsPanel />,
   },
 ]

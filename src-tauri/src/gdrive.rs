@@ -65,6 +65,31 @@ fn write_config(app: &tauri::AppHandle, cfg: &Config) -> Result<(), String> {
 pub struct GdriveStatus {
     connected: bool,
     email: Option<String>,
+    /// 저장된 OAuth 클라이언트 ID. 재연결 폼을 자동으로 채우는 용도다.
+    client_id: Option<String>,
+    /// 보안 비밀이 저장돼 있는지. 값 자체는 웹뷰로 절대 내보내지 않으므로
+    /// "저장됨"만 알리고, 재연결 때는 빈 값으로 두면 Rust 가 저장분을 쓴다.
+    has_secret: bool,
+}
+
+/// 입력값을 다듬고, 비어 있으면 대체값(보통 저장된 값)을 쓴다.
+fn some_or(input: String, fallback: String) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        fallback
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// 저장된 설정 → 프런트에 보낼 상태. connected 판정은 refresh_token 유무다.
+fn status_of(cfg: &Config) -> GdriveStatus {
+    GdriveStatus {
+        connected: !cfg.refresh_token.is_empty(),
+        email: (!cfg.email.is_empty()).then(|| cfg.email.clone()),
+        client_id: (!cfg.client_id.is_empty()).then(|| cfg.client_id.clone()),
+        has_secret: !cfg.client_secret.is_empty(),
+    }
 }
 
 #[derive(Serialize)]
@@ -235,31 +260,35 @@ async fn fetch_email(access: &str) -> Option<String> {
 /// 저장된 연동 상태.
 #[tauri::command]
 pub fn gdrive_status(app: tauri::AppHandle) -> Result<GdriveStatus, String> {
-    let cfg = read_config(&app);
-    if cfg.refresh_token.is_empty() {
-        Ok(GdriveStatus {
-            connected: false,
-            email: None,
-        })
-    } else {
-        Ok(GdriveStatus {
-            connected: true,
-            email: if cfg.email.is_empty() {
-                None
-            } else {
-                Some(cfg.email)
-            },
-        })
-    }
+    Ok(status_of(&read_config(&app)))
 }
 
-/// 연동 해제(저장 토큰 삭제).
+/// 연동 해제 — 토큰만 지우고 OAuth 클라이언트 정보는 남긴다(gmail.rs 와 같은 이유:
+/// 동의 화면이 "테스트 중"이면 7일마다 재연결하게 되는데, 그때마다 클라이언트 ID/보안
+/// 비밀을 콘솔에서 다시 복사해 오게 만들 이유가 없다). 클라이언트 자체를 바꿀 때만
+/// forget_client 로 완전히 지운다.
 #[tauri::command]
-pub fn gdrive_disconnect(app: tauri::AppHandle) -> Result<(), String> {
-    if let Ok(path) = config_path(&app) {
-        let _ = std::fs::remove_file(path);
+pub fn gdrive_disconnect(
+    app: tauri::AppHandle,
+    forget_client: Option<bool>,
+) -> Result<GdriveStatus, String> {
+    let mut cfg = read_config(&app);
+    cfg.refresh_token.clear();
+    cfg.email.clear();
+    if forget_client.unwrap_or(false) {
+        cfg.client_id.clear();
+        cfg.client_secret.clear();
     }
-    Ok(())
+
+    // 남길 게 없으면 파일도 남기지 않는다(미연결 상태와 동일).
+    if cfg.client_id.is_empty() && cfg.client_secret.is_empty() {
+        if let Ok(path) = config_path(&app) {
+            let _ = std::fs::remove_file(path);
+        }
+    } else {
+        write_config(&app, &cfg)?;
+    }
+    Ok(status_of(&cfg))
 }
 
 /// OAuth 로그인 시작: 브라우저를 열고 루프백으로 코드를 받아 토큰을 저장한다.
@@ -269,8 +298,11 @@ pub async fn gdrive_start_auth(
     client_id: String,
     client_secret: String,
 ) -> Result<GdriveStatus, String> {
-    let client_id = client_id.trim().to_string();
-    let client_secret = client_secret.trim().to_string();
+    // 빈 값으로 오면 저장된 값을 쓴다. 보안 비밀은 웹뷰로 내보내지 않으므로
+    // 프런트가 되돌려줄 방법이 없고, 재연결 때 다시 입력하지 않게 하려면 여기서 채워야 한다.
+    let saved = read_config(&app);
+    let client_id = some_or(client_id, saved.client_id);
+    let client_secret = some_or(client_secret, saved.client_secret);
     if client_id.is_empty() || client_secret.is_empty() {
         return Err("client_id 와 client_secret 을 모두 입력하세요".into());
     }
@@ -328,14 +360,11 @@ pub async fn gdrive_start_auth(
         client_id,
         client_secret,
         refresh_token,
-        email: email.clone(),
+        email,
     };
     write_config(&app, &cfg)?;
 
-    Ok(GdriveStatus {
-        connected: true,
-        email: if email.is_empty() { None } else { Some(email) },
-    })
+    Ok(status_of(&cfg))
 }
 
 /// 내 드라이브 루트 폴더 id(위치를 "내 드라이브"로 표시하기 위한 비교용).

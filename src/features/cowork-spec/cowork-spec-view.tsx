@@ -8,10 +8,12 @@ import {
   XIcon,
 } from "lucide-react"
 
+import { ResizeHandle } from "@/components/resize-handle"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
+import { useResizableWidth } from "@/lib/use-resizable-width"
 import { useSettings } from "@/features/settings/settings-context"
 import {
   useCoworkSpecs,
@@ -43,6 +45,12 @@ function filterSpecs(
     .filter((d): d is SpecDir => d !== null)
 }
 
+/** 왼쪽 목록 패널 폭 — 기존 고정폭(`w-72` = 288px)이 기본값이다. */
+const ASIDE_WIDTH_KEY = "myspace.coworkSpecAsideWidth"
+const DEFAULT_ASIDE_WIDTH = 288
+const MIN_ASIDE_WIDTH = 220
+const MAX_ASIDE_WIDTH = 640
+
 /** 탭으로 열린 문서 하나. */
 interface OpenDoc {
   /** 절대 경로(고유 키). */
@@ -58,15 +66,7 @@ interface OpenDoc {
  * 남는다(탭을 다시 눌러도 재요청·재렌더 없이 이전 스크롤·mermaid 그대로 유지). 그래서
  * 파일 로드는 마운트 시 한 번만 하고, 활성 여부는 CSS(invisible)로만 토글한다.
  */
-function SpecDocument({
-  path,
-  css,
-  active,
-}: {
-  path: string
-  css: string
-  active: boolean
-}) {
+function SpecDocument({ path, active }: { path: string; active: boolean }) {
   const [html, setHtml] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -109,7 +109,7 @@ function SpecDocument({
           불러오는 중…
         </div>
       ) : (
-        <MarkdownViewer html={html} css={css} />
+        <MarkdownViewer html={html} />
       )}
     </div>
   )
@@ -118,7 +118,7 @@ function SpecDocument({
 /** Cowork spec 문서 뷰 — 왼쪽 목록(폴더 → 문서), 오른쪽 상단 탭으로 여러 문서 동시 열람. */
 export function CoworkSpecView() {
   const { settings } = useSettings()
-  const { home, markdownCss } = settings.cowork
+  const { home } = settings.cowork
   const { specs, loading, error, reload } = useCoworkSpecs(home)
 
   const [query, setQuery] = useState("")
@@ -131,6 +131,17 @@ export function CoworkSpecView() {
     new Map()
   )
   const [contentBusy, setContentBusy] = useState(false)
+
+  const {
+    width: asideWidth,
+    resizing,
+    startResize,
+  } = useResizableWidth(
+    ASIDE_WIDTH_KEY,
+    DEFAULT_ASIDE_WIDTH,
+    MIN_ASIDE_WIDTH,
+    MAX_ASIDE_WIDTH
+  )
 
   // 검색어가 바뀌면(2자 이상) 잠시 뒤 본문을 검색한다. 타이핑 중 매번 파일을 읽지 않도록
   // 220ms 디바운스한다.
@@ -203,8 +214,11 @@ export function CoworkSpecView() {
 
   return (
     <div className="flex min-h-0 flex-1 gap-4">
-      {/* 좌측: 스펙 목록 */}
-      <div className="flex w-72 shrink-0 flex-col">
+      {/* 좌측: 스펙 목록 (폭 조절 가능) */}
+      <div
+        className="relative flex shrink-0 flex-col"
+        style={{ width: asideWidth }}
+      >
         <div className="flex items-center gap-2">
           <div className="relative min-w-0 flex-1">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -359,6 +373,12 @@ export function CoworkSpecView() {
             </ul>
           )}
         </div>
+
+        <ResizeHandle
+          resizing={resizing}
+          onPointerDown={startResize}
+          label="스펙 목록 폭 조절"
+        />
       </div>
 
       {/* 우측: 탭 + 문서 뷰어 */}
@@ -424,7 +444,6 @@ export function CoworkSpecView() {
                 <SpecDocument
                   key={doc.path}
                   path={doc.path}
-                  css={markdownCss}
                   active={doc.path === activePath}
                 />
               ))}

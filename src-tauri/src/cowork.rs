@@ -2,13 +2,10 @@
 //! 목록으로 훑고, 개별 파일 내용을 읽어 마크다운 뷰어에 넘긴다.
 //!
 //! 저장·편집은 하지 않는다(읽기 전용). 파일 IO 는 Rust 가 직접 하고(std::fs),
-//! 프론트엔드는 목록·본문·스타일(css)만 받아 화면에 그린다.
+//! 프론트엔드는 목록·본문만 받아 화면에 그린다.
 //!
-//! 기본 스타일은 프론트엔드에 번들돼 있다(`src/assets/typora/rudaks.css`, 뷰어가
-//! 섀도 DOM 에 주입) — Typora 가 깔려 있지 않은 사람도 첫 실행부터 같은 화면을 본다.
-//! 여기의 `cowork_read_css` 는 그걸 **덮어쓰고 싶을 때만** 쓰이는 통로로, 사용자의
-//! Typora 테마 css(예: `~/Library/Application Support/abnerworks.Typora/themes/
-//! rudaks.css`)를 읽어 설정에 저장한다.
+//! 스타일은 프론트엔드에 번들돼 있다(`src/assets/typora/rudaks.css`, 뷰어가 섀도 DOM 에
+//! 주입) — My Space 의 기본 마크다운 스타일이므로 Rust 가 css 를 읽어 주는 통로는 없다.
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -36,7 +33,8 @@ pub struct SpecDir {
 }
 
 /// `~` 를 HOME 으로 펼친다.
-/// (`standalone.rs` 도 같은 `settings.cowork.home` 값을 받으므로 함께 쓴다.)
+/// (`standalone.rs` 도 같은 `settings.cowork.home` 값을 받으므로 함께 쓴다 —
+/// 스펙 문서와 서비스 기동이 홈 디렉터리 하나를 공유한다.)
 pub(crate) fn expand_home(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         if let Ok(home) = std::env::var("HOME") {
@@ -208,15 +206,4 @@ pub fn cowork_search_specs(home: String, query: String) -> Result<Vec<SearchHit>
         }
     }
     Ok(hits)
-}
-
-/// Typora 테마 css 파일 내용을 읽어 온다(설정에서 "스타일 가져오기" 버튼이 호출).
-/// `~` 는 HOME 으로 펼친다.
-#[tauri::command]
-pub fn cowork_read_css(path: String) -> Result<String, String> {
-    let p = expand_home(&path);
-    if p.extension().and_then(|e| e.to_str()) != Some("css") {
-        return Err("css 파일만 가져올 수 있습니다.".into());
-    }
-    std::fs::read_to_string(&p).map_err(|e| e.to_string())
 }

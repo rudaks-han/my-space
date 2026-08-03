@@ -37,7 +37,9 @@ tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Slack/Google API 호출용 HTTP 클라이언트. macOS 는 native-tls(Secure Transport)를 써서 OpenSSL 불필요.
-reqwest = { version = "0.12", features = ["json"] }
+# `blocking`: 앱 종료(RunEvent::Exit) 기록은 프로세스가 사라지기 전에 반드시 전송돼야 해서
+# firebase.rs 가 동기 클라이언트를 별도 스레드에서 쓴다(async 로는 전송 전에 죽는다).
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 # Slack rate-limit(429) 백오프 대기 + Google OAuth 루프백 대기에 tokio 사용.
 # 화면공유 서버(axum)를 위해 net/rt-multi-thread 도 필요하다.
 tokio = { version = "1", features = [

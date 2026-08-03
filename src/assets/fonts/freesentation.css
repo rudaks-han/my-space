@@ -1,0 +1,39 @@
+/*
+ * Freesentation — 설정 → Appearance → Font 의 선택지 하나.
+ *
+ * 다른 본문 폰트는 npm 패키지(@fontsource/*, pretendard, @kfonts/*)로 들어오지만
+ * 이 폰트는 npm 에 없어서 공식 저장소의 woff2 를 그대로 받아 두었다
+ * (https://github.com/Freesentation/freesentation/tree/main/woff2, SIL OFL — `OFL.txt`).
+ * 공식 css 는 jsDelivr 를 가리키는데, 이 앱은 오프라인 데스크톱이라 CDN 을 쓸 수 없다.
+ *
+ * 굵기는 앱이 실제로 쓰는 400/500/600/700 만 담았다 — 한 벌이 ~470KB 라 9종을 다 넣으면
+ * 4MB 가 넘고, Thin~Light 와 ExtraBold 이상은 UI 어디에서도 쓰지 않는다.
+ */
+@font-face {
+  font-family: "Freesentation";
+  src: url("./Freesentation-4Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Freesentation";
+  src: url("./Freesentation-5Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Freesentation";
+  src: url("./Freesentation-6SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Freesentation";
+  src: url("./Freesentation-7Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
