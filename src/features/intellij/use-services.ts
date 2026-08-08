@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
 
 import { isTauri, trackedInvoke } from "@/lib/tauri"
@@ -533,13 +533,28 @@ export function useServices(backend: ServicesBackend = "ide") {
   )
 
   /**
+   * 지금 실행 중이면서 종료를 제어할 수 있는(stoppable) 서비스들 — 곧 "모두 중지" 의 대상.
+   *
+   * 훅이 들고 있는 이유: 세 화면(IntelliJ 서비스 · Cowork 서비스 · 아래 독)이 모두 이
+   * 목록으로 버튼을 켜고 끄고, 확인 대화창은 **여기에 적힌 이름 그대로** 내려간다고
+   * 말한다. 화면마다 따로 걸러 내면 그 문장과 실제 대상이 어긋날 수 있다.
+   */
+  const stoppableRunning = useMemo(
+    () => services.filter((s) => running.has(s.name) && s.stoppable),
+    [services, running]
+  )
+
+  /**
    * 실행 중이면서 종료를 제어할 수 있는(stoppable) 서비스를 한꺼번에 내린다.
    * IntelliJ Services 창의 "Stop All" 과 같은 역할 — 일괄 실행으로 띄운 것을 한 번에 끈다.
+   *
+   * 되돌릴 수 없는 조작이라 **확인은 부르는 쪽이 먼저 받는다**(`StopAllDialog`).
+   * 훅 안에서 물으면 화면 없는 곳에서도 불릴 수 있는 함수가 UI 를 갖게 된다.
    */
-  const stopAll = useCallback(() => {
-    const targets = services.filter((s) => running.has(s.name) && s.stoppable)
-    return stopMany(targets.map((s) => s.name))
-  }, [services, running, stopMany])
+  const stopAll = useCallback(
+    () => stopMany(stoppableRunning.map((s) => s.name)),
+    [stoppableRunning, stopMany]
+  )
 
   /**
    * Rust 에 보관된 로그로 콘솔을 복원한다.
@@ -664,6 +679,8 @@ export function useServices(backend: ServicesBackend = "ide") {
     startMany,
     stopMany,
     stopAll,
+    /** "모두 중지" 가 실제로 내릴 서비스들(버튼 활성 여부와 확인 문구가 함께 본다). */
+    stoppableRunning,
     enableLogSync,
     startSequence,
     cancelSequence,
@@ -672,29 +689,7 @@ export function useServices(backend: ServicesBackend = "ide") {
   }
 }
 
-/**
- * 로그 영역을 새 줄이 올 때 맨 아래로 붙여 주는 ref.
- * 사용자가 위로 스크롤해 과거 로그를 보고 있으면 따라가지 않는다.
+/*
+ * 콘솔의 스크롤 규칙은 `console-log.tsx` 의 `useConsoleScroll` 이 갖는다 —
+ * 화면에 그릴 줄을 고르는 일까지 하므로 그리는 쪽에 있는 것이 맞다.
  */
-export function useAutoScroll(dep: unknown) {
-  const ref = useRef<HTMLDivElement>(null)
-  const pinned = useRef(true)
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const onScroll = () => {
-      // 바닥에서 40px 이내면 "따라가는 중"으로 본다.
-      pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-    }
-    el.addEventListener("scroll", onScroll)
-    return () => el.removeEventListener("scroll", onScroll)
-  }, [])
-
-  useEffect(() => {
-    const el = ref.current
-    if (el && pinned.current) el.scrollTop = el.scrollHeight
-  }, [dep])
-
-  return ref
-}

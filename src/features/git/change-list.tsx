@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 
 import { Checkbox } from "@/components/ui/checkbox"
@@ -59,12 +59,18 @@ function ContextMenu({
   onClose: () => void
   onAction: (action: ChangeAction, change: GitChange) => void
 }) {
+  const ref = useRef<HTMLDivElement | null>(null)
+
   useEffect(() => {
-    const close = () => onClose()
+    // 메뉴 안에서 시작한 mousedown 은 `ref.contains` 로 걸러야 한다 —
+    // 이유는 `components/shell/floating-menu.tsx` 의 같은 자리에 적어 두었다.
+    const close = (e: Event) => {
+      if (ref.current?.contains(e.target as Node)) return
+      onClose()
+    }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose()
     }
-    // capture 로 받아 메뉴 바깥 클릭·스크롤 어디서든 닫는다.
     document.addEventListener("mousedown", close, true)
     document.addEventListener("scroll", close, true)
     document.addEventListener("keydown", onKey)
@@ -83,10 +89,9 @@ function ContextMenu({
 
   return (
     <div
+      ref={ref}
       className="fixed z-50 min-w-52 overflow-hidden rounded-[10px] border border-border bg-popover py-1 shadow-[0_4px_16px_rgba(0,0,0,0.16)]"
       style={{ left: state.x, top: state.y }}
-      // 메뉴 안에서의 mousedown 은 위의 닫기 리스너로 새어 나가지 않게 막는다.
-      onMouseDown={(e) => e.stopPropagation()}
     >
       <div className="truncate px-3 py-1 text-[11px] font-bold text-muted-foreground">
         {splitPath(c.path).name}

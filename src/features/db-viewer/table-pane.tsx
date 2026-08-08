@@ -41,7 +41,7 @@ import { getTableQuery, setTableQuery, type TableQuery } from "./persisted"
 
 type SubTab = "data" | "columns" | "keys"
 
-interface TablePaneProps {
+export interface TablePaneProps {
   connId: string
   table: TableRef
   active: boolean
@@ -49,6 +49,18 @@ interface TablePaneProps {
   autoCommit: boolean
   /** 수동 커밋 모드에서 커밋되지 않은 변경이 남아 있는지 알린다. */
   onTxDirty: () => void
+  /**
+   * 조회 조건(`persisted.ts`)을 담아 둘 칸의 화면 접두사. 주지 않으면 데이터베이스
+   * 뷰어의 기존 칸을 쓴다 — 두 화면이 접두사 없이 같은 칸을 나눠 쓰면, 한쪽에서 탭을
+   * 닫을 때 도는 `purgeTableQuery` 가 다른 쪽이 쓰고 있는 WHERE 절을 지운다.
+   */
+  scope?: string
+  /**
+   * 바깥 껍데기의 배치 클래스. 기본값 `absolute inset-0` 은 데이터베이스 뷰어의
+   * keep-alive 탭 더미(겹쳐 놓고 활성 탭만 보이기)와의 약속이라, 그렇게 쌓지 않는
+   * 화면(고정 자리에 하나만 놓는 경우)은 여기에 자기 배치를 준다.
+   */
+  className?: string
 }
 
 /** 새로 추가한 행. 사용자가 실제로 값을 넣은 컬럼만 `values` 에 들어간다. */
@@ -63,8 +75,10 @@ export function TablePane({
   active,
   autoCommit,
   onTxDirty,
+  scope,
+  className,
 }: TablePaneProps) {
-  const storeKey = `${connId}:${table.catalog}.${table.schema}.${table.name}`
+  const storeKey = `${scope ? `${scope}:` : ""}${connId}:${table.catalog}.${table.schema}.${table.name}`
 
   const [sub, setSub] = useState<SubTab>("data")
   const [meta, setMeta] = useState<TableMeta | null>(null)
@@ -84,6 +98,7 @@ export function TablePane({
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   const loadedOnce = useRef(false)
+  const firstLoadBusy = useRef(false)
   const newRowSeq = useRef(0)
 
   const isView = /VIEW/i.test(table.type)
@@ -134,22 +149,50 @@ export function TablePane({
     [connId, table.catalog, table.schema, table.name]
   )
 
+  /** 성공했는지 알려 준다 — "한 번 읽었다"는 표시를 성공했을 때만 세워야 한다. */
   const loadMeta = useCallback(async () => {
     try {
       setMeta(
         await db.tableMeta(connId, table.catalog, table.schema, table.name)
       )
+      return true
     } catch (e) {
       setError((e as Error).message)
+      return false
     }
   }, [connId, table.catalog, table.schema, table.name])
 
+  /**
+   * 조회 — 구조를 아직 못 읽었으면 같이 읽는다.
+   *
+   * `meta` 가 없으면 기본키를 몰라 격자가 **읽기 전용인데 그 사유조차 비어 있다**
+   * (`readOnlyReason` 이 `!meta` 일 때 null 이다). 연결 전에 복원된 탭이 딱 그 상태로
+   * 남으므로, 새로고침·조회는 데이터만이 아니라 구조도 다시 시도해야 한다.
+   */
+  const reload = useCallback(
+    async (nextOffset: number, query: TableQuery) => {
+      if (!meta) await loadMeta()
+      await load(nextOffset, query)
+    },
+    [meta, loadMeta, load]
+  )
+
   // 탭이 처음 활성화될 때 한 번만 읽는다(keep-alive — 돌아왔을 때 이전 데이터가 보여야 한다).
+  // **성공했을 때만 "읽었다"로 친다.** 앱을 다시 켜면 아무 데도 연결되지 않은 채 탭이
+  // 복원되는데, 시도 전에 표시를 세우면 그 뒤로 구조를 영영 다시 읽지 않아 연결한 뒤에도
+  // 격자가 이유 없이 읽기 전용으로 남는다.
   useEffect(() => {
-    if (!active || loadedOnce.current) return
-    loadedOnce.current = true
-    void loadMeta()
-    void load(0, q)
+    if (!active || loadedOnce.current || firstLoadBusy.current) return
+    firstLoadBusy.current = true
+    void (async () => {
+      try {
+        const ok = await loadMeta()
+        await load(0, q)
+        if (ok) loadedOnce.current = true
+      } finally {
+        firstLoadBusy.current = false
+      }
+    })()
     // q 는 최초 스냅샷만 필요하다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, load, loadMeta])
@@ -383,7 +426,12 @@ export function TablePane({
 
   return (
     <div
-      className={cn("absolute inset-0 flex flex-col", !active && "invisible")}
+      className={cn(
+        "flex flex-col",
+        className ?? "absolute inset-0",
+        // display:none 이 아니라 visibility 로 감춰야 숨은 동안 스크롤 위치가 남는다.
+        !active && "invisible"
+      )}
       aria-hidden={!active}
     >
       {/* 헤더 + 서브탭 */}
@@ -430,7 +478,7 @@ export function TablePane({
               size="icon-xs"
               title="새로고침"
               disabled={loading}
-              onClick={() => void load(offset, q)}
+              onClick={() => void reload(offset, q)}
             >
               <RotateCwIcon className={cn(loading && "animate-spin")} />
             </Button>
@@ -438,14 +486,14 @@ export function TablePane({
               value={q.where}
               placeholder="WHERE 조건 (예: status = 'A')"
               onChange={(e) => patchQuery({ where: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && void load(0, q)}
+              onKeyDown={(e) => e.key === "Enter" && void reload(0, q)}
               className="h-7 min-w-52 flex-1 text-[13px]"
             />
             <Input
               value={q.orderBy}
               placeholder="ORDER BY (예: id DESC)"
               onChange={(e) => patchQuery({ orderBy: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && void load(0, q)}
+              onKeyDown={(e) => e.key === "Enter" && void reload(0, q)}
               className="h-7 w-44 text-[13px]"
             />
             <Input
@@ -465,7 +513,7 @@ export function TablePane({
             <Button
               size="xs"
               disabled={loading}
-              onClick={() => void load(0, q)}
+              onClick={() => void reload(0, q)}
             >
               조회
             </Button>

@@ -34,6 +34,29 @@ export interface AppNotice {
   body: string
   /** 눌렀을 때 열 메뉴 id(`menus.tsx`). 비어 있으면 메인 창만 띄운다. */
   menuId: string
+  /**
+   * 메뉴 대신 **바깥 앱**으로 갈 수도 있는 알림이면 그 원본 좌표(지금은 Slack 뿐).
+   * 어느 쪽으로 갈지는 누를 때 펫 창이 설정(`settings.pet.notify.slackTarget`)을 보고
+   * 정한다 — 알림을 만든 뒤에 설정을 바꿔도 그 다음 클릭부터 바로 반영되도록.
+   */
+  link?: AppNoticeLink | null
+}
+
+/**
+ * 알림을 눌렀을 때 열 수 있는 바깥 대상.
+ *
+ * id(`slack:<채널>:<ts>`)를 다시 쪼개지 않고 원본 값을 그대로 들고 다닌다 — 만드는 쪽과
+ * 읽는 쪽이 각자 문자열을 조립하면 조용히 어긋나고, 스레드 ts 는 id 에 아예 없다.
+ */
+export interface AppNoticeLink {
+  /** 대상 종류. 지금은 Slack 앱 하나뿐. */
+  kind: "slack"
+  /** Slack 채널 id. */
+  channel: string
+  /** 메시지 ts. */
+  ts: string
+  /** 스레드 답글이면 스레드 루트 ts. 최상위 메시지면 null. */
+  threadTs: string | null
 }
 
 /** 앱 알림의 출처 — `menus.tsx` 의 메뉴 id 와 같은 값을 쓴다(아이콘을 그대로 재사용). */

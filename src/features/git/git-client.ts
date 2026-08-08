@@ -107,6 +107,34 @@ export function gitStashDrop(home: string, index: number) {
   return trackedInvoke<string>("git_stash_drop", { home, index })
 }
 
+/** 파일 이력 한 줄(Rust `GitCommit` 과 대응). */
+export interface GitCommit {
+  hash: string
+  short: string
+  subject: string
+  author: string
+  /** "2 hours ago" 같은 상대 시각. */
+  relative: string
+  /** `2026-08-07 14:03` 형태의 절대 시각. */
+  date: string
+}
+
+/**
+ * 파일(또는 디렉터리) 하나의 커밋 이력 — IntelliJ 의 Git → Show History.
+ *
+ * `path` 는 **절대 경로**다. git 이 저장소 안의 절대 경로를 pathspec 으로 그대로 받으므로
+ * 저장소 루트 상대로 바꾸지 않는다 — 홈이 저장소의 하위 폴더일 수 있어서 그 변환은
+ * 프론트에서 틀리기 쉽다(`git-marks.ts` 가 색 표의 키를 절대 경로로 두는 것과 같은 이유).
+ */
+export function gitFileHistory(home: string, path: string, limit = 100) {
+  return trackedInvoke<GitCommit[]>("git_file_history", { home, path, limit })
+}
+
+/** 커밋 하나에서 그 파일이 어떻게 바뀌었는지(unified diff). */
+export function gitCommitFileDiff(home: string, hash: string, path: string) {
+  return trackedInvoke<string>("git_commit_file_diff", { home, hash, path })
+}
+
 /**
  * 파일의 대표 상태 한 글자와 그 뜻.
  *

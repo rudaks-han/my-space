@@ -272,6 +272,29 @@ pub struct AppNotice {
     pub body: String,
     /// 눌렀을 때 열 메뉴 id(`menus.tsx`). 비어 있으면 메인 창만 띄운다.
     pub menu_id: String,
+    /// 메뉴 대신 **바깥 앱**으로 갈 수 있는 알림이면 그 대상(지금은 Slack 뿐).
+    /// 어느 쪽으로 갈지는 펫 창이 설정을 보고 고르므로, 여기에는 원본 좌표만 담는다.
+    #[serde(default)]
+    pub link: Option<AppNoticeLink>,
+}
+
+/// 앱 알림을 눌렀을 때 열 수 있는 바깥 대상.
+///
+/// id(`slack:<채널>:<ts>`)를 다시 쪼개 쓰지 않고 원본 값을 그대로 들고 다닌다 —
+/// 만드는 쪽과 읽는 쪽이 각자 문자열을 조립하면 조용히 어긋나고, 스레드 ts 처럼
+/// id 에 아예 없는 값도 있다.
+#[derive(Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppNoticeLink {
+    /// 대상 종류. 지금은 "slack" 하나뿐.
+    pub kind: String,
+    /// Slack 채널 id.
+    pub channel: String,
+    /// 메시지 ts.
+    pub ts: String,
+    /// 스레드 답글이면 스레드 루트 ts. 최상위 메시지면 null.
+    #[serde(default)]
+    pub thread_ts: Option<String>,
 }
 
 /// 지금 떠 있는 앱 알림들(메인 창이 넣고 치운다, 펫 창이 조회·구독한다).

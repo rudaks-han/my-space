@@ -29,11 +29,23 @@ import { getConsoleSql, setConsoleSql } from "./persisted"
  *    사용자가 직접 BEGIN/COMMIT 을 쓸 수도 있는데 그걸 우리가 덧씌우면 꼬인다.
  */
 
-interface QueryConsoleProps {
+export interface QueryConsoleProps {
   connId: string
   active: boolean
   autoCommit: boolean
   onTxDirty: () => void
+  /**
+   * 써 둔 SQL 을 담아 둘 칸의 화면 접두사(`TablePane.scope` 와 같은 규칙). 주지 않으면
+   * 데이터베이스 뷰어의 기존 칸을 쓴다 — 두 화면이 같은 칸을 나눠 쓰면 두 콘솔이 동시에
+   * 떠 있는 동안(탭은 keep-alive 다) 서로의 초안을 덮어쓴다.
+   */
+  scope?: string
+  /**
+   * 바깥 껍데기의 배치 클래스. 기본값 `absolute inset-0` 은 데이터베이스 뷰어의
+   * keep-alive 탭 더미와의 약속이므로, 그렇게 쌓지 않는 화면만 자기 배치를 준다
+   * (`TablePane` 과 같은 규칙).
+   */
+  className?: string
 }
 
 /** 갱신 건수만 돌아온 문장인지. */
@@ -46,8 +58,10 @@ export function QueryConsole({
   active,
   autoCommit,
   onTxDirty,
+  scope,
+  className,
 }: QueryConsoleProps) {
-  const [sql, setSql] = useState(() => getConsoleSql(connId))
+  const [sql, setSql] = useState(() => getConsoleSql(connId, scope))
   const [limit, setLimit] = useState(500)
   const [running, setRunning] = useState(false)
   const [response, setResponse] = useState<QueryResponse | null>(null)
@@ -114,7 +128,12 @@ export function QueryConsole({
 
   return (
     <div
-      className={cn("absolute inset-0 flex flex-col", !active && "invisible")}
+      className={cn(
+        "flex flex-col",
+        className ?? "absolute inset-0",
+        // display:none 이 아니라 visibility 로 감춰야 숨은 동안 스크롤 위치가 남는다.
+        !active && "invisible"
+      )}
       aria-hidden={!active}
     >
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-4 py-2">
@@ -179,7 +198,7 @@ export function QueryConsole({
           value={sql}
           onChange={(e) => {
             setSql(e.target.value)
-            setConsoleSql(connId, e.target.value)
+            setConsoleSql(connId, e.target.value, scope)
           }}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {

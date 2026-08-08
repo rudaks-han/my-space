@@ -400,6 +400,9 @@ pub fn list_workspaces() -> Result<Vec<HerdrWorkspace>, String> {
             token_usage: info.tokens,
             agent: Some(s.agent.clone()),
             session: SESSION.to_string(),
+            // `focused` 를 모르므로 Orca 는 항상 false — 터미널에서 확인해도 알림이 저절로
+            // 걷히지 않는다(카드를 눌러 확인해야 한다).
+            seen: false,
         });
     }
     out.sort_by(|a, b| (&a.label, &a.workspace_id).cmp(&(&b.label, &b.workspace_id)));

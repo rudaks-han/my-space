@@ -14,6 +14,7 @@ import { useLocalStorage } from "@/lib/use-local-storage"
 import { cn } from "@/lib/utils"
 
 import { friendlyError } from "./gcal-error"
+import { looksLikeKnownRoom, ROOMS_KEY } from "./gcal-rooms"
 import { WeekSection } from "./gcal-shared"
 import {
   type BookingPrefill,
@@ -31,27 +32,6 @@ import {
   useRoomSchedule,
   type RoomRef,
 } from "./use-gcal"
-
-/** 선택한 회의실 목록 저장 키. */
-const ROOMS_KEY = "myspace.gcalRooms"
-
-/**
- * 자주 쓰는 회의실 표시 이름(추천 선택용). 실제 예약엔 캘린더 ID 가 필요하므로,
- * 이 이름과 내 캘린더 목록의 summary 를 매칭해 회의실을 자동 추천한다.
- */
-const KNOWN_ROOM_NAMES = [
-  "spectra-3-북카페(통로측)",
-  "spectra-3-북카페-북카페",
-  "spectra-3-세미나실",
-  "spectra-3-여직원휴게실",
-  "spectra-3-창의룸",
-]
-
-/** summary 가 알려진 회의실 이름 중 하나와 (느슨하게) 일치하는지. */
-function looksLikeKnownRoom(summary: string): boolean {
-  const s = summary.trim()
-  return KNOWN_ROOM_NAMES.some((n) => s === n || s.includes(n) || n.includes(s))
-}
 
 /** 네이티브 input 을 Slack 톤으로 — Input 컴포넌트와 높이·라운드를 맞춘다. */
 const FIELD =

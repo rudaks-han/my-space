@@ -215,6 +215,30 @@ export function useGcalCalendars() {
 }
 
 /**
+ * 회의실별 이번주+다음주 일정을 한 번 불러온다(상태 없는 조회).
+ *
+ * 한 회의실 조회가 실패해도 나머지는 보여야 하므로 실패는 빈 목록으로 접는다.
+ * 폴링을 붙이는 `useRoomSchedule`(회의실 뷰)과, 열릴 때만 한 번 부르는 상단바 예약
+ * 팔레트가 이 함수를 공유한다.
+ */
+export async function fetchRoomEvents(
+  rooms: RoomRef[]
+): Promise<Record<string, CalendarEvent[]>> {
+  const results = await Promise.all(
+    rooms.map((r) =>
+      trackedInvoke<CalendarEvent[]>("gcal_calendar_events", {
+        calendarId: r.id,
+      })
+        .then((events) => ({ id: r.id, events }))
+        .catch(() => ({ id: r.id, events: [] as CalendarEvent[] }))
+    )
+  )
+  const next: Record<string, CalendarEvent[]> = {}
+  for (const { id, events } of results) next[id] = events
+  return next
+}
+
+/**
  * 선택한 회의실들의 이번주+다음주 일정을 회의실별로 불러온다.
  * useGcal 과 같은 패턴: 초기 로드 effect 와 tabActive 로 게이트된 폴링 effect 를 분리한다.
  */
@@ -236,18 +260,7 @@ export function useRoomSchedule(rooms: RoomRef[]) {
     setLoading(true)
     setError(null)
     try {
-      const results = await Promise.all(
-        rooms.map((r) =>
-          trackedInvoke<CalendarEvent[]>("gcal_calendar_events", {
-            calendarId: r.id,
-          })
-            .then((events) => ({ id: r.id, events }))
-            .catch(() => ({ id: r.id, events: [] as CalendarEvent[] }))
-        )
-      )
-      const next: Record<string, CalendarEvent[]> = {}
-      for (const { id, events } of results) next[id] = events
-      setByRoom(next)
+      setByRoom(await fetchRoomEvents(rooms))
       setUpdatedAt(Date.now())
     } catch (e) {
       setError(String(e))

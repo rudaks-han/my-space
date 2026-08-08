@@ -11,8 +11,10 @@ import {
   GlobeIcon,
   PalmtreeIcon,
   HistoryIcon,
+  MonitorCogIcon,
   ScreenShareIcon,
   ServerIcon,
+  TerminalIcon,
 } from "lucide-react"
 
 import {
@@ -43,6 +45,7 @@ import { FlexView } from "@/features/flex/flex-view"
 import { ReminderView } from "@/features/reminder/reminder-view"
 import { ScreenShareView } from "@/features/screen-share/screen-share-view"
 import { ClaudeBridgeView } from "@/features/claude-bridge/claude-bridge-view"
+import { TerminalView } from "@/features/terminal/terminal-view"
 import { ClaudeMenuBadge } from "@/features/claude-bridge/claude-menu-badge"
 import {
   IntellijServicesView,
@@ -55,6 +58,7 @@ import { CcHistoryView } from "@/features/cc-history/cc-history-view"
 import { JsonFormatterView } from "@/features/json-formatter/json-formatter-view"
 import { MarkdownViewerView } from "@/features/markdown-viewer/markdown-viewer-view"
 import { CoworkSpecView } from "@/features/cowork-spec/cowork-spec-view"
+import { CoworkDevView } from "@/features/cowork-dev/cowork-dev-view"
 import { GitView } from "@/features/git/git-view"
 import { DbViewerView } from "@/features/db-viewer/db-viewer-view"
 import { EsViewerView } from "@/features/es-viewer/es-viewer-view"
@@ -237,6 +241,30 @@ export const MENU_GROUPS: MenuGroup[] = [
         element: <CoworkSpecView />,
       },
       {
+        /*
+         * IntelliJ 를 켜지 않고 cowork 를 개발하기 위한 **한 장짜리 콘솔**.
+         * 파일 트리 · 편집기 탭 · 데이터베이스 · 서비스와 콘솔이 한 화면에 있어서,
+         * 코드를 고치고 → 서비스를 띄우고 → `.http` 로 때려 보고 → 표를 확인하는
+         * 한 바퀴를 창을 옮기지 않고 돈다.
+         *
+         * 위의 세 메뉴를 대체하지 않고 **합쳐 놓은 것**이다: 실행은 Cowork 서비스와,
+         * 요청은 IntelliJ HTTP 와, 표는 데이터베이스 뷰어와 같은 백엔드를 쓴다(접속
+         * 목록까지 공유한다). 한 가지만 할 때는 그쪽 화면이 훨씬 넓으므로 그대로 남긴다.
+         */
+        id: "cowork-dev",
+        title: "IntelliJ Cowork",
+        icon: MonitorCogIcon,
+        element: <CoworkDevView />,
+        // 아래 서비스 독이 Cowork 서비스와 같은 백엔드(standalone)를 쓰므로 같은 숫자다.
+        // 두 배지가 한 백엔드를 보지만 폴링은 하나다 — use-running-count.ts 의 모듈 스토어.
+        badge: <ServicesMenuBadge backend="standalone" />,
+        unsupported: {
+          on: ["windows", "linux"],
+          reason:
+            "아래 서비스 독은 IntelliJ 가 임포트해 둔 프로젝트 모델(~/Library/Caches/JetBrains)로 java 를 띄우고 프로세스 시그널(SIGINT)로 내리는데, 그 위치와 신호가 모두 macOS·Unix 전용입니다. 오른쪽 데이터베이스도 JDBC 브리지를 돌리려면 java 실행 파일을 Unix 방식(JAVA_HOME → which → /usr/libexec/java_home)으로 찾습니다.",
+        },
+      },
+      {
         // 대상 저장소는 설정 → Cowork 의 홈 디렉터리 하나(스펙 문서·서비스와 같은 값).
         id: "git",
         title: "Git",
@@ -300,6 +328,24 @@ export const MENU_GROUPS: MenuGroup[] = [
           on: ["windows", "linux"],
           reason:
             "터미널의 어느 창이 어느 Claude 세션인지 알아야 목록을 채울 수 있는데, 그 매핑을 주는 백엔드가 herdr·cmux·Orca 셋뿐이고 모두 macOS 전용입니다. 대화 기록 자체는 이 PC 에도 있으므로 'CC History Viewer' 로는 지난 세션을 볼 수 있습니다.",
+        },
+      },
+      {
+        /*
+         * 세션 목록 바로 아래 — 같은 herdr 세션을 보지만, 이쪽은 화면을 읽어 흉내 내는 것이
+         * 아니라 우리가 만든 PTY 안에서 herdr 클라이언트를 돌린다(`src-tauri/src/pty.rs`).
+         * 세션 목록의 선택지 버튼을 대체하지 않는다: 알림 카드를 눌러 바로 답하는 흐름이
+         * 터미널을 여는 것보다 짧으므로 둘이 같이 있는 게 맞다. 이 화면이 있어야 하는 이유는
+         * 구조화된 컨트롤이 다루지 못하는 폼(권한 프롬프트·모델 선택·Esc 취소) 때문이다.
+         */
+        id: "terminal",
+        title: "터미널",
+        icon: TerminalIcon,
+        element: <TerminalView />,
+        unsupported: {
+          on: ["windows", "linux"],
+          reason:
+            "herdr 서버에 클라이언트로 붙는 방식이고, herdr 가 macOS 전용입니다. PTY 자체는 다른 OS 에서도 열 수 있지만 붙을 대상이 없습니다.",
         },
       },
       {

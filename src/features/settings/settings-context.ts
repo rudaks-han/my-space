@@ -228,15 +228,37 @@ export interface TodoSettings {
  *    스케줄러가 메인 창에 있어 설정을 바로 읽을 수 있으니 Rust 를 거칠 이유가 없다.
  *  - 나머지는 프론트엔드가 만들어 보내는 알림이라(`pet_notify`) 끄면 애초에 오지 않는다.
  */
+/** 펫 알림을 눌렀을 때 데려갈 곳 — My Space 의 메뉴 화면인지, 그 서비스의 앱인지. */
+export type PetNotifyTarget = "myspace" | "app"
+
 export interface PetNotifySettings {
   /** Claude Code(herdr) 입력 대기·작업 완료. */
   claude: boolean
+  /**
+   * Claude Code 알림(과 머리 위 진행 중 작업 목록)을 눌렀을 때 어디로 갈지.
+   *
+   *  - `"app"` — 그 작업이 도는 **터미널**. 기본값이자 이 설정이 생기기 전의 동작이고,
+   *    답을 하거나 이어서 시키는 자리라 대개 여기가 목적지다.
+   *  - `"myspace"` — My Space 의 Claude Code 세션 목록 화면. 로그·요약만 보고 싶거나
+   *    터미널 창을 앞으로 끌어오고 싶지 않을 때(트레이 앱이라 방해가 될 수 있다).
+   */
+  claudeTarget: PetNotifyTarget
   /** 생산성 → 알림 메뉴에 직접 등록한 시각 알림(리마인더). */
   reminder: boolean
   /** 새로 도착한 안 읽은 메일. 설정 → Gmail 의 관심 필터가 있으면 관심 메일만. */
   gmail: boolean
   /** 선택한 채널에 새로 온 안 읽은 메시지. */
   slack: boolean
+  /**
+   * Slack 알림을 눌렀을 때 어디로 갈지.
+   *
+   *  - `"myspace"` — My Space 의 Slack 화면(메뉴 탭). 기본값이자 이 설정이 생기기 전의 동작.
+   *  - `"app"` — Slack 앱의 그 메시지(스레드 답글이면 스레드까지, `slack://` 딥링크).
+   *
+   * 다른 출처와 달리 Slack 만 이 선택이 있는 이유는 답장이 목적인 알림이라서다 —
+   * 메일·일정은 읽는 것으로 끝나지만 메시지는 대개 Slack 에서 바로 답하게 된다.
+   */
+  slackTarget: PetNotifyTarget
   /**
    * 구글 캘린더 일정 알림 전체 스위치. **아래 두 값의 상위**다 —
    * 이것이 꺼져 있으면 `gcalStart` / `gcalBefore` 가 켜져 있어도 알리지 않는다.
@@ -392,11 +414,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
     noticeSeconds: 12,
     notify: {
       claude: true,
+      // 터미널이 기본 — 알림을 누르는 이유가 대개 "답하러 간다" 라서다.
+      claudeTarget: "app",
       // 이 설정이 생기기 전에는 늘 떴던 알림이라 기본값이 켜짐이다 — 기본을 꺼짐으로
       // 두면 사용자가 직접 걸어 둔 알림이 조용히 사라진다.
       reminder: true,
       gmail: false,
       slack: false,
+      // 이동할 곳의 기본값은 지금까지의 동작(My Space 의 Slack 화면) 그대로 —
+      // 설정이 생겼다는 이유로 누르는 곳이 달라지면 고장으로 읽힌다.
+      slackTarget: "myspace",
       gcal: false,
       // 상위 스위치를 켜는 순간 바로 알림이 오도록 "언제"의 기본값은 채워 둔다 —
       // 셋 다 꺼진 상태로 두면 켜도 아무 일이 없어 고장으로 보인다.

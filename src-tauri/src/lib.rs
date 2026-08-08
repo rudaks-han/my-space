@@ -3,6 +3,7 @@ mod cc_history;
 mod claude_usage;
 mod cowork;
 mod db;
+mod devfs;
 mod es;
 mod firebase;
 mod flex;
@@ -20,6 +21,7 @@ mod markdown;
 mod mcp;
 mod orca;
 mod pet;
+mod pty;
 mod reminder;
 mod screenshare;
 mod slack;
@@ -76,8 +78,14 @@ struct NavigatedPayload {
 
 /// 각 탭 웹뷰에 주입하는 스크립트.
 /// 외부 사이트에는 Tauri IPC 가 주입되지 않으므로, `window.open` 과 `target="_blank"` 클릭을
-/// 가로채 숨은 iframe + 커스텀 스킴(`tauri-newtab://`)으로 URL 을 전달한다.
-/// Rust 의 on_navigation 이 그 스킴을 잡아 프론트엔드에 새 탭 이벤트를 방출한다.
+/// 가로채 커스텀 스킴(`tauri-newtab://`)으로 URL 을 전달한다.
+/// Rust 의 on_navigation 이 그 스킴을 잡아 크롬 새 창으로 연다(`open_in_chrome_window`).
+///
+/// **전달 통로는 숨은 iframe 이 아니라 최상위 프레임 이동이다.** iframe 방식은 사이트의
+/// CSP(`frame-src`/`default-src`)에 막히면 *조용히* 아무 일도 일어나지 않아서, 링크를 눌러도
+/// 반응이 없는 것처럼 보였다(대형 포털은 대부분 CSP 가 있다). 최상위 이동은 CSP 의 대상이
+/// 아니고, 어차피 아래 on_navigation 이 `false` 를 돌려 취소하므로 현재 페이지는 그대로 있다
+/// (취소된 내비게이션은 `beforeunload` 도 부르지 않는다).
 const NEW_TAB_SCRIPT: &str = r#"
 (function () {
   function requestNewTab(url) {
@@ -86,11 +94,7 @@ const NEW_TAB_SCRIPT: &str = r#"
     try { abs = new URL(url, location.href).href; } catch (e) {}
     if (!/^https?:/i.test(abs)) return;
     try {
-      var f = document.createElement('iframe');
-      f.style.display = 'none';
-      f.src = 'tauri-newtab://open/?url=' + encodeURIComponent(abs);
-      (document.documentElement || document.body || document).appendChild(f);
-      setTimeout(function () { try { f.parentNode.removeChild(f); } catch (e) {} }, 0);
+      window.location.href = 'tauri-newtab://open/?url=' + encodeURIComponent(abs);
     } catch (e) {}
   }
   window.open = function (url) {
@@ -111,6 +115,43 @@ const NEW_TAB_SCRIPT: &str = r#"
   }, true);
 })();
 "#;
+
+/// 브라우저 탭 안에서 "새 창"으로 요청된 링크(`target="_blank"` / `window.open`)를
+/// **크롬 새 창**으로 띄운다.
+///
+/// 앱 안의 새 탭으로 열지 않는 이유는 그 링크들이 대개 앱 밖의 볼거리(첨부 미리보기, 외부
+/// 문서, 결제창)라서 진짜 브라우저에서 보는 편이 낫고, 무엇보다 탭 하나가 `WebContent`
+/// 프로세스 하나(200~400MB)이기 때문이다 — `kill_web_content` 주석 참고.
+///
+/// macOS 에서 `-n` 이 필요하다: 크롬이 이미 떠 있으면 `open -a` 는 `--args` 를 통째로 무시해
+/// 기존 창의 **탭**으로 열어 버린다. `-n` 으로 새 인스턴스를 요청하면 크롬이 그 요청을 기존
+/// 프로세스에 넘기면서 `--new-window` 를 살려 창을 하나 더 만든다.
+/// 크롬이 없으면 `open` 이 0 이 아닌 코드로 끝나므로(screenshare.rs 와 같은 판단) 그때만
+/// 기본 브라우저로 넘긴다 — 링크가 아예 안 열리는 것이 가장 나쁘다.
+fn open_in_chrome_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url: &str) {
+    let app = app.clone();
+    let url = url.to_string();
+    // 내비게이션 핸들러(메인 스레드)에서 불리므로 프로세스 실행은 스레드로 뺀다.
+    std::thread::spawn(move || {
+        #[cfg(target_os = "macos")]
+        {
+            let opened = matches!(
+                std::process::Command::new("open")
+                    .args(["-na", "Google Chrome", "--args", "--new-window", &url])
+                    .status(),
+                Ok(s) if s.success()
+            );
+            if opened {
+                log::info!("크롬 새 창으로 열기: {url}");
+                return;
+            }
+            log::warn!("크롬을 열지 못했습니다 — 기본 브라우저로 엽니다: {url}");
+        }
+        if let Err(e) = app.opener().open_url(&url, None::<&str>) {
+            log::warn!("링크를 열지 못했습니다: {url} ({e})");
+        }
+    });
+}
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -238,17 +279,19 @@ fn browser_open(
 
     let parsed: tauri::Url = url.parse().map_err(|_| "invalid url".to_string())?;
     // window.open / target="_blank" 로 새 창을 요청하면(예: daum 메일에서 메일 클릭)
-    // 별도 OS 창을 만들지 않고 새 탭으로 열도록:
-    //  1) on_new_window: 임베드 자식 웹뷰에선 안 불릴 수 있으나 폴백으로 둔다.
-    //  2) NEW_TAB_SCRIPT 주입: window.open/target=_blank 를 가로채 tauri-newtab:// 로 전달 (주 경로).
+    // 크롬 새 창으로 넘긴다. 경로가 둘이고 서로 배타적이다:
+    //  1) NEW_TAB_SCRIPT 주입: window.open/target=_blank 를 가로채 tauri-newtab:// 로 전달(주 경로).
+    //     가로챈 클릭은 preventDefault 되므로 아래 2)는 불리지 않는다.
+    //  2) on_new_window: 스크립트가 주입되지 않았거나(예: 그 사이 다른 방식으로 열린 창) 가로채지
+    //     못한 요청을 받는 네이티브 폴백. 임베드 자식 웹뷰에선 안 불릴 수 있어 주 경로가 아니다.
     let app_for_new_window = app.clone();
     let builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed))
         // 고정 식별자의 영속 저장소를 써서 재시작 후에도 쿠키·로그인 세션을 유지한다(macOS 14+/iOS 17+).
         .data_store_identifier(BROWSER_DATA_STORE_ID)
         .initialization_script(NEW_TAB_SCRIPT)
         .on_new_window(move |target_url, _features| {
-            log::info!("on_new_window → new tab: {}", target_url);
-            let _ = app_for_new_window.emit("browser:new-tab", target_url.to_string());
+            log::info!("on_new_window → 크롬으로 넘김: {}", target_url);
+            open_in_chrome_window(&app_for_new_window, target_url.as_str());
             tauri::webview::NewWindowResponse::Deny
         });
     let webview = window
@@ -599,13 +642,12 @@ fn external_navigation_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin
             // 모두 불려서 daum 처럼 iframe 많은 페이지에선 about:blank 등이 섞여 들어온다.
             // 대신 메인 프레임 전용인 on_page_load 에서 최종 URL 을 방출한다.
             if webview.label().starts_with(BROWSER_PREFIX) {
-                // 주입 스크립트가 새 탭 요청을 이 커스텀 스킴으로 보낸다. 잡아서 새 탭 이벤트 방출 후 취소.
+                // 주입 스크립트가 새 창 요청을 이 커스텀 스킴으로 보낸다. 잡아서 크롬으로 넘기고,
+                // `false` 로 이 이동 자체는 취소한다 — 지금 보던 페이지는 그대로 남아야 한다.
                 if url.scheme() == "tauri-newtab" {
                     if let Some((_, target)) = url.query_pairs().find(|(k, _)| k == "url") {
-                        log::info!("new tab requested via script: {}", target);
-                        let _ = webview
-                            .app_handle()
-                            .emit("browser:new-tab", target.to_string());
+                        log::info!("새 창 링크 → 크롬으로 넘김: {}", target);
+                        open_in_chrome_window(webview.app_handle(), &target);
                     }
                     return false;
                 }
@@ -668,6 +710,7 @@ pub fn run() {
             Some(vec![AUTOSTART_FLAG]),
         ))
         .plugin(external_navigation_plugin())
+        .manage(pty::PtyState::default())
         .manage(herdr::WatchState::default())
         .manage(herdr::PendingQuestions::default())
         .manage(herdr::Notices::default())
@@ -687,6 +730,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             auth::ldap_login,
+            auth::ldap_password_policy,
+            auth::ldap_change_password,
             firebase::firebase_set_user,
             firebase::firebase_clear_user,
             minimize_to_tray,
@@ -773,6 +818,13 @@ pub fn run() {
             herdr::herdr_send_prompt,
             herdr::herdr_read_pane,
             herdr::herdr_read_question,
+            herdr::herdr_answer_question,
+            herdr::herdr_attachable_sessions,
+            herdr::herdr_select_workspace,
+            pty::pty_open,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_close,
             herdr::herdr_focus_pane,
             herdr::herdr_current_questions,
             herdr::herdr_notify,
@@ -825,6 +877,8 @@ pub fn run() {
             git::git_stash_push,
             git::git_stash_apply,
             git::git_stash_drop,
+            git::git_file_history,
+            git::git_commit_file_diff,
             markdown::markdown_read_file,
             todo_store::todo_folder_read,
             todo_store::todo_folder_write,
@@ -837,6 +891,14 @@ pub fn run() {
             http_file::http_read_include,
             http_file::http_save_response,
             http_file::http_send,
+            devfs::dev_list_dir,
+            devfs::dev_read_file,
+            devfs::dev_write_file,
+            devfs::dev_create_entry,
+            devfs::dev_rename_entry,
+            devfs::dev_delete_entry,
+            devfs::dev_copy_entry,
+            devfs::dev_move_entry,
             es::es_request,
             kafka::kafka_connect,
             kafka::kafka_disconnect,
@@ -850,6 +912,7 @@ pub fn run() {
             db::db_bridge_info,
             db::db_find_drivers,
             db::db_connect,
+            db::db_conn_info,
             db::db_disconnect,
             db::db_has_password,
             db::db_forget_password,

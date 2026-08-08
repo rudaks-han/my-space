@@ -20,15 +20,13 @@ import { Input } from "@/components/ui/input"
 import { useLocalStorage } from "@/lib/use-local-storage"
 import { useResizableWidth } from "@/lib/use-resizable-width"
 import { cn } from "@/lib/utils"
+import { connectDb, isSystemTable, type DbConnection } from "./connection"
 import { ConnectionForm } from "./connection-form"
+import { useDbConnections } from "./db-connections-store"
 import * as db from "./db-client"
 import type { BridgeInfo, ConnInfo, SchemaRef, TableRef } from "./db-client"
-import {
-  engineById,
-  newConnection,
-  resolveUrl,
-  type DbConnection,
-} from "./engines"
+import { announceDisconnect, onDisconnected } from "./disconnect-bus"
+import { engineById, newConnection } from "./engines"
 import { QueryConsole } from "./query-console"
 import {
   getShowSystem,
@@ -72,24 +70,11 @@ const MAX_ASIDE_WIDTH = 640
 const selectClass =
   "h-8 w-full rounded-lg border border-input bg-background px-2 text-[13px] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-solid focus-visible:outline-ring"
 
-/** 시스템 카탈로그로 보이는 테이블인지(체크 해제 시 목록에서 감춘다). */
-function isSystemTable(t: TableRef) {
-  if (/SYSTEM/i.test(t.type)) return true
-  const s = (t.schema ?? t.catalog ?? "").toLowerCase()
-  return (
-    s === "information_schema" ||
-    s === "performance_schema" ||
-    s === "mysql" ||
-    s === "sys" ||
-    s.startsWith("pg_")
-  )
-}
-
 export function DbViewerView() {
-  const [connections, setConnections] = useLocalStorage<DbConnection[]>(
-    "myspace.dbConnections",
-    []
-  )
+  // 접속 목록은 컨텍스트 하나가 들고 있다 — 같은 창의 다른 화면(IntelliJ Cowork)도 같은
+  // 목록을 보므로 여기서 `useLocalStorage` 로 다시 읽으면 서로의 변경을 덮어쓴다.
+  // 반면 **어느 접속을 골랐는지는 화면마다 다른 값**이라 여기 남겨 둔다.
+  const { connections, setConnections } = useDbConnections()
   const [activeConnId, setActiveConnId] = useLocalStorage<string | null>(
     "myspace.dbActiveConn",
     null
@@ -194,17 +179,7 @@ export function DbViewerView() {
       setConnecting(true)
       setConnError(null)
       try {
-        const url = resolveUrl(conn)
-        const spec = engineById(conn.engine)
-        const ci = await db.connect({
-          connId: conn.id,
-          url,
-          user: conn.user.trim() || null,
-          password: password || null,
-          driverClass: conn.jars.length > 0 ? spec.driverClass : null,
-          jars: conn.jars,
-          savePassword: conn.savePassword,
-        })
+        const ci = await connectDb(conn, password)
         setInfo(ci)
         setAutoCommitState(ci.autoCommit)
         setTxDirty(false)
@@ -233,13 +208,8 @@ export function DbViewerView() {
     [loadTables]
   )
 
-  const handleDisconnect = useCallback(async () => {
-    if (!activeConnId) return
-    try {
-      await db.disconnect(activeConnId)
-    } catch {
-      // 이미 끊긴 접속이면 그대로 정리만 한다.
-    }
+  /** 이 접속이 닫혔다는 사실을 화면 상태에 반영한다(내가 닫았든, 다른 화면이 닫았든). */
+  const forgetConnection = useCallback(() => {
     setInfo(null)
     setSchemas([])
     setTables([])
@@ -248,7 +218,33 @@ export function DbViewerView() {
     setActiveTab(null)
     setTxDirty(false)
     setFormOpen(true)
-  }, [activeConnId])
+  }, [])
+
+  const handleDisconnect = useCallback(async () => {
+    if (!activeConnId) return
+    try {
+      await db.disconnect(activeConnId)
+    } catch {
+      // 이미 끊긴 접속이면 그대로 정리만 한다.
+    }
+    forgetConnection()
+    // 같은 `connId` 를 보고 있는 다른 화면(IntelliJ Cowork)에도 알린다 — `db_disconnect` 는
+    // 브리지의 접속을 모든 화면에서 닫으므로, 알리지 않으면 저쪽은 "연결됨"인 채로
+    // 이미 롤백된 편집에 커밋을 권하고 다음 질의부터 전부 실패한다.
+    announceDisconnect(activeConnId)
+  }, [activeConnId, forgetConnection])
+
+  /*
+   * 반대 방향 — 다른 화면이 이 접속을 닫은 경우. 접속이 살아 있다고 믿는 쪽이 남으면
+   * 안 되므로, 지금 붙어 있는 접속의 id 가 오면 같은 정리를 한다.
+   */
+  useEffect(
+    () =>
+      onDisconnected((id) => {
+        if (id === activeConnId && info) forgetConnection()
+      }),
+    [activeConnId, info, forgetConnection]
+  )
 
   // 자동 연결(앱 실행 후 한 번만).
   useEffect(() => {

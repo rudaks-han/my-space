@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -32,15 +32,13 @@ import {
 import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import { useLocalStorage } from "@/lib/use-local-storage"
-import { highlightLogLine } from "./console-highlight"
+// 로그 본문은 IntelliJ Cowork 화면의 아래 독과 공유한다 — 두 콘솔이 같은 출력을
+// 다르게 그리면 안 되므로 렌더링은 한 곳에만 둔다.
+import { ConsoleLog } from "./console-log"
+import { StopAllDialog } from "./stop-all-dialog"
 import { sequenceFor } from "./start-sequences"
 import { StagePlanDialog } from "./stage-plan-dialog"
-import {
-  useAutoScroll,
-  useServices,
-  type Service,
-  type ServicesBackend,
-} from "./use-services"
+import { useServices, type Service, type ServicesBackend } from "./use-services"
 
 type Api = ReturnType<typeof useServices>
 
@@ -124,37 +122,6 @@ function KindIcon({ kind, className }: { kind: string; className?: string }) {
   if (kind === "spring-boot") return <LeafIcon className={className} />
   return <TerminalIcon className={className} />
 }
-
-/**
- * 로그 한 줄 — IntelliJ 콘솔과 같은 구문 강조.
- *
- * 무엇을 무슨 색으로 칠할지는 `console-highlight.ts` 가 정한다(로그가 찍은 ANSI 를
- * 우선 쓰고, 없으면 로그 패턴을 뜯는다). 여기서는 그 조각을 그리는 일과, 로그 줄이
- * 아닌 두 가지만 따로 본다 — 이 앱이 끼워 넣은 안내(`[my-space]`)와 스택트레이스.
- *
- * `memo` 인 이유: 콘솔은 수천 줄을 한 배열로 그리는데 줄이 하나 붙을 때마다 그 배열이
- * 새로 만들어진다. 줄 문자열 자체는 그대로이므로 memo 가 나머지 줄의 재파싱을 전부 막는다.
- */
-const LogLine = memo(function LogLine({ line }: { line: string }) {
-  // 이 앱이 직접 끼워 넣은 안내 줄은 구분해서 보여준다.
-  if (line.startsWith("[my-space]")) {
-    return (
-      <div className="whitespace-pre text-muted-foreground italic">{line}</div>
-    )
-  }
-  // 스택트레이스는 예외 하나에 수십 줄이 딸려 온다 — 통째로 눌러 본문을 가리지 않게.
-  const trace = line.startsWith("\tat ") || line.startsWith("  at ")
-  return (
-    // IntelliJ 콘솔처럼 줄바꿈하지 않고 가로로 스크롤한다.
-    <div className={cn("whitespace-pre", trace && "text-muted-foreground")}>
-      {highlightLogLine(line).map((seg, i) => (
-        <span key={i} className={seg.className}>
-          {seg.text}
-        </span>
-      ))}
-    </div>
-  )
-})
 
 /**
  * 트리 행 오른쪽에 붙는 실행 버튼 — IntelliJ Services 창의 행 버튼과 같은 자리.
@@ -379,7 +346,16 @@ function TreeGroup({
  * 여러 개를 골랐을 때의 툴바 — 시작/종료가 **선택한 설정 전부**에 걸린다.
  * (하나만 골랐을 때의 재시작 토글은 대상이 섞이면 뜻이 모호해져서 여기서는 쓰지 않는다.)
  */
-function MultiToolbar({ selection, api }: { selection: Service[]; api: Api }) {
+function MultiToolbar({
+  selection,
+  api,
+  onFocus,
+}: {
+  selection: Service[]
+  api: Api
+  /** 일괄 시작 직후 콘솔을 옮길 곳 — 방금 띄운 서비스의 로그가 바로 보이도록. */
+  onFocus: (name: string) => void
+}) {
   // 이미 떠 있는 것은 시작 대상에서 뺀다(다시 띄우면 그것에 의존하는 서비스가 끊긴다).
   const startable = selection.filter((s) => !api.running.has(s.name))
   const stoppable = selection.filter(
@@ -398,7 +374,12 @@ function MultiToolbar({ selection, api }: { selection: Service[]; api: Api }) {
             : "text-muted-foreground"
         }
         disabled={busy || startable.length === 0}
-        onClick={() => void api.startMany(startable.map((s) => s.name))}
+        onClick={() => {
+          // 콘솔에 떠 있는 것이 "이미 실행 중이라 건너뛴 서비스" 일 수 있다 —
+          // 실제로 지금 올라가는 첫 번째로 옮겨 부팅 로그가 바로 보이게 한다.
+          if (startable[0]) onFocus(startable[0].name)
+          void api.startMany(startable.map((s) => s.name))
+        }}
         title={
           startable.length > 0
             ? `선택한 ${startable.length}개를 차례로 시작합니다(이미 실행 중인 것은 건너뜁니다).`
@@ -518,7 +499,6 @@ function ConsolePanel({
   onRemove: (name: string) => void
 }) {
   const lines = service ? (api.logs[service.name] ?? []) : []
-  const ref = useAutoScroll(lines.length)
 
   // 선택한 서비스의 보관 로그를 Rust 에서 복원한다(메뉴를 다시 열었을 때 콘솔이 비지 않게).
   const name = service?.name
@@ -555,7 +535,7 @@ function ConsolePanel({
       {/* 툴바 — Slack 패널 헤더 톤(넉넉한 px-3 py-2, 32px 아이콘 버튼). */}
       <div className="flex shrink-0 items-center gap-1 border-b border-border px-3 py-2">
         {multi ? (
-          <MultiToolbar selection={selection} api={api} />
+          <MultiToolbar selection={selection} api={api} onFocus={onFocus} />
         ) : (
           <>
             {isRunning ? (
@@ -699,26 +679,13 @@ function ConsolePanel({
         <LogSyncControl service={service} api={api} />
       </div>
 
-      {/* 콘솔 */}
-      {/* ui-selectable: body 에 select-none 이 걸려 있어서 콘솔은 명시적으로 되돌린다
-          (로그를 드래그해 복사할 수 있어야 한다). */}
-      <div
-        ref={ref}
-        className="ui-selectable min-h-0 flex-1 cursor-text overflow-auto bg-muted/30 p-4 font-mono text-[13px] leading-relaxed"
-      >
-        {lines.length === 0 ? (
-          <div className="text-muted-foreground">
-            아직 출력이 없습니다. ▶ 를 눌러 실행하세요.
-          </div>
-        ) : (
-          // min-w-max: 가장 긴 줄만큼 넓어져 가로 스크롤이 생긴다.
-          <div className="min-w-max">
-            {lines.map((l, i) => (
-              <LogLine key={i} line={l} />
-            ))}
-          </div>
-        )}
-      </div>
+      {/* 콘솔 — 본문 우클릭에도 지우기를 둔다(⌘ 다중 선택 중에는 툴바가 일괄 툴바로
+          바뀌어 휴지통 버튼이 사라지므로, 그때 지울 길은 여기뿐이다). */}
+      <ConsoleLog
+        lines={lines}
+        title={service.name}
+        onClear={() => api.clearLogs(service.name)}
+      />
     </div>
   )
 }
@@ -993,6 +960,7 @@ function ServicesView({ backend }: { backend: ServicesBackend }) {
   const [dragging, setDragging] = useState(false)
   // 일괄 실행 순서 편집 레이어 열림 상태.
   const [planOpen, setPlanOpen] = useState(false)
+  const [stopAllOpen, setStopAllOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   /** 콘솔이 사라지지 않도록 현재 컨테이너 폭까지 고려해 목록 폭을 자른다. */
@@ -1113,11 +1081,34 @@ function ServicesView({ backend }: { backend: ServicesBackend }) {
   // 이 프로젝트에 순차 실행 프리셋이 있으면 툴바에 버튼을 띄운다(cowork = 일괄 실행).
   const preset = useMemo(() => sequenceFor(api.projectPath), [api.projectPath])
 
-  // 종료를 제어할 수 있으면서 지금 실행 중인 서비스들 — 종료 드롭다운의 항목.
-  const stoppable = useMemo(
-    () => api.services.filter((s) => api.running.has(s.name) && s.stoppable),
-    [api.services, api.running]
-  )
+  /**
+   * 일괄 실행이 단계로 넘어갈 때마다 선택을 그 단계의 설정들로 옮긴다 — 방금 올라가는
+   * 서비스의 부팅 로그를 보는 것이 이 화면을 열어 두는 이유인데, 일괄 실행은 트리에서
+   * 고르지 않은 설정을 띄우므로 그대로 두면 엉뚱한(또는 빈) 콘솔이 떠 있게 된다.
+   * 단계에 여러 개면 전부 담고 첫 번째를 콘솔에 띄운다 — 나머지는 칩 줄에서 바로 넘긴다.
+   *
+   * 단계 식별자로 비교하는 이유: 한 단계가 `starting` → `waiting` 으로 두 번 오는데,
+   * 그 사이에 사용자가 칩으로 형제 서비스를 보고 있으면 되돌려 버리게 된다. 진행이
+   * 끝나면(비활성) 식별자를 비워, 같은 프리셋을 다시 실행했을 때 1단계가 다시 잡힌다.
+   */
+  const seq = api.sequence
+  const seqActive = api.sequenceActive
+  const lastStageRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!seqActive || !seq) {
+      lastStageRef.current = null
+      return
+    }
+    const key = `${seq.stage}:${seq.names.join(",")}`
+    if (key === lastStageRef.current || seq.names.length === 0) return
+    lastStageRef.current = key
+    // Rust 가 보내는 단계 진행(= 외부 상태)에 화면 선택을 맞추는 것이라 effect 가 맞다.
+    setSel({ names: seq.names, focused: seq.names[0] })
+  }, [seq, seqActive])
+
+  // 종료를 제어할 수 있으면서 지금 실행 중인 서비스들 — 종료 드롭다운의 항목이자
+  // "전체 종료" 의 대상. 확인 대화창이 이 목록을 이름으로 보여 주므로 훅이 만든 것을 쓴다.
+  const stoppable = api.stoppableRunning
 
   if (!isTauri()) {
     return (
@@ -1229,9 +1220,11 @@ function ServicesView({ backend }: { backend: ServicesBackend }) {
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
+            {/* 항목 하나하나의 종료는 대상이 이름으로 적혀 있어 그대로 실행하지만,
+                전체 종료는 되돌릴 수 없는 데다 무엇이 내려가는지 이 줄에 없다 — 묻는다. */}
             <DropdownMenuItem
               variant="destructive"
-              onClick={() => void api.stopAll()}
+              onClick={() => setStopAllOpen(true)}
             >
               <SquareIcon className="size-3.5 fill-current" />
               전체 종료
@@ -1362,6 +1355,18 @@ function ServicesView({ backend }: { backend: ServicesBackend }) {
 
       {planOpen && (
         <StagePlanDialog api={api} onClose={() => setPlanOpen(false)} />
+      )}
+
+      {/* 마지막 하나가 스스로 내려가 대상이 비면 물을 것도 없어진다 — 그대로 닫는다. */}
+      {stopAllOpen && stoppable.length > 0 && (
+        <StopAllDialog
+          targets={stoppable}
+          onCancel={() => setStopAllOpen(false)}
+          onConfirm={() => {
+            setStopAllOpen(false)
+            void api.stopAll()
+          }}
+        />
       )}
     </div>
   )

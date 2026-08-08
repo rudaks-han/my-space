@@ -1,0 +1,153 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>xterm IME harness</title>
+<!--
+  터미널 뷰의 한글(IME) 회귀 하네스. **`./bin/ime-harness.sh` 로 실행한다** — 그 스크립트가
+  xterm.js·xterm.css 와 `ime.ts` 를 묶은 `ime-fix.js` 를 이 파일 옆에 놓고 헤드리스 Chrome 으로
+  띄운 뒤 결과를 출력한다. 직접 열면 그 세 파일이 없어 아무것도 나오지 않는다.
+
+  ⚠️ 아래 이벤트 순서는 **상상이 아니라 실측이다.** 앱에 계측을 넣고 WKWebView 에서 실제로
+  "한글" 을 쳐서 받은 로그를 그대로 옮겼다(`ime.ts` 헤더 참고). 이전 판의 하네스는 조합
+  이벤트를 합성했는데, 같은 증상("ㅎㄱ")이 나왔음에도 **실제 원인이 아니었다** — 그래서 그
+  가정으로 만든 수정이 실기기에서 듣지 않았다. 재현이 곧 원인 규명은 아니다.
+
+  Chrome 을 쓰는 것은 엔진을 시험하려는 게 아니라 합성 이벤트를 받아 줄 DOM 이 필요해서다.
+-->
+<link rel="stylesheet" href="./xterm.css" />
+<style>
+  #host { width: 800px; height: 300px; }
+  #out { font: 13px monospace; white-space: pre; }
+</style>
+<div id="host"></div>
+<div id="out">RUNNING</div>
+<script src="./xterm.js"></script>
+<script src="./ime-fix.js"></script>
+<script>
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const settle = async (n = 3) => { for (let i = 0; i < n; i++) await tick(); };
+
+/** keyCode·charCode 는 KeyboardEventInit 에 없어서 직접 심는다(legacy 속성). */
+function keyEvent(ta, type, { keyCode, key, charCode = 0 }) {
+  const ev = new KeyboardEvent(type, { key, bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "keyCode", { value: keyCode });
+  Object.defineProperty(ev, "charCode", { value: charCode });
+  Object.defineProperty(ev, "which", { value: charCode || keyCode });
+  ta.dispatchEvent(ev);
+}
+function inputEvent(ta, inputType, data, value) {
+  ta.value = value;
+  // `composed: true` 가 **반드시** 있어야 실제와 같아진다. xterm 의 `_inputEvent` 가
+  // `(!ev.composed || !this._keyDownSeen)` 로 거르는데, 합성 이벤트는 기본이 `composed: false`
+  // 라 그 가드를 통째로 우회해 버린다 — 그러면 "빨리 칠 때 삼킨다" 는 이 버그가 재현되지 않는다.
+  ta.dispatchEvent(
+    new InputEvent("input", { inputType, data, bubbles: true, cancelable: true, composed: true })
+  );
+}
+
+/**
+ * WKWebView 에서 "한글" 을 칠 때 실제로 관측된 순서.
+ * 핵심: **조합 이벤트가 하나도 없고**, `input` 이 `keydown` 보다 먼저 오며,
+ * 첫 자모는 `insertText`, 다듬어지는 음절은 `insertReplacementText` 로 온다.
+ */
+const REAL_HANGUL = [
+  ["input", "insertText", "ㅎ", "ㅎ"],
+  ["keydown", 229, "ㅎ"],
+  ["keyup", 71, "ㅎ"],
+  ["input", "insertReplacementText", "하", "하"],
+  ["keydown", 229, "ㅏ"],
+  ["input", "insertReplacementText", "한", "한"],
+  ["keydown", 229, "ㄴ"],
+  ["keyup", 75, "ㅏ"],
+  ["keyup", 83, "ㄴ"],
+  ["input", "insertReplacementText", "한", "한"],
+  // ── 여기부터 "빨리 치는" 구간: keyup 이 오기 전에 다음 음절이 시작된다.
+  //    이때 xterm 의 `_keyDownSeen` 가 켜진 채라 `insertText` 를 조용히 삼킨다(실측).
+  ["keydown", 229, "ㄱ"],
+  ["input", "insertText", "ㄱ", "한ㄱ"],
+  ["input", "insertReplacementText", "그", "한그"],
+  ["keydown", 229, "ㅡ"],
+  ["input", "insertReplacementText", "글", "한글"],
+  ["keydown", 229, "ㄹ"],
+  ["keyup", 82, "ㄱ"],
+  ["keyup", 77, "ㅡ"],
+  ["keyup", 70, "ㄹ"],
+  ["input", "insertReplacementText", "글", "한글"],
+];
+
+/**
+ * ASCII 는 키가 먼저 오고 그 뒤 `input` 이 온다. **이중 전송이 없는지**만 본다(정확히 한 번).
+ * 여기에는 "수정 없음" 기준선을 두지 않는다 — 합성 `KeyboardEvent` 는 xterm 의 키 경로를
+ * 실제처럼 구동하지 못해(문자 산출이 빠진다) 기준선이 늘 빈 값이라 오해만 부른다.
+ */
+const ASCII_SPACE = [
+  ["keydown", 32, " "],
+  // `keypress` 가 들어 있는 것이 핵심이다. xterm 은 평소 `keydown` 에서 preventDefault 를 걸어
+  // 이 이벤트를 없애지만, 우리가 `keydown` 을 먼저 막으면 그 취소가 사라져 살아난다 — 이걸
+  // 함께 막지 않으면 xterm 의 `_keyPress` 가 같은 글자를 한 번 더 보내 **두 번 입력된다.**
+  ["keypress", 32, " ", 32],
+  ["input", "insertText", " ", " "],
+  ["keyup", 32, " "],
+];
+
+/** 문장부호도 같은 경로다(실측에서 "." 이 두 번 들어갔다). */
+const ASCII_DOT = [
+  ["keydown", 190, "."],
+  ["keypress", 46, ".", 46],
+  ["input", "insertText", ".", "."],
+  ["keyup", 190, "."],
+];
+
+async function replay(ta, steps) {
+  for (const s of steps) {
+    if (s[0] === "input") inputEvent(ta, s[1], s[2], s[3]);
+    else keyEvent(ta, s[0], { keyCode: s[1], key: s[2], charCode: s[3] || 0 });
+    await settle(1);
+  }
+  await settle(5);
+}
+
+/** DEL 을 실제 터미널처럼 적용해, 원격 쪽에 최종적으로 남는 문자열을 만든다. */
+function applyToRemote(chunks) {
+  let out = "";
+  for (const ch of chunks.join("")) {
+    if (ch === "\x7f") out = out.slice(0, -1);
+    else out += ch;
+  }
+  return out;
+}
+
+async function run(label, steps, withFix) {
+  const host = document.getElementById("host");
+  host.innerHTML = "";
+  const term = new Terminal({ rows: 10, cols: 40 });
+  term.open(host);
+  const got = [];
+  term.onData((d) => got.push(d));
+
+  let detach = () => {};
+  if (withFix) detach = ImeFix.installImeFix(term, host);
+
+  term.textarea.focus();
+  term.textarea.value = "";
+  await settle(3);
+  got.length = 0; // 포커스 시퀀스 등 초기 잡음 제거
+
+  await replay(term.textarea, steps);
+  detach();
+  term.dispose();
+  return `${label}: 원격에 남는 값 ${JSON.stringify(applyToRemote(got))}  (조각 ${JSON.stringify(got)})`;
+}
+
+(async () => {
+  const lines = [];
+  try {
+    lines.push(await run("한글(빠른 타이핑) · 수정 없음", REAL_HANGUL, false));
+    lines.push(await run("한글(빠른 타이핑) · 수정 적용", REAL_HANGUL, true));
+    lines.push(await run("ASCII 공백 · 수정 적용(정확히 한 번)", ASCII_SPACE, true));
+    lines.push(await run("ASCII 마침표 · 수정 적용(정확히 한 번)", ASCII_DOT, true));
+  } catch (e) {
+    lines.push("ERROR " + ((e && e.stack) || e));
+  }
+  document.getElementById("out").textContent = lines.join("\n");
+})();
+</script>

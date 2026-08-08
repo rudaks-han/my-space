@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 
 import { ResizeHandle } from "@/components/resize-handle"
+import { SplitBar } from "@/components/split-bar"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -576,16 +577,22 @@ export function IntellijHttpView() {
                 scrollToLine={jump}
               />
 
-              {/* 편집기 ↔ 응답 분할선 */}
-              <div
+              {/* 편집기 ↔ 응답 분할선. 흐름 안에 들어가는 바라 잡히는 곳이 곧 보이는
+                  곳이다 — 이 화면의 인라인 분할선이 잘 동작했던 이유이고, 그래서 그
+                  모양을 `SplitBar` 로 뽑아 다른 화면도 같은 것을 쓰게 했다.
+
+                  단 여기서는 **쉴 때 투명**하게 둔다. `SplitBar` 의 기본값은 `bg-border`
+                  인데, 그건 이웃이 자기 경계선을 뺀 "바가 곧 경계선"인 레이아웃(Cowork
+                  개발의 붙어 있는 열들)을 위한 것이다. 이 화면은 카드 사이에 `gap-2` 가
+                  있고 응답 패널이 자기 `border` 를 그대로 들고 있어서, 배경을 칠하면
+                  회색 바 → 빈 간격 → 카드 테두리로 선이 두 줄 보인다. 예전 인라인 바도
+                  hover 전까지는 투명했다. */}
+              <SplitBar
+                orientation="horizontal"
+                resizing={dragging}
                 onPointerDown={startDrag}
-                role="separator"
-                aria-orientation="horizontal"
-                aria-label="응답 패널 높이 조절"
-                className={cn(
-                  "h-[4px] shrink-0 cursor-row-resize rounded-full transition-colors hover:bg-ui-selection/60",
-                  dragging && "bg-ui-selection/60"
-                )}
+                label="응답 패널 높이 조절"
+                className="bg-transparent"
               />
 
               <div
@@ -606,6 +613,14 @@ export function IntellijHttpView() {
  * 응답 패널 높이 조절. `useResizableWidth` 와 같은 방식이지만 축이 세로이고
  * **아래로 끌면 작아진다**(패널이 아래쪽에 붙어 있다). 편집기가 최소 높이를 유지하도록
  * 창 높이에서 상한을 잡는다.
+ *
+ * 공용 `useResizableHeight` 로 대체하지 **않는** 이유는 상한 하나다. 여기서는 상한을
+ * 매 이동마다 `window.innerHeight` 로 다시 계산하는데, 공용 훅은 `max` 를 효과 의존성으로
+ * 잡아 렌더 시점 값에 고정한다. 이 컴포넌트는 창 크기 변경에 리렌더되지 않으므로
+ * (resize 리스너가 없다) 렌더에서 계산한 상한을 넘기면 창을 줄인 뒤 응답 패널이 화면을
+ * 넘겨 편집기를 0으로 만들 수 있다 — 지금보다 나빠진다. 그래서 여기 남겨 두고,
+ * 선택 관련 수정만 공용 훅과 **똑같이** 적용했다(자세한 이유는 `use-resizable-width.ts`
+ * 주석 참고: preventDefault → 기존 선택 지우기 → 포인터 캡처, 그리고 `pointercancel`).
  */
 function useResponseHeight() {
   const [height, setHeight] = useState(() => {
@@ -625,11 +640,18 @@ function useResponseHeight() {
     const onUp = () => setDragging(false)
     window.addEventListener("pointermove", onMove)
     window.addEventListener("pointerup", onUp)
+    // OS 가 제스처를 가로채면 `pointerup` 이 오지 않아 `dragging` 이 true 로 굳고
+    // `userSelect` 가 `"none"` 에 박힌다 — 같은 핸들러로 `pointercancel` 도 받는다.
+    window.addEventListener("pointercancel", onUp)
+    // 선택 차단의 2차 방어선. 1차는 `startDrag` 의 preventDefault 다. 이 저장·복원을
+    // `startDrag` 로 옮기면 `prev` 가 이미 `"none"` 이어서 정리 단계가 그걸 되돌려
+    // 놓고 첫 드래그 뒤 앱 전체에서 선택이 죽으므로, 이 자리에 남긴다.
     const prev = document.body.style.userSelect
     document.body.style.userSelect = "none"
     return () => {
       window.removeEventListener("pointermove", onMove)
       window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("pointercancel", onUp)
       document.body.style.userSelect = prev
     }
   }, [dragging])
@@ -640,8 +662,14 @@ function useResponseHeight() {
 
   const startDrag = (e: React.PointerEvent) => {
     if (e.button !== 0) return
+    // preventDefault 가 호환용 mousedown(그 기본 동작이 곧 네이티브 선택 드래그)을
+    // 막고, removeAllRanges 가 **이미 칠해져 있던** 선택을 지운다 — `user-select: none`
+    // 으로는 기존 선택이 지워지지 않아 드래그 내내 하이라이트가 남는다.
+    e.preventDefault()
+    window.getSelection()?.removeAllRanges()
     origin.current = { y: e.clientY, height }
     setDragging(true)
+    e.currentTarget.setPointerCapture?.(e.pointerId)
   }
 
   return { height, dragging, startDrag }

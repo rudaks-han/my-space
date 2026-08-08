@@ -94,6 +94,11 @@ export function ClaudeNotifier() {
         // 첫 스냅샷이거나 상태 변화 없음 — 알리지 않는다(앱 시작 시 무더기 알림 방지).
         if (before === undefined || before === now) continue
 
+        // 사용자가 지금 그 터미널을 보고 있으면 알림을 만들지 않는다 — 화면에서 이미 보고
+        // 있는 것을 펫이 되풀이할 이유가 없다. 만들어 두면 감시 루프가 다음 틱에 철회하므로
+        // (withdraw_seen_notices) 카드가 1초쯤 번쩍이고 사라진다.
+        if (w.seen) continue
+
         // 알림 메시지는 사용자가 입력했던 프롬프트를 우선 사용(없으면 label/워크스페이스 id).
         const label = w.last_prompt || w.label || w.workspace_id
 

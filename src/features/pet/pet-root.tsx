@@ -46,6 +46,8 @@ export function PetRoot() {
   const state = usePetMood({
     noticeMs: Math.max(0, pet.noticeSeconds ?? 12) * 1000,
     claudeNotices: pet.notify.claude,
+    claudeTarget: pet.notify.claudeTarget,
+    slackTarget: pet.notify.slackTarget,
   })
   const size = petCharacterSize(pet.scale)
   const boxRef = useRef<HTMLDivElement>(null)

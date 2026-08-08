@@ -1,4 +1,12 @@
-/** ES 뷰어 공용 유틸 — 포맷팅, 필드 타입 판정, 매핑 해석 등 순수 함수 모음. */
+/**
+ * ES 뷰어 공용 유틸 — 포맷팅, 필드 타입 판정, 매핑 해석, 인덱스 목록 정렬 등
+ * 순수 함수(와 그에 딸린 표) 모음.
+ *
+ * 화면을 그리지 않는 것만 여기 둔다. 그래서 이 파일은 두 번째 화면(IntelliJ Cowork)이
+ * 뷰어를 통째로 들고 오지 않고도 같은 규칙으로 목록을 만들 수 있는 자리다.
+ */
+
+import type { IndexRow } from "./es-client"
 
 /** 필드 타입 정보 { name: { type, hasKeyword } }. */
 export interface FieldInfo {
@@ -71,6 +79,33 @@ export const DSL_KEYWORDS = [
   "slop",
   "fuzziness",
 ]
+
+/**
+ * 시스템 인덱스(`.` 로 시작)는 뒤로, 나머지는 이름순으로 정렬.
+ *
+ * 목록을 그리는 화면이 둘이라 여기(순수 함수 모음)에 둔다 — 한쪽만 정렬 규칙을 고치면
+ * 같은 클러스터가 두 화면에서 다른 순서로 보여서 어느 쪽이 맞는지 알 수 없게 된다.
+ */
+export function sortIndices(list: IndexRow[]): IndexRow[] {
+  return [...list].sort((a, b) => {
+    const dotA = a.index.startsWith(".") ? 1 : 0
+    const dotB = b.index.startsWith(".") ? 1 : 0
+    if (dotA !== dotB) return dotA - dotB
+    return a.index.localeCompare(b.index)
+  })
+}
+
+/**
+ * `_cat/indices` 의 health 값 → 점 색 클래스.
+ *
+ * 클래스 이름을 **글자 그대로** 적어야 한다: Tailwind v4 는 소스를 문자열로 훑으므로
+ * `bg-ui-${health}` 같은 조립은 규칙이 생성되지 않고 색만 조용히 사라진다.
+ */
+export const HEALTH_COLOR: Record<string, string> = {
+  green: "bg-ui-success",
+  yellow: "bg-ui-warning",
+  red: "bg-ui-error",
+}
 
 /** `_mapping` 응답에서 필드 타입 맵을 뽑는다. */
 export function extractFieldInfo(

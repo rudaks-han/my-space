@@ -25,7 +25,7 @@ export interface GridRow {
   changed?: Set<number>
 }
 
-interface DataGridProps {
+export interface DataGridProps {
   columns: ResultColumn[]
   rows: GridRow[]
   /** 기본키 컬럼 이름들 — 헤더에 열쇠 표시를 붙인다. */

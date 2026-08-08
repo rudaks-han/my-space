@@ -142,6 +142,16 @@ fn bridge() -> Result<Arc<Bridge>, String> {
     Ok(b)
 }
 
+/// 브리지가 이미 떠 있는가. **띄우지 않는다** — 아무도 연결하지 않았는데 JVM 100여 MB 를
+/// 올리는 것은 `db_bridge_info` 가 `java -version` 만 부르는 것과 같은 이유로 피한다.
+fn bridge_running() -> bool {
+    slot()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|b| b.alive.load(Ordering::SeqCst))
+}
+
 fn spawn_bridge() -> Result<Arc<Bridge>, String> {
     let src = bridge_source_path()?;
     let java = java_binary()?;
@@ -637,6 +647,23 @@ pub async fn db_connect(req: ConnectRequest) -> Result<Value, String> {
         }
     }
     Ok(result)
+}
+
+/// 이미 열려 있는 접속의 정보. 없으면 `null`(오류가 아니다).
+///
+/// `connId` 는 브리지 접속 맵의 키이고 **화면 사이에 공유된다.** 그래서 화면 하나가
+/// `db_connect` 를 다시 부르면 브리지가 앞의 `java.sql.Connection` 을 먼저 닫는데,
+/// 그때 다른 화면이 열어 둔 트랜잭션이 조용히 롤백된다. 붙이기 전에 이걸 물어보고
+/// 살아 있으면 그대로 쓰라는 뜻으로 만든 명령이다.
+///
+/// 브리지가 떠 있지 않으면 **띄우지 않고** 곧바로 `null` 이다 — 아무도 연결하지 않은
+/// 상태에서 화면을 여는 것만으로 JVM 이 뜨면 안 된다.
+#[tauri::command]
+pub async fn db_conn_info(conn_id: String) -> Result<Value, String> {
+    if !bridge_running() {
+        return Ok(Value::Null);
+    }
+    call("connInfo", json!({ "connId": conn_id })).await
 }
 
 /// 접속 해제. **마지막 접속이 끊기면 브리지(JVM)도 내린다.**

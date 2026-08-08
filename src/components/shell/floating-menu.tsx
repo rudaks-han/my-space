@@ -38,11 +38,20 @@ export function FloatingMenu({
   }, [x, y])
 
   React.useEffect(() => {
-    const close = () => onClose()
+    /*
+     * 바깥 클릭·스크롤·Esc 면 닫는다. **메뉴 안에서 시작한 mousedown 은 `ref.contains` 로
+     * 걸러야 한다** — 아래 div 에서 `stopPropagation()` 하는 것으로는 막을 수 없다.
+     * capture 는 `document` 에서 시작하고 React 의 합성 핸들러는 루트 컨테이너의 bubble
+     * 단계에 붙으므로 이 리스너가 항상 먼저 돌고, 그러면 항목을 누르는 순간 메뉴가
+     * 언마운트되어 버튼이 사라진다 — `click` 이 발생하지 않아 아무것도 실행되지 않는다.
+     */
+    const close = (e: Event) => {
+      if (ref.current?.contains(e.target as Node)) return
+      onClose()
+    }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose()
     }
-    // capture 로 받아 메뉴 바깥 클릭·스크롤 어디서든 닫는다.
     document.addEventListener("mousedown", close, true)
     document.addEventListener("scroll", close, true)
     document.addEventListener("keydown", onKey)
@@ -58,8 +67,6 @@ export function FloatingMenu({
       ref={ref}
       className="fixed z-50 min-w-48 overflow-hidden rounded-[10px] border border-border bg-popover py-1 text-popover-foreground shadow-[0_4px_16px_rgba(0,0,0,0.16)]"
       style={{ left: pos.x, top: pos.y }}
-      // 메뉴 안에서의 mousedown 은 위의 닫기 리스너로 새어 나가지 않게 막는다.
-      onMouseDown={(e) => e.stopPropagation()}
     >
       <div className="truncate px-3 py-1 text-[11px] font-bold text-muted-foreground">
         {title}

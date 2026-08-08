@@ -13,7 +13,7 @@ const selectClass =
 
 const labelClass = "text-[11px] font-semibold text-muted-foreground"
 
-interface ConnectionFormProps {
+export interface ConnectionFormProps {
   conn: DbConnection
   onChange: (patch: Partial<DbConnection>) => void
   onDelete: () => void

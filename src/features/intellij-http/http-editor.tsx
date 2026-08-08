@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef } from "react"
 import { Loader2Icon, PlayIcon } from "lucide-react"
 
+import { useUndoHistory } from "@/lib/use-undo-history"
 import { cn } from "@/lib/utils"
 import { highlightHttp } from "./http-highlight"
 import { requestLabel, type HttpRequest } from "./http-parse"
@@ -132,7 +133,19 @@ export function HttpEditor({
       box.scrollTop = bottom - box.clientHeight
   }
 
+  // 되돌리기 이력 — 제어 컴포넌트라 웹뷰 기본 ⌘Z 가 듣지 않는다(`use-undo-history.ts`).
+  const history = useUndoHistory({
+    taRef,
+    text,
+    onChange,
+    setCaret: (n) => {
+      caretRef.current = n
+    },
+  })
+
   const setValueCaret = (v: string, caret: number) => {
+    // 코드가 값을 갈아끼우기 직전 — 되돌리기 한 단계가 된다(커서는 아직 그대로다).
+    history.capture(taRef.current?.selectionStart ?? caret)
     caretRef.current = caret
     onChange(v)
   }
@@ -146,6 +159,7 @@ export function HttpEditor({
       onSave()
       return
     }
+    if (history.handleKey(e)) return
     if (mod && e.key === "Enter") {
       e.preventDefault()
       const line = ta.value.slice(0, ta.selectionStart).split("\n").length - 1

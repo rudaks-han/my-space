@@ -441,6 +441,8 @@ pub fn list_workspaces() -> Result<Vec<HerdrWorkspace>, String> {
             token_usage: info.tokens,
             agent: primary.map(|a| a.source.clone()),
             session: SESSION.to_string(),
+            // "사용자가 보고 있는지" 는 최전면 앱까지 봐야 알 수 있어 감시 루프가 채운다.
+            seen: false,
         });
     }
     // 이름 순으로 안정 정렬(폴링마다 순서가 흔들리면 목록이 튄다).
@@ -553,6 +555,16 @@ pub fn send_prompt(pane_id: &str, text: &str) -> Result<(), String> {
     let (flag, value) = parse_target(pane_id);
     run_cmux(&["send", flag, value, text])?;
     run_cmux(&["send-key", flag, value, "enter"])?;
+    Ok(())
+}
+
+/// pane 에 특수키를 순서대로 보낸다. herdr 의 `pane send-keys` 대응이지만 cmux 의
+/// `send-key` 는 한 번에 키 하나만 받으므로 나눠 보낸다.
+pub fn send_keys(pane_id: &str, keys: &[&str]) -> Result<(), String> {
+    let (flag, value) = parse_target(pane_id);
+    for k in keys {
+        run_cmux(&["send-key", flag, value, k])?;
+    }
     Ok(())
 }
 

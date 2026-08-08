@@ -1,9 +1,13 @@
 import { useRef, useState } from "react"
 import {
+  BotIcon,
   CheckIcon,
   CircleAlertIcon,
+  EyeIcon,
+  EyeOffIcon,
   FolderSyncIcon,
   GripVerticalIcon,
+  PlayIcon,
   PlusIcon,
   RotateCcwIcon,
   StickyNoteIcon,
@@ -14,6 +18,9 @@ import {
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
+import { useHideDone, type HideDone } from "./note-prefs"
+import { RunPanel } from "./run-panel"
+import { draftPrompt, useRunSessions, type RunSessions } from "./run-session"
 import {
   STICKY_COLORS,
   useStickies,
@@ -59,10 +66,14 @@ type DragProps = {
 function StickyCard({
   note,
   api,
+  runSessions,
+  hideDonePrefs,
   drag,
 }: {
   note: StickyNote
   api: Api
+  runSessions: RunSessions
+  hideDonePrefs: HideDone
   drag: DragProps
 }) {
   const [draft, setDraft] = useState("")
@@ -73,8 +84,34 @@ function StickyCard({
   // 카테고리 이동 목록을 펼쳤는지. 레일로 끌어다 놓는 방법도 있지만 드래그는 눈에 보이는
   // 단서가 없어 아무도 찾지 못하므로, 사이드바 고정(우클릭 + 드래그)과 같이 둘 다 둔다.
   const [moving, setMoving] = useState(false)
+  // Claude Code 실행 패널을 펼쳤는지. 닫혀 있으면 아예 렌더하지 않는다 — 그 안의
+  // `useHerdr()` 가 herdr 이벤트를 구독하므로, 쓰지 않을 때 값을 치르지 않게 한다.
+  // (세션 지정은 패널을 닫아도 `runSessions` 에 남는다.)
+  const [runOpen, setRunOpen] = useState(false)
+  // 실행 패널의 프롬프트. 카드가 들고 있는 이유는 할 일 행의 ▶ 가 여기에 값을 **복사**해
+  // 넣기 때문이다(패널 안의 상태라면 행에서 닿을 수 없다).
+  const [runPrompt, setRunPrompt] = useState("")
+
+  // 완료된 할 일을 감출지 — 포스트잇마다 마지막 선택이 localStorage 에 남는다
+  // (`note-prefs.ts`). 데이터가 아니라 보기 설정이라 마크다운 파일에는 적지 않는다.
+  const hideDone = hideDonePrefs.hidden(note.id)
+
+  const runTarget = runSessions.targetOf(note.id)
+
+  // 할 일 → 실행 패널로 복사. 패널이 닫혀 있으면 열고, 편집칸으로 포커스를 옮긴다
+  // (프롬프트를 다듬는 것이 기본 동작이므로 커서가 거기 있어야 한다). 패널은 이 시점에
+  // 아직 마운트되지 않았으므로 ref 가 아니라 다음 프레임의 id 조회로 찾는다.
+  const copyToRun = (text: string) => {
+    setRunPrompt(draftPrompt(note.title, text))
+    setRunOpen(true)
+    requestAnimationFrame(() => {
+      document.getElementById(`run-prompt-${note.id}`)?.focus()
+    })
+  }
 
   const remaining = note.todos.filter((t) => !t.done).length
+  const doneCount = note.todos.length - remaining
+  const visibleTodos = hideDone ? note.todos.filter((t) => !t.done) : note.todos
   // 옮겨 갈 수 있는 카테고리(자기 카테고리는 뺀다).
   const others = api.categories.filter((c) => c.id !== note.categoryId)
 
@@ -170,6 +207,56 @@ function StickyCard({
               {remaining}/{note.todos.length}
             </span>
           )}
+          {/* 완료 숨기기 — 완료된 항목이 하나도 없으면 아무 일도 하지 않는 아이콘이라
+              그때는 두지 않는다(감춘 게 있으면 doneCount 는 항상 0 보다 크다). */}
+          {doneCount > 0 && (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              onClick={() => hideDonePrefs.toggle(note.id)}
+              aria-label={
+                hideDone ? "완료된 항목 표시" : "완료된 항목 표시 안 함"
+              }
+              title={
+                hideDone
+                  ? `완료된 ${doneCount}개 표시`
+                  : `완료된 ${doneCount}개 표시 안 함`
+              }
+              className={cn(
+                hideDone
+                  ? "bg-[color-mix(in_oklab,var(--sticky-accent)_20%,transparent)] text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {hideDone ? (
+                <EyeIcon className="size-4" />
+              ) : (
+                <EyeOffIcon className="size-4" />
+              )}
+            </Button>
+          )}
+          {/* 실행 패널 토글 — 세션이 지정돼 있으면 강조해 둔다. 지정 여부가 패널을 펼쳐야만
+              보이면 이 포스트잇이 어디에 연결됐는지 카드를 봐도 알 수 없다. */}
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => setRunOpen((v) => !v)}
+            aria-label={
+              runOpen ? "Claude Code 실행 패널 닫기" : "Claude Code 로 실행"
+            }
+            title={
+              runTarget
+                ? `Claude Code 실행 — 세션: ${runTarget.label || "(제목 없음)"}`
+                : "Claude Code 로 실행 (세션 지정)"
+            }
+            className={cn(
+              runOpen || runTarget
+                ? "bg-[color-mix(in_oklab,var(--sticky-accent)_20%,transparent)] text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <BotIcon className="size-4" />
+          </Button>
           <Button
             size="icon-sm"
             variant="ghost"
@@ -185,7 +272,7 @@ function StickyCard({
 
       {/* 할 일 목록 — Slack 리스트 행(36px, 8px 라운드, 행 테두리 없음). */}
       <ul className="flex flex-col gap-0.5 p-2">
-        {note.todos.map((t) => (
+        {visibleTodos.map((t) => (
           <li
             key={t.id}
             className="group flex min-h-9 items-start gap-2.5 rounded-lg px-3 py-1.5 transition-colors hover:bg-[color-mix(in_oklab,var(--sticky-accent)_16%,transparent)]"
@@ -230,6 +317,20 @@ function StickyCard({
                 >
                   {t.text}
                 </button>
+                {/* Claude Code 로 실행 — 누르면 아래 실행 패널의 편집칸으로 복사된다
+                    (바로 전송하지 않는다: 할 일 문구는 사람이 기억하려고 쓴 메모라
+                    지시로는 대개 손을 봐야 한다). 문구가 빈 행은 보낼 것이 없다. */}
+                {t.text.trim() !== "" && (
+                  <button
+                    type="button"
+                    onClick={() => copyToRun(t.text)}
+                    aria-label="Claude Code 로 실행"
+                    title="Claude Code 로 실행"
+                    className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-[color-mix(in_oklab,var(--sticky-accent)_28%,transparent)] hover:text-foreground"
+                  >
+                    <PlayIcon className="size-3.5" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => api.removeTodo(note.id, t.id)}
@@ -245,6 +346,12 @@ function StickyCard({
         {note.todos.length === 0 && (
           <li className="flex min-h-9 items-center px-3 text-[15px] text-muted-foreground">
             아래에 할 일을 추가하세요.
+          </li>
+        )}
+        {/* 전부 완료해서 감춘 경우 — 빈 목록이 "할 일이 없다"로 읽히면 안 된다. */}
+        {note.todos.length > 0 && visibleTodos.length === 0 && (
+          <li className="flex min-h-9 items-center px-3 text-[15px] text-muted-foreground">
+            완료된 {doneCount}개를 숨기고 있습니다.
           </li>
         )}
 
@@ -295,6 +402,19 @@ function StickyCard({
             <XIcon className="size-4" />
           </button>
         </div>
+      )}
+
+      {/* Claude Code 실행 패널 — 세션은 이 포스트잇에 남고, 프롬프트는 할 일마다 갈아 낀다. */}
+      {runOpen && (
+        <RunPanel
+          noteId={note.id}
+          target={runTarget}
+          onTargetChange={(t) => runSessions.setTarget(note.id, t)}
+          prompt={runPrompt}
+          onPromptChange={setRunPrompt}
+          onClose={() => setRunOpen(false)}
+          accentBorder="border-[color-mix(in_oklab,var(--sticky-accent)_22%,var(--border))]"
+        />
       )}
 
       {/* 색 선택 — Slack 은 원형 점을 쓴다. 고른 색만 파란 포커스 링으로 표시한다. */}
@@ -664,6 +784,11 @@ function CategoryRail({
 
 export function TodoView() {
   const api = useStickies()
+  // 포스트잇별 실행 세션. **뷰에서 한 번만** 부른다 — 같은 창에서 같은 localStorage 키를
+  // 두 번 읽으면 서로의 쓰기를 보지 못해 카드끼리 지정을 덮어쓴다(run-session.ts 주석).
+  const runSessions = useRunSessions()
+  // 포스트잇별 "완료된 항목 감추기". 같은 이유로 **뷰에서 한 번만** 부른다.
+  const hideDonePrefs = useHideDone()
   const { notes, trash, categories, activeCategoryId, addNote, moveNote } = api
 
   // 현재 카테고리의 포스트잇만 보여 준다.
@@ -816,6 +941,8 @@ export function TodoView() {
                 key={note.id}
                 note={note}
                 api={api}
+                runSessions={runSessions}
+                hideDonePrefs={hideDonePrefs}
                 drag={{
                   onHandleDown: startNoteDrag,
                   dragging: dragId === note.id,

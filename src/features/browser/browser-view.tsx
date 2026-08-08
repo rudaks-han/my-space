@@ -130,17 +130,9 @@ export function BrowserView() {
     }
   }, [setTabUrl])
 
-  // window.open / target="_blank" 로 새 창이 요청되면(Rust 에서 방출) 새 탭으로 연다.
-  useEffect(() => {
-    if (!inTauri) return
-    const unlisten = listen<string>("browser:new-tab", (event) => {
-      const url = event.payload
-      if (url && /^https?:/i.test(url)) addTab(url)
-    })
-    return () => {
-      void unlisten.then((fn) => fn())
-    }
-  }, [addTab])
+  // window.open / target="_blank" 로 새 창이 요청되면 **크롬 새 창**으로 열린다.
+  // 그 판단과 실행은 전부 Rust 쪽(`open_in_chrome_window`)이라 여기에는 아무것도 없다 —
+  // 앱 안의 새 탭으로 열면 탭 하나가 WebContent 프로세스 하나(200~400MB)를 더 쥔다.
 
   // 브라우저 메뉴 탭 자체를 닫으면 모든 탭의 메모리를 즉시 회수한다(웹뷰 껍데기는 남긴다 —
   // 닫아 봐야 메모리가 돌아오지 않는 이유는 Rust 쪽 `browser_discard` 주석 참고).

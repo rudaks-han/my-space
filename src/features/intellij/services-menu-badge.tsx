@@ -2,7 +2,8 @@ import { useRunningCount } from "./use-running-count"
 import type { ServicesBackend } from "./use-services"
 
 /**
- * 사이드바 "IntelliJ 서비스" · "Cowork 서비스" 메뉴에 붙는 실행 중 서비스 개수 배지.
+ * 사이드바 "IntelliJ 서비스" · "Cowork 서비스" · "IntelliJ Cowork" 메뉴에 붙는
+ * 실행 중 서비스 개수 배지. 뒤의 둘은 같은 standalone 백엔드를 보므로 늘 같은 숫자다.
  * 0건이면 표시하지 않는다(멈춰 있는 게 정상 상태라 0 을 띄우면 그냥 잡음이다).
  */
 export function ServicesMenuBadge({ backend }: { backend: ServicesBackend }) {

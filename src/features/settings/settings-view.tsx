@@ -47,6 +47,7 @@ import {
 } from "./settings-context"
 import { MenuSettingsPanel } from "./menu-settings"
 import { useAuth } from "@/features/auth/auth-context"
+import { ChangePasswordPanel } from "@/features/auth/change-password"
 import {
   AUTOSTART_SUPPORTED,
   applyAutoStart,
@@ -1100,6 +1101,59 @@ function NotifyCheck({
 }
 
 /**
+ * "받을 알림" 목록 안의 하위 선택지 — 체크가 아니라 값을 고르는 줄.
+ *
+ * `SettingChoiceRow` 를 쓰지 않는 이유: 그쪽은 테두리를 두른 최상위 설정 행이라 목록
+ * 가운데에 놓으면 체크 항목들을 두 덩어리로 갈라 놓는다. 여기서는 `NotifyCheck` 의
+ * 하위 항목(`indent`)과 같은 자리·같은 흐림 규칙을 쓰고 알약만 빌려 온다.
+ */
+function NotifyChoice<T extends string>({
+  disabled = false,
+  label,
+  description,
+  value,
+  options,
+  onChange,
+}: {
+  /** 부모 알림이 꺼져 있어 고를 수 없는 상태. 숨기지 않고 흐리게 둔다. */
+  disabled?: boolean
+  label: string
+  description: string
+  value: T
+  options: { label: string; value: T }[]
+  onChange: (next: T) => void
+}) {
+  return (
+    <div className={cn("pl-[26px]", disabled && "opacity-50")}>
+      <div className="text-[13px] font-semibold">{label}</div>
+      <p className="mt-0.5 text-[13px] text-muted-foreground">{description}</p>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {options.map((o) => {
+          const isActive = o.value === value
+          return (
+            <button
+              key={o.value}
+              type="button"
+              aria-pressed={isActive}
+              disabled={disabled}
+              onClick={() => onChange(o.value)}
+              className={cn(
+                "h-7 rounded-full border px-3 text-[13px] font-semibold transition-colors outline-none not-disabled:cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring focus-visible:outline-solid",
+                isActive
+                  ? "border-transparent bg-ui-selection text-ui-selection-fg"
+                  : "border-border text-muted-foreground hover:bg-ui-list-hover hover:text-foreground"
+              )}
+            >
+              {o.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/**
  * 어떤 알림을 말풍선으로 받을지 고르는 행.
  *
  * 펫이 앱의 유일한 알림 창구이므로 이 목록이 곧 "받을 알림"이다. 기본은 Claude Code 만
@@ -1133,6 +1187,17 @@ function PetNotifySourcesRow() {
           description="입력 대기(질문·권한)와 작업 완료를 알립니다. 끄더라도 작업 중 동작(움직임·머리 위 표시)은 그대로입니다."
           onChange={(v) => set({ claude: v })}
         />
+        <NotifyChoice
+          disabled={!notify.claude}
+          label="누르면 이동할 화면"
+          description="알림 카드(와 머리 위 표시를 눌러 펼친 진행 중 작업)를 눌렀을 때 어디를 열지 정합니다. 터미널은 그 작업이 도는 창·탭을 앞으로 가져오고, 세션 목록은 My Space 의 Claude Code 화면을 엽니다."
+          value={notify.claudeTarget}
+          options={[
+            { label: "터미널 화면", value: "app" },
+            { label: "My Space 의 세션 목록", value: "myspace" },
+          ]}
+          onChange={(v) => set({ claudeTarget: v })}
+        />
         <NotifyCheck
           checked={notify.reminder}
           icon={BellIcon}
@@ -1153,6 +1218,17 @@ function PetNotifySourcesRow() {
           label="Slack 새 메시지"
           description="Slack 메뉴에서 고른 채널에 새 메시지가 오면 알립니다(채널 이름 + 보낸 사람)."
           onChange={(v) => set({ slack: v })}
+        />
+        <NotifyChoice
+          disabled={!notify.slack}
+          label="누르면 이동할 화면"
+          description="알림 카드를 눌렀을 때 어디를 열지 정합니다. Slack 앱은 그 메시지가 있는 채널로 바로 가고, 스레드 답글이면 스레드까지 펼칩니다(Slack 앱이 설치되어 있어야 합니다)."
+          value={notify.slackTarget}
+          options={[
+            { label: "My Space 의 Slack 화면", value: "myspace" },
+            { label: "Slack 앱의 메시지", value: "app" },
+          ]}
+          onChange={(v) => set({ slackTarget: v })}
         />
         <NotifyCheck
           checked={notify.gcal}
@@ -1580,7 +1656,7 @@ function AccountSettingsPanel() {
     <div className="flex flex-col">
       <PanelHeader
         title="계정"
-        description="현재 로그인한 사내 계정 정보입니다. 로그아웃하면 자동 로그인이 해제되어 다음 실행에서 다시 로그인해야 합니다."
+        description="현재 로그인한 사내 계정 정보입니다. 비밀번호는 여기서 바로 변경할 수 있습니다. 로그아웃하면 자동 로그인이 해제되어 다음 실행에서 다시 로그인해야 합니다."
       />
 
       {user ? (
@@ -1615,6 +1691,11 @@ function AccountSettingsPanel() {
                 </span>
               </div>
             ))}
+          </div>
+
+          {/* 비밀번호 변경 — 사내 정책상 한 달마다 바꿔야 해서 여기서 바로 처리한다. */}
+          <div className="mt-5">
+            <ChangePasswordPanel user={user} />
           </div>
 
           <div className="mt-5">

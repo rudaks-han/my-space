@@ -9,28 +9,10 @@ import { useLocalStorage } from "@/lib/use-local-storage"
 import { useResizableWidth } from "@/lib/use-resizable-width"
 import { cn } from "@/lib/utils"
 import { EsClient, EsError, type IndexRow } from "./es-client"
-import { fmtNum } from "./es-utils"
+import { useEsConn, type EsStoredConn } from "./es-conn-store"
+import { fmtNum, HEALTH_COLOR, sortIndices } from "./es-utils"
 import { getIndexFilter, purgeIndex, setIndexFilter } from "./persisted"
 import { IndexPane } from "./index-pane"
-
-/** localStorage 에 저장하는 연결 정보(+자동 연결 여부). */
-interface StoredConn {
-  host: string
-  port: number | null
-  https: boolean
-  username: string
-  password: string
-  autoConnect: boolean
-}
-
-const DEFAULT_CONN: StoredConn = {
-  host: "172.16.120.191",
-  port: 9200,
-  https: false,
-  username: "",
-  password: "",
-  autoConnect: false,
-}
 
 /** 왼쪽 패널 폭(px) — 인덱스 이름이 길면 넓혀 볼 수 있게 드래그로 조절한다. */
 const ASIDE_WIDTH_KEY = "myspace.esAsideWidth"
@@ -38,32 +20,18 @@ const DEFAULT_ASIDE_WIDTH = 288
 const MIN_ASIDE_WIDTH = 220
 const MAX_ASIDE_WIDTH = 640
 
-/** 시스템 인덱스(.)는 뒤로, 나머지는 이름순으로 정렬. */
-function sortIndices(list: IndexRow[]): IndexRow[] {
-  return [...list].sort((a, b) => {
-    const dotA = a.index.startsWith(".") ? 1 : 0
-    const dotB = b.index.startsWith(".") ? 1 : 0
-    if (dotA !== dotB) return dotA - dotB
-    return a.index.localeCompare(b.index)
-  })
-}
-
-const HEALTH_COLOR: Record<string, string> = {
-  green: "bg-ui-success",
-  yellow: "bg-ui-warning",
-  red: "bg-ui-error",
-}
-
 /**
  * Elasticsearch 뷰어 — 크롬 확장(cowork-es-viewer)의 기능을 My Space 스타일로 옮긴 것.
  * 왼쪽: 연결 정보 + 인덱스 목록. 오른쪽: 인덱스 탭(keep-alive)과 조회/검색 화면.
  * 실제 HTTP 는 Rust(`es_request`)가 대신 보내 CORS 를 우회한다.
+ *
+ * ⚠️ 이 화면은 `scope` 없이 `persisted.ts` 를 부른다 = 접두사 없는 기본 칸이 이 화면의
+ * 몫이다. 두 번째 화면(IntelliJ Cowork)은 자기 접두사를 넘겨 자기 칸을 쓴다. 접속 정보만은
+ * `useEsConn()` 으로 **공유**한다 — 설정이 하나뿐이라 사본을 두면 어느 클러스터를 보고
+ * 있는지 화면마다 달라진다(`es-conn-store.tsx` 주석 참고).
  */
 export function EsViewerView() {
-  const [conn, setConn] = useLocalStorage<StoredConn>(
-    "myspace.esConn",
-    DEFAULT_CONN
-  )
+  const { conn, setConn } = useEsConn()
   const [openTabs, setOpenTabs] = useLocalStorage<string[]>(
     "myspace.esTabs",
     []
@@ -103,7 +71,7 @@ export function EsViewerView() {
   }, [])
 
   const connect = useCallback(
-    async (cfg: StoredConn) => {
+    async (cfg: EsStoredConn) => {
       if (!cfg.host.trim()) {
         setConnError("호스트를 입력하세요.")
         return
@@ -123,6 +91,12 @@ export function EsViewerView() {
 
         // 저장된 탭 중 존재하는 인덱스만 복원. localStorage 를 직접 읽어
         // 재연결 시 stale closure 를 피한다(useLocalStorage 와 같은 키).
+        //
+        // ⚠️ 이 블록은 `myspace.esTabs` 를 직접 **읽고 그대로 다시 쓴다**(`setOpenTabs`).
+        // 그래서 다른 화면이 자기 탭 모델을 이 키에 얹으면 여기서 [연결]을 누를 때마다
+        // 이 화면 기준으로 걸러진 목록으로 덮인다 — 그쪽 탭이 이유 없이 닫힌 것처럼
+        // 보인다. 두 번째 화면은 반드시 자기 키를 쓸 것(연결 정보와 달리 탭 목록은
+        // 화면마다 다른 값이라 공유할 대상도 아니다).
         const existing = new Set(list.map((i) => i.index))
         let savedTabs: string[] = []
         try {
@@ -186,7 +160,7 @@ export function EsViewerView() {
     if (client) void reloadIndices(client)
   }
 
-  const patchConn = (patch: Partial<StoredConn>) =>
+  const patchConn = (patch: Partial<EsStoredConn>) =>
     setConn({ ...conn, ...patch })
 
   const filtered = indices.filter(

@@ -17,8 +17,9 @@ import {
 } from "@/components/ui/tooltip"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
 import { SETTINGS_ID } from "@/lib/use-open-tabs"
+import { useTabOverflow } from "@/lib/use-tab-overflow"
 import { cn } from "@/lib/utils"
-import { viewInfo, type ViewInfo } from "@/lib/view-info"
+import { viewHeaderAction, viewInfo, type ViewInfo } from "@/lib/view-info"
 import { suppressWebviews } from "@/lib/webview-overlay"
 
 const inTauri = isTauri()
@@ -48,11 +49,6 @@ interface TabBarProps {
   onCloseAll: () => void
   /** 드래그 재정렬 — draggedId 를 targetId 의 앞/뒤로 옮긴다. */
   onMove: (draggedId: string, targetId: string, before: boolean) => void
-}
-
-/** id 배열이 같은 내용인지(setState 로 불필요한 리렌더를 막기 위한 비교). */
-function sameIds(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((id, i) => id === b[i])
 }
 
 /**
@@ -85,11 +81,11 @@ export function TabBar({
   const closable = tabs.length > 1
   const ActiveIcon = active?.icon
 
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const tabRefs = useRef(new Map<string, HTMLElement>())
-  // 스크롤 영역 밖으로 밀려난 탭 id(목록 버튼의 배지 숫자 = 이 개수).
-  const [hiddenIds, setHiddenIds] = useState<string[]>([])
-  const [overflowing, setOverflowing] = useState(false)
+  // 넘침 측정(가려진 탭 목록·⌄ 버튼 노출)은 IntelliJ Cowork 화면의 내부 탭 행과 공유하는
+  // 훅이 맡는다. 스크롤러의 `relative` 와 `onScroll={measure}`, 그리고 ⌄ 버튼을 스크롤러
+  // 밖 형제로 두는 배치가 그 훅의 계약이다 — 자세한 이유는 훅 주석에 있다.
+  const { scrollRef, tabRef, nodes, overflowing, hiddenIds, measure } =
+    useTabOverflow(openIds, activeId)
   // 넘침 목록 드롭다운 열림 상태. 열려 있는 동안 네이티브 웹뷰를 비켜 준다(아래 effect).
   const [listOpen, setListOpen] = useState(false)
   // 드래그 중인 탭과, 드롭선을 그릴 위치(대상 탭 id + 그 탭의 앞/뒤).
@@ -122,7 +118,7 @@ export function TabBar({
     (clientX: number): { id: string; before: boolean } | null => {
       let last: { id: string; before: boolean } | null = null
       for (const id of openIds) {
-        const node = tabRefs.current.get(id)
+        const node = nodes.current.get(id)
         if (!node) continue
         const r = node.getBoundingClientRect()
         if (clientX < r.left + r.width / 2) return { id, before: true }
@@ -130,47 +126,8 @@ export function TabBar({
       }
       return last
     },
-    [openIds]
+    [openIds, nodes]
   )
-
-  const measure = useCallback(() => {
-    const el = scrollRef.current
-    if (!el) return
-    setOverflowing(el.scrollWidth > el.clientWidth + 1)
-    const left = el.scrollLeft
-    const right = left + el.clientWidth
-    const hidden: string[] = []
-    // openIds 순서대로 훑어 배지/목록 순서가 탭 순서와 어긋나지 않게 한다.
-    for (const id of openIds) {
-      const node = tabRefs.current.get(id)
-      if (!node) continue
-      // 1px 여유 — 소수점 레이아웃에서 딱 맞는 탭이 가려진 것으로 잡히는 걸 막는다.
-      if (
-        node.offsetLeft < left - 1 ||
-        node.offsetLeft + node.offsetWidth > right + 1
-      ) {
-        hidden.push(id)
-      }
-    }
-    setHiddenIds((prev) => (sameIds(prev, hidden) ? prev : hidden))
-  }, [openIds])
-
-  // 탭 추가/삭제, 창 크기 변경, 가로 스크롤 모두 가려짐 여부를 바꾼다.
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [measure])
-
-  // 활성 탭이 가려진 곳(목록에서 고른 탭 등)이면 보이는 위치로 끌어온다.
-  useEffect(() => {
-    tabRefs.current
-      .get(activeId)
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" })
-  }, [activeId])
 
   return (
     <div className="flex shrink-0 flex-col select-none">
@@ -186,10 +143,7 @@ export function TabBar({
             return (
               <div
                 key={tab.id}
-                ref={(node) => {
-                  if (node) tabRefs.current.set(tab.id, node)
-                  else tabRefs.current.delete(tab.id)
-                }}
+                ref={tabRef(tab.id)}
                 role="tab"
                 aria-selected={isActive}
                 tabIndex={-1}
@@ -349,6 +303,10 @@ export function TabBar({
                 {active.group}
               </span>
             )}
+            {/* 화면별 버튼(예: IntelliJ Cowork 의 다크 모드) — 어느 화면이 무엇을 내는지는
+                레지스트리가 정한다(`viewHeaderAction`). 오른쪽의 새 창 버튼과 달리 제목
+                옆에 있는 것은 창이 아니라 **그 화면의 상태**를 다루기 때문이다. */}
+            {viewHeaderAction(active.id)}
             {inTauri && (
               <Tooltip>
                 <TooltipTrigger

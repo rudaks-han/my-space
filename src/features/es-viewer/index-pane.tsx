@@ -73,6 +73,7 @@ export function IndexPane({
   active,
   onDeleted,
   onDocsChanged,
+  scope,
 }: {
   index: string
   client: EsClient
@@ -80,6 +81,13 @@ export function IndexPane({
   active: boolean
   onDeleted: (index: string) => void
   onDocsChanged: () => void
+  /**
+   * 검색 상태(`persisted.ts`)를 담아 둘 칸의 화면 접두사. 주지 않으면 Elasticsearch
+   * 뷰어의 기존 칸을 쓴다 — 두 화면이 접두사 없이 같은 칸을 나눠 쓰면 검색 모드와
+   * 페이지 크기가 **패널 mount 때 한 번만 읽히는 값**이라, 부딪혀도 그 자리에서는
+   * 아무 일도 없고 다음에 여는 탭이 남의 설정을 물려받는다(조용히 틀린다).
+   */
+  scope?: string
 }) {
   const [fieldInfo, setFieldInfo] = useState<FieldInfoMap>({})
   const [masterFields, setMasterFields] = useState<string[]>([])
@@ -87,11 +95,13 @@ export function IndexPane({
   const [hits, setHits] = useState<Hit[]>([])
   const [total, setTotal] = useState(0)
   const [from, setFrom] = useState(0)
-  const [size, setSize] = useState(() => getPageSize())
-  const [mode, setMode] = useState<SearchMode>(() => getSearchMode())
-  const [query, setQuery] = useState(() => getIndexQuery(index))
-  const [dsl, setDsl] = useState(() => getIndexDsl(index))
-  const [sort, setSort] = useState<SortSpec | null>(() => getIndexSort(index))
+  const [size, setSize] = useState(() => getPageSize(scope))
+  const [mode, setMode] = useState<SearchMode>(() => getSearchMode(scope))
+  const [query, setQuery] = useState(() => getIndexQuery(index, scope))
+  const [dsl, setDsl] = useState(() => getIndexDsl(index, scope))
+  const [sort, setSort] = useState<SortSpec | null>(() =>
+    getIndexSort(index, scope)
+  )
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [view, setView] = useState<"table" | "json">("table")
   const [loading, setLoading] = useState(true)
@@ -249,15 +259,15 @@ export function IndexPane({
       if (cancelled) return
       setFieldInfo(fInfo)
       setMasterFields(master)
-      const savedCols = getIndexColumns(index)
+      const savedCols = getIndexColumns(index, scope)
       setColumns(savedCols ?? defaultColumns(master, fInfo, []))
       await performSearch({
-        query: getIndexQuery(index),
-        dsl: getIndexDsl(index),
-        mode: getSearchMode(),
-        sort: getIndexSort(index),
+        query: getIndexQuery(index, scope),
+        dsl: getIndexDsl(index, scope),
+        mode: getSearchMode(scope),
+        sort: getIndexSort(index, scope),
         from: 0,
-        size: getPageSize(),
+        size: getPageSize(scope),
         fieldInfo: fInfo,
       })
     })()
@@ -272,7 +282,7 @@ export function IndexPane({
   const applySort = (field: string | null, order: "asc" | "desc") => {
     const next: SortSpec | null = field ? { field, order } : null
     setSort(next)
-    setIndexSort(index, next)
+    setIndexSort(index, next, scope)
     performSearch({ query, dsl, mode, sort: next, from: 0, size, fieldInfo })
   }
   // 헤더 클릭: 오름차순 → 내림차순 → 해제.
@@ -290,12 +300,12 @@ export function IndexPane({
   }
   const changeSize = (n: number) => {
     setSize(n)
-    setPageSize(n)
+    setPageSize(n, scope)
     performSearch({ query, dsl, mode, sort, from: 0, size: n, fieldInfo })
   }
   const changeMode = (m: SearchMode) => {
     setMode(m)
-    persistSearchMode(m)
+    persistSearchMode(m, scope)
   }
 
   /* ── 컬럼 ── */
@@ -306,15 +316,15 @@ export function IndexPane({
         : [...columns, field]
       : columns.filter((f) => f !== field)
     setColumns(next)
-    setIndexColumns(index, next)
+    setIndexColumns(index, next, scope)
   }
   const setAllColumns = (on: boolean) => {
     const next = on ? fields.slice() : []
     setColumns(next)
-    setIndexColumns(index, next)
+    setIndexColumns(index, next, scope)
   }
   const resetColumns = () => {
-    clearIndexColumns(index)
+    clearIndexColumns(index, scope)
     setColumns(defaultColumns(masterFields, fieldInfo, hits))
     toast.success("컬럼이 기본값으로 초기화되었습니다.")
   }
@@ -327,7 +337,7 @@ export function IndexPane({
     const ti = cols.indexOf(toF)
     cols.splice(fi < tiOrig ? ti + 1 : ti, 0, fromF)
     setColumns(cols)
-    setIndexColumns(index, cols)
+    setIndexColumns(index, cols, scope)
   }
 
   // 컬럼 패널 바깥 클릭 시 닫기.
@@ -543,7 +553,7 @@ export function IndexPane({
                 placeholder="검색어 (예: field:value, 비우면 전체 조회)"
                 onChange={(e) => {
                   setQuery(e.target.value)
-                  setIndexQuery(index, e.target.value)
+                  setIndexQuery(index, e.target.value, scope)
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") runSearch(0)
@@ -554,7 +564,7 @@ export function IndexPane({
                 value={dsl}
                 onChange={(v) => {
                   setDsl(v)
-                  setIndexDsl(index, v)
+                  setIndexDsl(index, v, scope)
                 }}
                 onRun={() => runSearch(0)}
                 fields={fields}

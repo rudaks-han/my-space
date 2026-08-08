@@ -440,7 +440,15 @@ function ChannelPicker({
       </div>
       <div className="flex flex-col gap-3 p-4">
         <p className="text-[13px] text-muted-foreground">
-          체크한 채널의 안 읽은 메시지만 가져옵니다. 선택은 저장됩니다.
+          체크한 채널의 안 읽은 메시지를 가져옵니다. 선택은 저장됩니다.
+        </p>
+        <p className="text-[13px] text-muted-foreground">
+          <b className="font-semibold text-foreground">
+            DM·그룹 DM 은 체크하지 않아도 항상 확인
+          </b>
+          합니다(봇·앱이 보낸 메시지는 제외). 개수가 많아 몇 분에 걸쳐 나눠
+          확인하므로, 오래 대화가 없던 상대의 첫 메시지는 조금 늦게 보일 수
+          있습니다.
         </p>
         <Input
           placeholder="채널 이름 검색…"
@@ -625,29 +633,33 @@ export function SlackView() {
         />
       )}
 
-      {selected.length === 0 ? (
-        !pickerOpen && (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center">
-            <p className="text-[15px] text-muted-foreground">
-              아직 선택한 채널이 없습니다. 볼 채널을 골라주세요.
-            </p>
-            <Button onClick={openPicker}>
-              <ListChecksIcon />
-              채널 선택
-            </Button>
-          </div>
-        )
-      ) : loading && channels.length === 0 ? (
+      {/* 채널을 하나도 고르지 않아도 DM 은 대상이므로, 빈 화면의 기준은 선택 개수가
+          아니라 실제로 가져온 결과다. 선택이 없을 때만 채널 고르기를 함께 권한다. */}
+      {loading && channels.length === 0 ? (
         <div className="flex flex-1 items-center justify-center py-16 text-[15px] text-muted-foreground">
           안 읽은 메시지를 불러오는 중…
         </div>
       ) : channels.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 py-16 text-center">
-          <p className="text-[24px]">🎉</p>
-          <p className="text-[15px] text-muted-foreground">
-            선택한 채널에 안 읽은 메시지가 없습니다.
-          </p>
-        </div>
+        !pickerOpen && (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 py-16 text-center">
+            <p className="text-[24px]">🎉</p>
+            <p className="text-[15px] text-muted-foreground">
+              안 읽은 메시지가 없습니다.
+            </p>
+            {selected.length === 0 && (
+              <>
+                <p className="text-[13px] text-muted-foreground">
+                  DM·그룹 DM 은 고르지 않아도 확인합니다. 채널도 함께 보려면
+                  골라주세요.
+                </p>
+                <Button className="mt-1" onClick={openPicker}>
+                  <ListChecksIcon />
+                  채널 선택
+                </Button>
+              </>
+            )}
+          </div>
+        )
       ) : (
         <>
           <p className="text-[13px] text-muted-foreground">

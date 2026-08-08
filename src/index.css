@@ -155,6 +155,12 @@
 }
 
 :root {
+    /* 네이티브 컨트롤(`<select>` 팝업 · 체크박스 · 기본 스크롤바)이 따라갈 모드.
+     * 토큰만 바꿔서는 이것들의 색이 바뀌지 않고 **OS 외관**을 따라가므로, 라이트 앱을
+     * 다크 맥에서 쓰면 흰 화면에 검은 팝업이 뜬다. 클래스 셀렉터라 `<html>` 이 아닌 곳에
+     * 붙여도 그 아래에만 적용된다 — IntelliJ Cowork 의 "이 화면만 다크" 가 그 성질을 쓴다. */
+    color-scheme: light;
+
     /* CC History Viewer 액센트(라이트) — 원본 cc-history-viewer 값 그대로. */
     --cc-brand: #c96442;
     --cc-brand-light: #d97757;
@@ -300,6 +306,28 @@
     --http-string: #067D17;
     --http-number: #0F7A85;
 
+    /* ─── 편집기 구문 강조(라이트) — IntelliJ Light 대응색 ───
+     * IntelliJ Cowork 화면의 소스 편집기(`.dev-code`)가 쓴다. `--http-*` 와 **같은 이유로**
+     * 프리셋에 묶지 않는다: 이 색들은 코드 편집기 안에서 서로 구분되도록 고른 값이라
+     * 프리셋이 크롬을 무슨 색으로 칠하든 그대로여야 한다. 겹치는 자리(키워드·문자열·
+     * 숫자·주석)는 `--http-*` 와 같은 값을 다시 적는다 — 두 편집기가 나란히 열리므로
+     * 같은 뜻이 다른 색이면 안 되고, 그렇다고 `var(--http-keyword)` 로 참조하면 한쪽
+     * 팔레트를 손보는 순간 다른 편집기가 같이 바뀐다(별개 팔레트인 게 요점이다). */
+    --code-keyword: #A0522D;
+    --code-string: #067D17;
+    --code-number: #0F7A85;
+    --code-comment: #8C8C8C;
+    --code-annotation: #9E880D; /* IntelliJ Light 의 메타데이터색 — `@Override`·`#include` */
+    --code-type: #00627A;
+    --code-field: #871094; /* IntelliJ 의 필드 보라 — JSON 키·CSS 속성도 이 색이다 */
+    --code-tag: #0033B3;
+    --code-attribute: #174AD4;
+    /* IntelliJ 도 연산자에 색을 주지 않는다(= 본문색). 그래도 토큰을 두는 이유는,
+     * 그냥 두면 연산자가 `--foreground` 를 물려받아 **프리셋에 따라 색이 달라지는
+     * 유일한 토큰**이 되기 때문이다 — 팔레트를 프리셋에서 떼어 낸 취지가 깨진다. */
+    --code-operator: #000000;
+    --code-error: #CC0000;
+
     /* ─── 콘솔 ANSI(라이트) — IntelliJ Light 콘솔 팔레트 ───
      * 초록·노랑·청록·흰색만 한 단계 어둡게 잡았다. IntelliJ 원값(#00CD00 / #CDCD00 /
      * #00CDCD / #E5E5E5)은 흰 배경에서 대비가 2:1 언저리인데, INFO 가 초록이라 거의
@@ -323,6 +351,9 @@
 }
 
 .dark {
+    /* 네이티브 컨트롤도 다크로(`:root` 의 짝 — 위 주석 참고). */
+    color-scheme: dark;
+
     /* CC History Viewer 액센트(다크) — 원본 cc-history-viewer 값 그대로. */
     --cc-brand: #d97757;
     --cc-brand-light: #d97757;
@@ -403,6 +434,22 @@
     --http-name: #C77DBB;
     --http-string: #6AAB73;
     --http-number: #2AACB8;
+
+    /* ─── 편집기 구문 강조(다크) — IntelliJ New UI Dark / Darcula 값 ─── */
+    --code-keyword: #CF8E6D;
+    --code-string: #6AAB73;
+    --code-number: #2AACB8;
+    --code-comment: #7A7E85;
+    --code-annotation: #B3AE60;
+    --code-type: #56A8F5;
+    --code-field: #C77DBB;
+    --code-tag: #E8BF6A; /* Darcula 의 XML 태그 이름색 */
+    /* Darcula 는 속성 **이름**을 기본 회색(#BABABA)으로 둔다. 그러면 본문 글자색
+     * (#D1D2D3)과 사실상 구별이 안 되므로, Darcula 의 필드 보라를 빌려 태그(노랑)와
+     * 갈라놓았다 — 이 저장소는 Spring·MyBatis XML 이 많아 태그/속성 구분이 제일 중요하다. */
+    --code-attribute: #9876AA;
+    --code-operator: #BCBEC4;
+    --code-error: #FF6B68;
 
     /* ─── 콘솔 ANSI(다크) — IntelliJ Darcula 콘솔 값 그대로 ───
      * 어두운 배경에서는 원값이 그대로 읽히므로 손대지 않는다. */
@@ -672,6 +719,89 @@ html.pet-window #root {
   background: #ffffff40;
   color: #ffffff;
 }
+
+/*
+ * IntelliJ Cowork 화면 소스 편집기의 구문 강조 — `src/lib/code-highlight.ts` 가 CodeMirror
+ * runMode 로 만들어 낸 `.cm-*` span 에 `--code-*` 색을 입힌다.
+ *
+ * Tailwind 유틸리티로 쓸 수 없어서 평범한 css 다: 클래스 이름을 **런타임에** 만들므로
+ * (`cm-` + CodeMirror 가 준 스타일 문자열) Tailwind 의 소스 스캐너가 그 글자를 어디서도
+ * 못 보고, 따라서 규칙을 만들어 주지 않는다. 같은 이유로 `--code-*` 는 `@theme inline` 에
+ * 등록하지 않았다 — 유틸리티로 쓸 일이 없는 색을 등록하면 이름만 늘어난다.
+ *
+ * ⚠️ 모든 규칙이 **`color` 만** 정한다. `font-weight`·`font-style`·`letter-spacing` 은
+ * 절대 넣지 말 것: 이 편집기는 강조된 `<pre>` 위에 투명한 `<textarea>` 를 겹친 구조라
+ * 두 층의 글자 전진폭(advance width)이 한 글자라도 달라지면 그 줄부터 커서와 글자가
+ * 어긋난다. 그래서 마크다운의 `cm-strong`·`cm-em` 도 일부러 비워 뒀다(굵게·기울임이
+ * 정확히 그 폭을 바꾼다). Typora css 에서 색은 가져오되 굵기는 가져오지 않는 이유다.
+ *
+ * 규칙 순서도 계약이다. CodeMirror 는 스타일을 여러 개 붙여 줄 때가 있어서
+ * (JSON 키는 `"string property"`, 인용 안의 링크는 `"link quote"`) 명시도가 같은 규칙들이
+ * 한 span 에 동시에 걸리고, **파일에서 뒤에 있는 규칙이 이긴다**. 그래서 더 구체적인
+ * 뜻을 가진 토큰(property·link)을 더 일반적인 토큰(string·quote) **뒤에** 뒀다 —
+ * JSON 키가 보라, 그 값이 초록으로 나오는 게 이 순서 덕이다.
+ */
+.dev-code .cm-comment {
+  color: var(--code-comment);
+}
+/* `cm-quote`: 마크다운의 인용 줄, 그리고 `.properties` 의 **값**(properties 모드는 키를
+   `def`, 값을 `quote` 로 준다) — 둘 다 리터럴로 읽히는 자리라 문자열색이 맞다.
+   `cm-positive` 는 diff 의 추가된 줄(초록)이다. */
+.dev-code .cm-string,
+.dev-code .cm-string-2,
+.dev-code .cm-quote,
+.dev-code .cm-url,
+.dev-code .cm-positive {
+  color: var(--code-string);
+}
+.dev-code .cm-number {
+  color: var(--code-number);
+}
+/* `cm-atom`(true·false·null)·`cm-builtin`(셸 내장 명령)·`cm-header`(마크다운 제목)는
+   따로 색을 줄 만큼 자주 나오지 않아 키워드에 합친다. */
+.dev-code .cm-keyword,
+.dev-code .cm-atom,
+.dev-code .cm-builtin,
+.dev-code .cm-header {
+  color: var(--code-keyword);
+}
+.dev-code .cm-meta {
+  color: var(--code-annotation);
+}
+/* `cm-def`(선언된 이름)·`cm-variable-3`(clike 의 타입)·`cm-link` 를 타입색으로 모은다. */
+.dev-code .cm-type,
+.dev-code .cm-def,
+.dev-code .cm-variable-3,
+.dev-code .cm-link {
+  color: var(--code-type);
+}
+/* `cm-property`(JSON·TOML 키, JS 프로퍼티)·`cm-variable-2`(CSS·SQL 의 변수)·
+   `cm-qualifier`(CSS 클래스 선택자)는 모두 "이름이 붙은 칸"이라 필드색으로 묶는다. */
+.dev-code .cm-property,
+.dev-code .cm-variable-2,
+.dev-code .cm-qualifier {
+  color: var(--code-field);
+}
+.dev-code .cm-tag {
+  color: var(--code-tag);
+}
+.dev-code .cm-attribute {
+  color: var(--code-attribute);
+}
+.dev-code .cm-operator {
+  color: var(--code-operator);
+}
+/* `cm-negative` 는 diff 의 지워진 줄 — 빨강이 그대로 맞는 뜻이다. */
+.dev-code .cm-error,
+.dev-code .cm-negative {
+  color: var(--code-error);
+}
+/*
+ * 일부러 색을 주지 않는 토큰들: `cm-variable`(평범한 식별자 — 칠하면 코드 전체가
+ * 물든다), `cm-bracket`(XML 의 `<`·`>` 는 `tag bracket` 으로 함께 오므로 태그색을
+ * 물려받는 게 맞다), `cm-strong`·`cm-em`(위의 폭 규칙). IntelliJ 도 앞의 둘에 색을
+ * 주지 않으므로 이게 원본과 같은 모습이다.
+ */
 
 @media (prefers-reduced-motion: reduce) {
   .pet-figure,

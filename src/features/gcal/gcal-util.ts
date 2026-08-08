@@ -224,6 +224,112 @@ export function nextFreeSlot(
   return { start: cursor, end: winEnd }
 }
 
+/**
+ * 일정 조회가 실제로 덮는 범위(오늘 자정 ~ 다음주 일요일 끝).
+ *
+ * Rust 의 `upcoming_range()` 와 같은 값이어야 한다 — `gcal_calendar_events` 는 이
+ * 범위만 돌려주므로, 밖의 날짜는 "일정이 없다" 가 아니라 "모른다" 다. 그 구분을
+ * 하지 않으면 3주 뒤 날짜에서 모든 회의실이 비어 보인다.
+ */
+export function upcomingRange(): Interval {
+  return {
+    start: localMidnight(Date.now()),
+    end: nextMondayStart() + 7 * DAY_MS,
+  }
+}
+
+/**
+ * `from` 이후로 `durationMs` 가 통째로 들어가는 첫 빈 구간. 없으면 null.
+ *
+ * `nextFreeSlot` 은 "다음 예약 전까지" 를 돌려줄 뿐이라 그 틈이 요청 길이보다 짧을 수
+ * 있다 — 10분짜리 틈을 "가능" 이라고 제안하면 눌러 봐야 겹친다. 짧은 틈은 건너뛰고
+ * 다시 찾는다. 커서는 매번 앞으로만 가므로(빈 구간의 끝 → 그 뒤 예약의 끝) 반드시 끝난다.
+ */
+export function firstFittingSlot(
+  busy: Interval[],
+  from: number,
+  winEnd: number,
+  durationMs: number
+): Interval | null {
+  let cursor = from
+  for (;;) {
+    const gap = nextFreeSlot(busy, cursor, winEnd)
+    if (!gap) return null
+    if (gap.end - gap.start >= durationMs)
+      return { start: gap.start, end: gap.start + durationMs }
+    // 이 틈은 좁다 — 다음 예약 뒤에서 다시 찾는다.
+    cursor = gap.end + 1
+  }
+}
+
+/** 요청한 시간대에서 회의실 한 곳의 상태. */
+export interface SlotStatus {
+  /** 요청 구간 내내 비어 있는지. */
+  free: boolean
+  /** 겹치는 예약이 모두 끝나는 시각(사용 중일 때만). */
+  busyUntil: number | null
+  /** 겹치는 예약 중 가장 먼저 시작하는 일정(누가 쓰는지 보여준다). */
+  conflict: CalendarEvent | null
+  /** 사용 중일 때, 같은 길이가 들어가는 그날의 첫 대안 구간. */
+  suggestion: Interval | null
+}
+
+/**
+ * 회의실 일정과 요청 구간을 견줘 예약 가능 여부를 낸다.
+ *
+ * 종일 일정은 점유로 치지 않는다 — 앱 전체의 `isNow`·`busyIntervals` 규칙과 같다.
+ * 대안 구간은 **그날 자정까지** 안에서 찾는다(업무시간으로 좁히면 18시 이후에 여는
+ * 회의실이 "가능한 시간 없음" 으로 보인다).
+ */
+export function slotStatus(
+  events: CalendarEvent[],
+  slot: Interval
+): SlotStatus {
+  const dayMid = localMidnight(slot.start)
+  const win = { start: dayMid, end: dayMid + DAY_MS }
+  const busy = busyIntervals(events, win)
+  const overlapping = busy.filter(
+    (b) => b.start < slot.end && b.end > slot.start
+  )
+  if (overlapping.length === 0)
+    return { free: true, busyUntil: null, conflict: null, suggestion: null }
+
+  const busyUntil = Math.max(...overlapping.map((b) => b.end))
+  // 병합된 구간에는 제목이 없으므로, 겹치는 원본 일정에서 가장 이른 것을 집어 온다.
+  const conflict =
+    events
+      .filter(
+        (ev) =>
+          !ev.all_day &&
+          new Date(ev.start).getTime() < slot.end &&
+          new Date(ev.end).getTime() > slot.start
+      )
+      .sort(
+        (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
+      )[0] ?? null
+
+  return {
+    free: false,
+    busyUntil,
+    conflict,
+    suggestion: firstFittingSlot(
+      busy,
+      busyUntil,
+      win.end,
+      slot.end - slot.start
+    ),
+  }
+}
+
+/**
+ * "YYYY-MM-DD" + "HH:MM" → epoch ms(로컬). 형식이 깨졌으면 null.
+ * 타임존 없는 ISO 문자열은 로컬 시각으로 파싱된다 — 예약도 로컬 기준이라 맞다.
+ */
+export function parseLocalDateTime(ymd: string, hm: string): number | null {
+  const ts = new Date(`${ymd}T${hm}`).getTime()
+  return Number.isNaN(ts) ? null : ts
+}
+
 /** Date → "YYYY-MM-DD"(로컬). date input 및 예약 요청에 쓴다. */
 export function toYmd(d: Date): string {
   const y = d.getFullYear()

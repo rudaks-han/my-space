@@ -61,6 +61,10 @@ pub struct HerdrWorkspace {
     pub agent: Option<String>,
     /// 이 워크스페이스가 속한 herdr 세션 이름(명령 라우팅용). default 세션이면 "default".
     pub session: String,
+    /// **사용자가 지금 이 워크스페이스를 터미널에서 보고 있다**(= 알림을 직접 확인했다).
+    /// `focused`(터미널 안에서 이 워크스페이스가 선택돼 있음) + 호스트 터미널 앱이 OS 최전면.
+    /// 알림을 클릭하지 않고 터미널에서 확인한 경우를 알아내는 유일한 신호다(`mark_seen`).
+    pub seen: bool,
 }
 
 /// AskUserQuestion 의 선택지 하나.
@@ -85,9 +89,15 @@ pub struct AskQuestion {
     pub header: String,
     pub question: String,
     pub options: Vec<AskOption>,
-    /// 질문이 막 뜬 시점의 기본 커서(항상 1번). 답변 시 이동량 계산에 쓴다.
+    /// 지금 터미널 화면에서 `❯` 가 가리키는 번호. **0 = 알 수 없음**(화면을 못 읽었거나
+    /// 마커가 안 보임). 0 을 1 로 대신 쓰면 안 된다 — 커서가 다른 곳에 있는데 1번에 있다고
+    /// 믿고 Enter 를 치면 **엉뚱한 선택지가 골라진다**.
     pub cursor: u32,
     pub multi_select: bool,
+    /// 이 앱 화면에서 바로 답할 수 있는가. 답변은 "커서를 옮기고 Enter" 이므로 특수키를
+    /// 보낼 수 있는 백엔드(herdr·cmux)이고 화면에서 커서를 읽어 확인할 수 있을 때만 참이다.
+    /// Orca CLI 에는 `terminal send --text` 뿐이라 방향키를 보낼 수단이 없다.
+    pub can_answer: bool,
 }
 
 /// 트레이 팝오버에 잠깐 표시되는 알림 한 개(입력 대기 진입/작업 완료).
@@ -328,6 +338,50 @@ fn herdr_bin() -> String {
         }
     }
     "herdr".into()
+}
+
+/// herdr 실행 파일 경로(PTY 터미널 뷰가 이 바이너리를 자식으로 띄운다).
+pub fn herdr_bin_path() -> String {
+    herdr_bin()
+}
+
+/// 터미널 뷰가 붙을 수 있는 세션 이름들. **조회에 실패하면 빈 목록**이다.
+///
+/// `running_sessions` 와 규칙이 다르고, 그게 의도다. 감시 루프는 `session list --json` 이
+/// 없는 옛 herdr 에서도 계속 돌아야 하므로 조회 실패를 `["default"]` 로 폴백하는데, 여기서
+/// 그러면 herdr 가 아예 없는 PC 에서도 "default" 가 목록에 뜨고 누르면 실패한다. 붙을 수
+/// 없는 이름을 보여 주는 것보다 "붙을 세션이 없다"고 말하는 편이 정확하다.
+#[tauri::command]
+pub fn herdr_attachable_sessions() -> Vec<String> {
+    let Some(v) = run_herdr(None, &["session", "list", "--json"]).ok() else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("sessions").and_then(|s| s.as_array()) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter(|s| s.get("running").and_then(|r| r.as_bool()).unwrap_or(false))
+        .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
+        .collect()
+}
+
+/// 워크스페이스를 **서버에서만** 선택한다(호스트 터미널 창을 앞으로 끌어오지 않는다).
+///
+/// `herdr_focus_workspace` 와 갈라 둔 이유: 터미널 뷰는 앱 안에서 그 워크스페이스를 보려고
+/// 부르는 것이라, 거기서 실제 터미널 앱까지 최전면으로 튀어나오면 트레이 앱에서 가장 하기
+/// 싫은 일(창이 갑자기 앞으로 나옴)을 하는 셈이 된다. 대신 herdr 의 화면은 클라이언트끼리
+/// 공유되므로(실측) 이 호출은 사용자의 실제 터미널이 보는 워크스페이스도 함께 옮긴다 —
+/// 뷰가 그 사실을 화면에 적어 둔다.
+#[tauri::command]
+pub fn herdr_select_workspace(session: String, workspace_id: String) -> Result<(), String> {
+    match route_of(&session) {
+        Route::Cmux => crate::cmux::focus_workspace(&workspace_id),
+        Route::Orca => crate::orca::focus_workspace(&workspace_id),
+        Route::Herdr => {
+            run_herdr(Some(&session), &["workspace", "focus", &workspace_id])?;
+            Ok(())
+        }
+    }
 }
 
 /// herdr 가 **없는** 상태(미설치 또는 데몬 미실행)를 뜻하는 오류 메시지의 접두사.
@@ -830,6 +884,8 @@ fn list_workspaces_in(session: &str) -> Result<Vec<HerdrWorkspace>, String> {
                 token_usage: info.tokens,
                 agent,
                 session: session.to_string(),
+                // 최전면 앱까지 봐야 정해지는 값이라 감시 루프(`mark_seen`)에서 채운다.
+                seen: false,
             })
         })
         .collect();
@@ -1020,9 +1076,9 @@ fn parse_terminal_question(pane_id: &str, text: &str) -> Option<AskQuestion> {
         return None;
     }
 
-    // 옵션 수집 + 커서.
+    // 옵션 수집 + 커서. 커서는 `❯` 를 실제로 본 경우에만 채운다(못 봤으면 0 = 모름).
     let mut options: Vec<AskOption> = Vec::new();
-    let mut cursor = 1u32;
+    let mut cursor = 0u32;
     let mut first_opt: Option<usize> = None;
     for (i, line) in window.iter().enumerate() {
         if let Some((is_cursor, number, label)) = parse_option_line(line) {
@@ -1085,6 +1141,7 @@ fn parse_terminal_question(pane_id: &str, text: &str) -> Option<AskQuestion> {
         options,
         cursor,
         multi_select,
+        can_answer: false, // read_question* 에서 백엔드까지 보고 정한다.
     })
 }
 
@@ -1142,8 +1199,10 @@ fn build_question(pane_id: &str, input: &Value) -> Option<AskQuestion> {
         header: q0.get("header").and_then(|x| x.as_str()).unwrap_or("").to_string(),
         question: q0.get("question").and_then(|x| x.as_str()).unwrap_or("").to_string(),
         options,
-        cursor: 1,
+        // 후크 파일에는 커서가 없다. 0 = 모름(화면을 읽어야 알 수 있다).
+        cursor: 0,
         multi_select: q0.get("multiSelect").and_then(|x| x.as_bool()).unwrap_or(false),
+        can_answer: false, // read_question* 에서 백엔드까지 보고 정한다.
     })
 }
 
@@ -1156,21 +1215,92 @@ fn read_hook_question(session_id: &str, pane_id: &str) -> Option<AskQuestion> {
     build_question(pane_id, v.get("tool_input")?)
 }
 
-/// 후크가 기록한 질문 파일(`~/.myspace/ask/<sid>.json`)이 있는지. 후크 blocking 중엔
+/// 대기가 끝났는데도 남아 있는 질문 파일을 지우기까지 두는 유예 시간.
+/// herdr 가 pane 을 blocked 로 바꾸는 데 한두 틱 걸릴 수 있어, 방금 쓰인 파일은 건드리지 않는다.
+const ASK_STALE_MS: u64 = 10_000;
+
+/// 후크가 기록한 질문 파일(`~/.myspace/ask/<sid>.json`)이 지금도 유효한지. 후크 blocking 중엔
 /// herdr 가 pane 을 아직 "blocked" 로 안 볼 수 있어(픽커 미표시), 이 파일 존재도 트리거로 쓴다.
-fn ask_file_exists(sid: &str) -> bool {
-    std::env::var("HOME")
-        .map(|h| std::path::Path::new(&format!("{h}/.myspace/ask/{sid}.json")).exists())
-        .unwrap_or(false)
+///
+/// **대기가 끝났는데(blocked 아님) 남아 있는 파일은 지운다.** 파일은 후크의 PostToolUse 가
+/// 지우는데 그게 못 도는 경우가 있고(Esc 취소, 세션 강제 종료), 그러면 그 세션이 살아 있는
+/// 동안 "입력 대기" 가 영원히 걸려 펫 알림이 사라지지 않는다.
+fn ask_file_pending(sid: &str, blocked: bool) -> bool {
+    let Ok(home) = std::env::var("HOME") else {
+        return false;
+    };
+    let path = PathBuf::from(format!("{home}/.myspace/ask/{sid}.json"));
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return false;
+    };
+    if blocked {
+        return true;
+    }
+    let age = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    if age < ASK_STALE_MS {
+        return true;
+    }
+    log::info!("ask 파일이 남아 있으나 대기 아님 → 삭제: {sid}.json (age={age}ms)");
+    let _ = std::fs::remove_file(&path);
+    false
 }
 
 /// 대기 중 질문을 읽는다. 후크 파일(정확한 JSON) 우선, 없으면 터미널 화면 파싱으로 폴백.
+///
+/// **후크 파일이 있으면 화면은 읽지 않는다.** 워처가 대기 중인 pane 마다 800ms 틱마다 부르는
+/// 경로라, 여기에 화면 읽기를 더하면 pane 하나당 소켓 호출이 매 틱 두 번이 된다. 화면에서만
+/// 알 수 있는 값(커서, Claude Code 가 붙이는 여분 선택지)이 필요한 쪽은
+/// [`read_question_full`] 을 쓴다 — 상세 패널이 열려 있을 때만 도는 경로다.
 fn read_question(session: &str, session_id: Option<&str>, pane_id: &str) -> Option<AskQuestion> {
     let mut q = session_id
         .and_then(|sid| read_hook_question(sid, pane_id))
         .or_else(|| read_terminal_question(session, pane_id))?;
     // focus 라우팅에 쓰도록 herdr 세션 이름을 채운다.
     q.session = session.to_string();
+    Some(q)
+}
+
+/// 대기 중 질문을 **화면까지 합쳐** 읽는다(상세 패널 = 화면에서 답하는 경로용).
+///
+/// 두 출처가 서로 다른 것을 알고 있어서 합친다. 후크 파일은 라벨·설명·preview 가 정확한
+/// 대신 커서를 모르고, Claude Code 가 목록 뒤에 스스로 붙이는 선택지(`Type something.` /
+/// `Chat about this`)도 들어 있지 않다 — 그건 도구 입력이 아니라 TUI 가 그리는 것이다.
+/// 터미널 화면은 그 둘을 알지만 라벨이 폭에 맞춰 잘려 있다. 그래서 **본문은 후크,
+/// 커서와 뒤쪽 여분 선택지는 화면**에서 취한다.
+fn read_question_full(
+    session: &str,
+    session_id: Option<&str>,
+    pane_id: &str,
+) -> Option<AskQuestion> {
+    let hook = session_id.and_then(|sid| read_hook_question(sid, pane_id));
+    let term = read_terminal_question(session, pane_id);
+    // 화면을 못 읽었으면 커서를 확인할 수 없으니 화면에서 답하게 두지 않는다(오답 방지).
+    let can_answer = term.as_ref().is_some_and(|t| t.cursor > 0)
+        && !matches!(route_of(session), Route::Orca);
+    let mut q = match (hook, term) {
+        (Some(mut h), Some(t)) => {
+            h.cursor = t.cursor;
+            // 화면 footer 에 "space" 가 있으면 다중 선택. 후크 값과 어긋나면 화면을 믿는다.
+            h.multi_select = t.multi_select;
+            // 후크 목록 뒤에 화면에만 있는 선택지가 있으면 잇는다(TUI 가 붙인 것).
+            for o in t.options.into_iter().skip(h.options.len()) {
+                h.options.push(AskOption {
+                    is_builtin: true,
+                    ..o
+                });
+            }
+            h
+        }
+        (Some(h), None) => h,
+        (None, t) => t?,
+    };
+    q.session = session.to_string();
+    q.can_answer = can_answer;
     Some(q)
 }
 
@@ -1206,29 +1336,75 @@ pub fn herdr_focus_workspace(session: String, workspace_id: String) -> Result<()
     Ok(())
 }
 
-/// 해당 pane 의 Claude 세션에 프롬프트를 입력·전송한다.
-/// `herdr pane run` 은 텍스트를 붙여넣고 Enter 까지 원자적으로 처리한다(작업 중이면 큐잉됨).
-#[tauri::command]
-pub fn herdr_send_prompt(session: String, pane_id: String, text: String) -> Result<(), String> {
-    if text.trim().is_empty() {
-        return Ok(());
-    }
-    match route_of(&session) {
-        Route::Cmux => return crate::cmux::send_prompt(&pane_id, &text),
-        Route::Orca => return crate::orca::send_prompt(&pane_id, &text),
-        Route::Herdr => {}
-    }
-    // run_herdr 는 JSON stdout 을 요구하는데 `pane run` 은 성공 시 출력이 없을 수 있어
-    // 오탐(에러)이 난다. 여기선 종료 상태만 확인한다.
+/// 본문을 넣고 Enter 를 치기까지 두는 간격.
+/// Claude Code 는 한꺼번에 몰려 들어온 입력을 붙여넣기로 묶어 처리하므로, 본문에 이어
+/// 곧바로 `\r` 이 오면 그 `\r` 까지 본문으로 빨려 들어간다. 한 박자 띄워 별개의 키 입력이
+/// 되게 한다.
+const PASTE_ENTER_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// JSON 응답을 쓰지 않는 herdr 명령을 실행하고 종료 상태만 확인한다.
+/// `pane send-text` 는 성공 시 stdout 이 비어 있어 `run_herdr` 로는 오탐이 나고,
+/// 실패는 stderr 가 아니라 stdout 의 JSON 으로 오는 경우가 있어 둘 다 본다.
+fn run_herdr_status(session: &str, args: &[&str]) -> Result<(), String> {
+    let mut full: Vec<&str> = vec!["--session", session];
+    full.extend_from_slice(args);
     let out = Command::new(herdr_bin())
-        .args(["--session", &session, "pane", "run", &pane_id, &text])
+        .args(&full)
         .output()
         .map_err(|e| format!("herdr 실행 실패: {e}"))?;
     if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        return Ok(());
     }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let msg = if stderr.trim().is_empty() {
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    } else {
+        stderr.into_owned()
+    };
+    Err(msg.trim().to_string())
+}
+
+/// 해당 pane 의 Claude 세션에 프롬프트를 입력·전송한다.
+///
+/// **`herdr pane run` 을 쓰지 않는다.** 그 명령이 실제로 pty 에 쓰는 바이트는 (실측)
+/// `줄1\n줄2\n줄3\r` 한 덩어리다. 그러면 끝의 `\r` 이 "전송"인지 "붙여넣은 본문의 마지막
+/// 개행"인지가 순전히 Claude Code 의 붙여넣기 묶기에 달리고, 실제로 본문 쪽으로 먹히는
+/// 경우가 있다 — 여러 줄 프롬프트가 입력창에 글자로만 남고 전송되지 않는 증상이 그것이다
+/// (payload 가 입력창에 줄바꿈 없이 이어 붙어 쌓인 화면으로 확인). 대신 cmux 경로가 이미
+/// 하던 대로 **본문과 Enter 를 따로** 보낸다: `pane send-text` 로 본문만 넣고,
+/// `PASTE_ENTER_DELAY` 뒤 `pane send-keys enter` 로 Enter 를 친다. 두 단계 모두 단독으로는
+/// 확실히 동작하는 것을 실측으로 확인했다(본문만 보내면 개행이 그대로 입력창의 줄바꿈이
+/// 되고, Enter 만 보내면 입력창 내용이 전송된다).
+///
+/// bracketed paste(`ESC[200~ … ESC[201~`)로 감싸는 쪽이 이론상 더 확실하지만 채택하지
+/// 않았다 — 실측에서 그 payload 가 통째로 삼켜져 **글자조차 들어가지 않는** 경우가 나왔고,
+/// 그건 지금 증상보다 나쁜 실패다.
+///
+/// 두 호출로 나뉘므로 첫 호출만 성공하면 텍스트만 들어간 채 남는데, 그때는 사용자가
+/// 터미널에서 Enter 만 치면 되므로 지우지 않고 오류만 올린다(cmux 쪽과 같은 판단).
+#[tauri::command]
+pub async fn herdr_send_prompt(
+    session: String,
+    pane_id: String,
+    text: String,
+) -> Result<(), String> {
+    // 본문과 Enter 사이를 쉬어야 해서 블로킹이다. 동기 커맨드는 메인 스레드에서 돌아
+    // 그동안 창 전체가 멈추므로 spawn_blocking 으로 뺀다.
+    tauri::async_runtime::spawn_blocking(move || {
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+        match route_of(&session) {
+            Route::Cmux => return crate::cmux::send_prompt(&pane_id, &text),
+            Route::Orca => return crate::orca::send_prompt(&pane_id, &text),
+            Route::Herdr => {}
+        }
+        run_herdr_status(&session, &["pane", "send-text", &pane_id, &text])?;
+        std::thread::sleep(PASTE_ENTER_DELAY);
+        run_herdr_status(&session, &["pane", "send-keys", &pane_id, "enter"])
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 특정 pane(workspace)의 최근 터미널 출력(주고받은 메시지)을 herdr 소켓으로 읽는다.
@@ -1242,25 +1418,158 @@ pub fn herdr_read_pane(
     read_pane_text(&session, &pane_id, lines.unwrap_or(200))
 }
 
-/// 특정 pane 의 대기 중 AskUserQuestion 을 조회한다(수동 새로고침용).
+/// 특정 pane 의 대기 중 AskUserQuestion 을 조회한다(상세 패널·수동 새로고침용).
+/// 화면까지 합쳐 읽으므로 커서와 TUI 가 붙인 여분 선택지도 함께 온다([`read_question_full`]).
 #[tauri::command]
 pub fn herdr_read_question(
     session: String,
     pane_id: String,
 ) -> Result<Option<AskQuestion>, String> {
-    let agents = list_agents()?;
-    // pane_id 는 세션 간 겹칠 수 있으므로 세션까지 일치하는 agent 로만 session_id 를 찾는다.
-    let sid = agents
-        .iter()
-        .find(|a| a.session == session && a.pane_id == pane_id)
-        .and_then(|a| a.session_id.clone());
-    Ok(read_question(&session, sid.as_deref(), &pane_id))
+    let sid = session_id_of(&session, &pane_id)?;
+    Ok(read_question_full(&session, sid.as_deref(), &pane_id))
 }
 
-/// herdr 를 실행 중인 "호스트 터미널 앱(.app)"을 프로세스 조상에서 동적으로 찾는다.
-/// (예: Kaku, Ghostty, iTerm2, Terminal … 하드코딩하지 않고 감지)
+/// pane 이 돌리고 있는 Claude 세션 id(= 트랜스크립트 파일명).
+/// pane_id 는 herdr 세션 간 겹칠 수 있으므로 세션까지 일치하는 agent 로만 찾는다.
+fn session_id_of(session: &str, pane_id: &str) -> Result<Option<String>, String> {
+    Ok(list_agents()?
+        .iter()
+        .find(|a| a.session == session && a.pane_id == pane_id)
+        .and_then(|a| a.session_id.clone()))
+}
+
+// ── 화면에서 선택지 답하기 ──
+//
+// 터미널의 선택 폼은 "커서를 옮기고 Enter" 로만 답할 수 있어서, 앱에서 답한다는 것은
+// **방향키와 Enter 를 보낸다**는 뜻이다. 번호키(`1`/`2`)를 눌러 곧바로 고르는 길이 더 짧아
+// 보이지만 쓰지 않는다 — 그 프롬프트가 번호 단축키를 받는지는 Claude Code 의 폼 구현에
+// 달렸고, 받지 않으면 숫자는 조용히 무시된 뒤 이어지는 Enter 가 **커서가 있던 엉뚱한
+// 선택지**를 확정한다. 방향키 경로는 매 단계 화면을 다시 읽어 커서가 목표 번호에 닿았는지
+// 확인할 수 있고, 확인되지 않으면 Enter 를 치지 않고 그만둔다. 잘못 고르는 것보다 못 고르는
+// 편이 낫다는 판단이다.
+
+/// 키를 보낸 뒤 화면이 다시 그려지기를 기다리는 간격.
+const KEY_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// 커서 이동 시도의 상한. 한 번에 **한 칸씩만** 옮기므로 선택지 수보다 넉넉해야 한다.
+const CURSOR_STEPS: u32 = 32;
+
+/// 커서가 이만큼 연속으로 안 움직이면 그만둔다(목록 끝에 닿았거나 키가 안 먹는 화면).
+/// 1 로 두면 안 된다 — 아래 사정 때문에 키 하나는 그냥 씹힐 수 있다.
+const CURSOR_STUCK_LIMIT: u32 = 3;
+
+/// Orca 안내문. `terminal send --text` 뿐이라 방향키를 보낼 수단이 없다.
+const ORCA_NO_KEYS: &str =
+    "Orca 는 터미널에 특수키를 보낼 수 없어 화면에서 선택할 수 없습니다. 터미널에서 선택하세요.";
+
+/// pane 에 특수키를 순서대로 보낸다.
+fn send_keys(session: &str, pane_id: &str, keys: &[&str]) -> Result<(), String> {
+    match route_of(session) {
+        Route::Cmux => crate::cmux::send_keys(pane_id, keys),
+        Route::Orca => Err(ORCA_NO_KEYS.to_string()),
+        Route::Herdr => {
+            let mut args: Vec<&str> = vec!["pane", "send-keys", pane_id];
+            args.extend_from_slice(keys);
+            run_herdr_status(session, &args)
+        }
+    }
+}
+
+/// 지금 화면의 선택 폼을 읽는다. 폼이 없으면(이미 답했거나 다른 화면) 에러.
+fn require_form(session: &str, pane_id: &str) -> Result<AskQuestion, String> {
+    read_terminal_question(session, pane_id)
+        .filter(|q| q.cursor > 0)
+        .ok_or_else(|| {
+            "터미널 화면에서 선택 폼을 찾지 못했습니다. 터미널에서 직접 선택하세요.".to_string()
+        })
+}
+
+/// 커서를 `target` 번 선택지로 옮긴다. **옮겼는지 화면으로 확인한 뒤에만** Ok 를 준다.
+///
+/// **한 번에 한 칸씩 보내고 매번 화면을 다시 읽는다.** 필요한 만큼을 한 호출에 몰아
+/// (`pane send-keys <pane> up up up`) 보내는 쪽이 짧지만, 실측에서 세 개 중 **하나만** 먹힌
+/// 경우가 나왔다(4번 → `up up up` → 3번). 두 개는 먹히기도 해서 오히려 더 나쁘다 — 되는지
+/// 안 되는지가 타이밍에 달렸다는 뜻이고, 그러면 "몇 칸 갔는지"를 계산으로 알 수 없다.
+/// 연달아 들어온 입력을 Claude Code 가 한 덩어리로 묶는 사정은 `PASTE_ENTER_DELAY` 와 같다.
+fn move_cursor(session: &str, pane_id: &str, target: u32) -> Result<(), String> {
+    let mut last = 0u32;
+    let mut stuck = 0u32;
+    for _ in 0..CURSOR_STEPS {
+        let q = require_form(session, pane_id)?;
+        if q.cursor == target {
+            return Ok(());
+        }
+        // 한 칸도 안 움직였으면 씹힌 것일 수도, 정말 막힌 것일 수도 있다. 몇 번 더 밀어 본다.
+        stuck = if q.cursor == last { stuck + 1 } else { 0 };
+        if stuck >= CURSOR_STUCK_LIMIT {
+            break;
+        }
+        last = q.cursor;
+        let key = if q.cursor < target { "down" } else { "up" };
+        send_keys(session, pane_id, &[key])?;
+        std::thread::sleep(KEY_SETTLE);
+    }
+    Err(format!(
+        "커서를 {target}번 선택지로 옮기지 못했습니다. 터미널에서 직접 선택하세요."
+    ))
+}
+
+/// 화면의 선택 폼에 답한다. `numbers` 는 고를 선택지 번호(1-base).
+fn answer_question(session: &str, pane_id: &str, numbers: &[u32]) -> Result<(), String> {
+    if numbers.is_empty() {
+        return Err("고른 선택지가 없습니다.".to_string());
+    }
+    if matches!(route_of(session), Route::Orca) {
+        return Err(ORCA_NO_KEYS.to_string());
+    }
+    let form = require_form(session, pane_id)?;
+    if !form.multi_select && numbers.len() > 1 {
+        return Err("이 질문은 하나만 고를 수 있습니다.".to_string());
+    }
+    // 화면에 있는 번호인지 먼저 다 확인한다 — 절반만 누른 상태로 실패하지 않도록.
+    let last = form.options.iter().map(|o| o.number).max().unwrap_or(0);
+    for n in numbers {
+        if *n < 1 || *n > last {
+            return Err(format!(
+                "{n}번 선택지가 화면에 없습니다. 새로고침 후 다시 시도하세요."
+            ));
+        }
+    }
+    for n in numbers {
+        move_cursor(session, pane_id, *n)?;
+        // 다중 선택은 space 로 하나씩 토글하고, 확정은 맨 끝의 Enter 한 번이다.
+        if form.multi_select {
+            send_keys(session, pane_id, &["space"])?;
+            std::thread::sleep(KEY_SETTLE);
+        }
+    }
+    // 확정 Enter 는 앞의 키와 한 박자 띄운다. 붙여 보낸 키가 한 덩어리로 묶여 일부만 먹히는
+    // 것을 `move_cursor` 에서 실측했는데, 하필 Enter 가 그렇게 되면 아무것도 확정되지 않는다.
+    std::thread::sleep(KEY_SETTLE);
+    send_keys(session, pane_id, &["enter"])
+}
+
+/// 대기 중인 선택 폼에 앱 화면에서 답한다(커서 이동 + Enter).
+#[tauri::command]
+pub async fn herdr_answer_question(
+    session: String,
+    pane_id: String,
+    numbers: Vec<u32>,
+) -> Result<(), String> {
+    // 화면을 여러 번 읽고 그 사이 쉬어야 해서 블로킹이다. 동기 커맨드는 메인 스레드에서
+    // 돌아 그동안 창 전체가 멈추므로 spawn_blocking 으로 뺀다(`herdr_send_prompt` 와 같다).
+    tauri::async_runtime::spawn_blocking(move || answer_question(&session, &pane_id, &numbers))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// herdr 를 실행 중인 호스트 터미널의 **번들 이름**(예: `"Kaku.app"`).
+/// `open -a` 에 넘길 이름은 `.app` 을 뗀 값이라 `detect_terminal_app` 이 그 형태로 감싼다.
+///
+/// 번들 이름을 따로 두는 이유는 최전면 앱 비교(`mark_seen`)에 쓰기 때문이다 —
+/// LaunchServices 의 표시 이름(`LSDisplayName`)은 번들 이름과 다를 수 있다(iTerm.app → "iTerm2").
 #[cfg(target_os = "macos")]
-fn detect_terminal_app() -> Option<String> {
+fn detect_terminal_bundle() -> Option<String> {
     let out = Command::new("ps").args(["-axo", "pid=,ppid=,comm="]).output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     let procs: Vec<(i32, i32, String)> = text
@@ -1284,13 +1593,111 @@ fn detect_terminal_app() -> Option<String> {
             break;
         };
         if let Some(app) = comm.split('/').find(|s| s.ends_with(".app")) {
-            return Some(app.trim_end_matches(".app").to_string());
+            return Some(app.to_string());
         }
         if ppid <= 1 {
             break;
         }
         cur = ppid;
     }
+    None
+}
+
+/// `open -a` 에 넘길 호스트 터미널 앱 이름(`.app` 없는 형태).
+#[cfg(target_os = "macos")]
+fn detect_terminal_app() -> Option<String> {
+    detect_terminal_bundle().map(|b| b.trim_end_matches(".app").to_string())
+}
+
+// ─────────────── "사용자가 터미널에서 직접 확인했다" 판정 ───────────────
+//
+// 알림을 클릭해 이동하면 그 자리에서 확인 처리가 되지만, 사용자가 그냥 터미널로 가서
+// 결과를 보는 것이 더 흔하다. 그때 알림을 그대로 두면 "항상 표시"(noticeSeconds=0)에서
+// 완료 카드가 영원히 남고 펫도 계속 떠 있다. 그래서 "지금 그 워크스페이스를 보고 있다"를
+// 신호로 삼아 알림을 스스로 걷는다.
+//
+// 그 신호는 **두 조건의 곱**이다:
+//   (1) 터미널 안에서 그 워크스페이스가 focused — herdr·cmux 가 목록으로 내준다.
+//   (2) 그 터미널 앱이 OS 최전면 — 이게 없으면 "터미널을 그 워크스페이스에 켜 둔 채 다른
+//       앱에서 일하는" 가장 흔한 상황이 "보고 있다"로 오판돼 알림이 뜨지도 않고 사라진다.
+// 둘 중 하나만으로는 못 쓴다는 것이 이 판정의 핵심이다.
+
+/// 지금 시각(ms). 캐시 만료·파일 신선도 판단용.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// `detect_terminal_bundle()` 캐시 `(만료 시각 ms, 번들 이름)`. 프로세스 트리를 훑는
+/// (`ps -axo`) 호출이라 매 폴링(800ms)마다 하면 비싸고, 호스트 터미널은 거의 바뀌지 않는다.
+#[cfg(target_os = "macos")]
+static TERMINAL_BUNDLE: Mutex<Option<(u64, Option<String>)>> = Mutex::new(None);
+
+/// 터미널 감지 캐시 유지 시간.
+#[cfg(target_os = "macos")]
+const TERMINAL_BUNDLE_TTL_MS: u64 = 30_000;
+
+/// 지금 OS 최전면인 앱의 번들 이름(예: `"Kaku.app"`). LaunchServices 에 묻는다.
+///
+/// `lsappinfo` 를 쓰는 이유: 권한이 필요 없고(손쉬운 사용·자동화 프롬프트 없음) 한 번에 ~8ms 로
+/// 끝난다. AppleScript(System Events)는 손쉬운 사용 권한이 필요해 조용히 실패할 수 있다.
+#[cfg(target_os = "macos")]
+fn frontmost_app_bundle() -> Option<String> {
+    let asn = Command::new("lsappinfo").arg("front").output().ok()?;
+    let asn = String::from_utf8_lossy(&asn.stdout).trim().to_string();
+    if asn.is_empty() {
+        return None;
+    }
+    let out = Command::new("lsappinfo")
+        .args(["info", "-only", "bundlepath", &asn])
+        .output()
+        .ok()?;
+    bundle_name_from_lsappinfo(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// `lsappinfo info -only bundlepath` 출력에서 번들 이름만 뽑는다.
+/// 출력은 `"LSBundlePath"="/Applications/Kaku.app"` 한 줄이고, 첫 `=` 뒤가 값이다
+/// (앱 이름에 `=` 가 들어가도 잘리지 않게 뒤에서 자르지 않는다).
+fn bundle_name_from_lsappinfo(text: &str) -> Option<String> {
+    let path = text.split_once('=')?.1.trim().trim_matches('"');
+    let bundle = path.trim_end_matches('/').rsplit('/').next()?;
+    bundle.ends_with(".app").then(|| bundle.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn frontmost_app_bundle() -> Option<String> {
+    None
+}
+
+/// 그 세션을 담고 있는 터미널 앱의 번들 이름. herdr 은 프로세스 조상에서 찾고(캐시),
+/// cmux·Orca 는 앱이 하나로 정해져 있다.
+#[cfg(target_os = "macos")]
+fn terminal_bundle_for(session: &str) -> Option<String> {
+    match route_of(session) {
+        Route::Cmux => Some("cmux.app".to_string()),
+        Route::Orca => Some("Orca.app".to_string()),
+        Route::Herdr => {
+            let now = now_ms();
+            if let Ok(g) = TERMINAL_BUNDLE.lock() {
+                if let Some((until, cached)) = g.as_ref() {
+                    if now < *until {
+                        return cached.clone();
+                    }
+                }
+            }
+            let found = detect_terminal_bundle();
+            if let Ok(mut g) = TERMINAL_BUNDLE.lock() {
+                *g = Some((now + TERMINAL_BUNDLE_TTL_MS, found.clone()));
+            }
+            found
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn terminal_bundle_for(_session: &str) -> Option<String> {
     None
 }
 
@@ -1616,6 +2023,72 @@ pub fn watch_disabled() -> bool {
     watch_disabled_flag().map(|p| p.exists()).unwrap_or(false)
 }
 
+/// 각 워크스페이스에 "사용자가 지금 터미널에서 보고 있다"(`seen`)를 채운다.
+///
+/// 후보는 **focused 이고 진행 중이 아닌** 워크스페이스뿐이다. 두 가지를 다 만족해야 한다:
+///  - 진행 중(`working`)은 알릴 것이 생기기 전이라 볼 필요가 없다. 대부분의 시간이 이 상태라,
+///    이 조건 하나로 최전면 앱 조회(프로세스 2개)를 평소에는 아예 하지 않는다.
+///  - 반대로 후보를 "알림이 이미 걸린 워크스페이스" 로 좁히면 안 된다. 알림은 상태가 바뀐
+///    **직후에** 만들어지므로(claude-notifier), 그 판단에 쓰이려면 `seen` 이 알림보다 먼저
+///    정해져 있어야 한다. 좁히면 완료 알림이 만들어졌다가 다음 틱에 철회돼 카드가 번쩍인다.
+fn mark_seen(list: &mut [HerdrWorkspace]) {
+    let candidate = |w: &HerdrWorkspace| w.focused && w.agent_status != "working";
+    if !list.iter().any(|w| candidate(w)) {
+        return;
+    }
+    let Some(front) = frontmost_app_bundle() else {
+        return;
+    };
+    for w in list.iter_mut() {
+        if !candidate(w) {
+            continue;
+        }
+        w.seen = terminal_bundle_for(&w.session).is_some_and(|t| t.eq_ignore_ascii_case(&front));
+    }
+}
+
+/// 사용자가 터미널에서 직접 확인한 알림을 목록에서 뺀다. "확인" 은 두 가지다:
+///  - 지금 그 워크스페이스를 터미널에서 보고 있다(`seen`).
+///  - 그 워크스페이스가 사라졌다 — 탭/터미널을 닫았다는 뜻이라 알릴 대상이 없다.
+///
+/// 사라짐 판정은 **같은 백엔드의 워크스페이스가 하나라도 보일 때만** 한다. 목록은 백엔드별로
+/// 따로 읽고 실패하면 빈 목록으로 넘어오므로(`list_workspaces`), 그 구분이 없으면 herdr CLI 가
+/// 한 번 실패한 틱에 herdr 쪽 알림이 전부 지워진다.
+///
+/// 완료 알림은 만료가 없어(`herdr_notify`) 여기서 빼지 않으면 "항상 표시"에서 영원히 남는다.
+fn withdraw_seen_notices(app: &tauri::AppHandle, list: &[HerdrWorkspace]) {
+    let Some(state) = app.try_state::<Notices>() else {
+        return;
+    };
+    let Ok(mut g) = state.list.lock() else {
+        return;
+    };
+    if g.is_empty() {
+        return;
+    }
+    let before = g.len();
+    g.retain(|(n, _)| {
+        match list
+            .iter()
+            .find(|w| w.session == n.session && w.workspace_id == n.workspace_id)
+        {
+            Some(w) => !w.seen,
+            None => !list.iter().any(|w| route_of(&w.session) == route_of(&n.session)),
+        }
+    });
+    if g.len() != before {
+        log::info!("터미널에서 확인한 알림 {} 개 철회", before - g.len());
+    }
+}
+
+/// 이 pane 이 "사용자가 보고 있는" 워크스페이스에 속하는지. `pane_id` 는 어느 백엔드에서도
+/// `"<workspace_id>:…"` 로 시작한다(프론트 `paneOf` 와 같은 규칙).
+fn pane_is_seen(list: &[HerdrWorkspace], session: &str, pane_id: &str) -> bool {
+    list.iter().any(|w| {
+        w.seen && w.session == session && pane_id.starts_with(&format!("{}:", w.workspace_id))
+    })
+}
+
 /// blocked 감시를 시작한다. 이미 돌고 있으면 아무 것도 하지 않는다.
 #[tauri::command]
 pub fn herdr_start_watch(app: tauri::AppHandle) {
@@ -1655,7 +2128,13 @@ pub fn herdr_start_watch(app: tauri::AppHandle) {
             }
 
             // 작업 진행 현황(워크스페이스 label + 상태)도 함께 방출.
-            if let Ok(ws) = list_workspaces() {
+            // 방출 전에 "사용자가 터미널에서 보고 있는" 워크스페이스를 표시하고(mark_seen),
+            // 그렇게 확인된 알림을 걷는다 — 아래 알림 정리·표시 판단이 그 결과를 보게 된다.
+            let mut seen_ws: Vec<HerdrWorkspace> = Vec::new();
+            if let Ok(mut ws) = list_workspaces() {
+                mark_seen(&mut ws);
+                withdraw_seen_notices(&app, &ws);
+                seen_ws = ws.iter().filter(|w| w.seen).cloned().collect();
                 let _ = app.emit("herdr:workspaces", ws);
             }
 
@@ -1664,10 +2143,17 @@ pub fn herdr_start_watch(app: tauri::AppHandle) {
                 // pane_id 는 세션 간 겹칠 수 있으므로 "<session>\0<pane_id>" 로 식별한다.
                 let pane_key = |a: &HerdrAgent| format!("{}\0{}", a.session, a.pane_id);
                 // 대기 여부 = 후크 ask 파일 존재 OR herdr blocked.
+                // 단, 사용자가 그 pane 을 지금 터미널에서 보고 있으면 알릴 이유가 없다 —
+                // 화면에 질문이 떠 있는 것을 직접 보고 있으므로 펫이 같은 말을 얹지 않는다
+                // (다른 앱으로 옮겨 가면 다시 후보가 되어 대기 알림이 살아난다).
                 let pending_now: HashSet<String> = agents
                     .iter()
+                    .filter(|a| !pane_is_seen(&seen_ws, &a.session, &a.pane_id))
                     .filter(|a| {
-                        a.session_id.as_deref().map(ask_file_exists).unwrap_or(false)
+                        a.session_id
+                            .as_deref()
+                            .map(|sid| ask_file_pending(sid, a.agent_status == "blocked"))
+                            .unwrap_or(false)
                             || a.agent_status == "blocked"
                     })
                     .map(pane_key)
@@ -1819,6 +2305,56 @@ mod tests {
         assert_eq!(sessions_from(Some(&serde_json::json!({}))), vec!["default"]);
     }
 
+    /// 워크스페이스 하나를 만든다(테스트용 최소 필드).
+    fn ws(session: &str, id: &str, seen: bool) -> HerdrWorkspace {
+        HerdrWorkspace {
+            workspace_id: id.to_string(),
+            label: id.to_string(),
+            agent_status: "blocked".to_string(),
+            focused: seen,
+            pane_count: 1,
+            last_prompt: None,
+            last_prompt_at: None,
+            recap: None,
+            token_usage: None,
+            agent: None,
+            session: session.to_string(),
+            seen,
+        }
+    }
+
+    /// pane → "보고 있는 워크스페이스" 판정. 접두사 매칭이 `":"` 까지 요구해야 `w1` 이
+    /// `w11:p1` 을 삼키지 않고, 세션이 다르면 id 가 같아도 남의 pane 이다.
+    #[test]
+    fn matches_seen_panes_by_workspace_prefix() {
+        let list = vec![ws("default", "w1", true), ws("work", "w2", false)];
+
+        assert!(pane_is_seen(&list, "default", "w1:p1"));
+        // 같은 id 로 시작하지만 다른 워크스페이스(w11)다.
+        assert!(!pane_is_seen(&list, "default", "w11:p1"));
+        // 세션이 다르면 남의 워크스페이스다(id 는 세션 간 겹친다).
+        assert!(!pane_is_seen(&list, "work", "w1:p1"));
+        // seen 이 아닌 워크스페이스는 대상이 아니다.
+        assert!(!pane_is_seen(&list, "work", "w2:p1"));
+    }
+
+    /// `lsappinfo info -only bundlepath` 출력 파싱. 값에 `=` 가 들어가도 잘리지 않아야 하고,
+    /// 번들이 아닌 응답(빈 출력·이름만 있는 줄)은 최전면 판정을 하지 않도록 None 이어야 한다.
+    #[test]
+    fn reads_frontmost_bundle_name() {
+        assert_eq!(
+            bundle_name_from_lsappinfo("\"LSBundlePath\"=\"/Applications/Kaku.app\"\n").as_deref(),
+            Some("Kaku.app")
+        );
+        assert_eq!(
+            bundle_name_from_lsappinfo("\"LSBundlePath\"=\"/Applications/My=App.app/\"")
+                .as_deref(),
+            Some("My=App.app")
+        );
+        assert_eq!(bundle_name_from_lsappinfo(""), None);
+        assert_eq!(bundle_name_from_lsappinfo("\"LSDisplayName\"=\"Kaku\""), None);
+    }
+
     /// herdr 부재는 정상 상태라 로그를 낮춰야 한다 — 그 판단은 `ABSENT` 접두사로만 한다
     /// (문구로 판단하면 메시지를 다듬는 순간 조용히 깨진다).
     #[test]
@@ -1827,5 +2363,83 @@ mod tests {
         assert!(is_absent(&format!("{ABSENT}(실행 파일 미설치)")));
         assert!(!is_absent("herdr JSON 파싱 실패: expected value"));
         assert!(!is_absent("herdr 응답 없음: usage: herdr ..."));
+    }
+
+    /// 실제 pane 화면(`herdr pane read`)을 그대로 붙인 선택 폼. 들여쓰기·설명 줄바꿈·구분선까지
+    /// 화면에서 온 모양이다.
+    const REAL_FORM: &str = "\
+⏺ 수정이 끝났습니다. 실제 링크 클릭까지 확인하려면 앱을 띄워야 합니다.
+────────────────────────────────────────────────────────────────
+ ☐ 동작 확인
+
+수정한 동작(브라우징 탭에서 새 창 링크 클릭 → Chrome 새 창)을 지금 실제로 확인해볼까요?
+
+❯ 1. 직접 확인하겠음
+     제가 다음에 앱을 빌드/실행할 때 직접 링크를 눌러 확인합니다.
+  2. dev 모드로 띄워 로그 확인
+     `bun run tauri dev`로 개발 창을 띄우고 링크를 클릭해 주세요.
+  3. Type something.
+────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+
+    /// 화면에서 읽어야 하는 것 세 가지: 선택지 번호·라벨, 지금 커서, 그리고 TUI 가 목록 뒤에
+    /// 스스로 붙인 선택지(`Type something.` / `Chat about this`) — 후크 파일에는 없는 것들이다.
+    #[test]
+    fn parses_the_selection_form_off_a_real_pane_screen() {
+        let q = parse_terminal_question("w5:p1", REAL_FORM).expect("폼을 찾아야 한다");
+        assert_eq!(q.header, "동작 확인");
+        assert_eq!(q.cursor, 1);
+        assert!(!q.multi_select);
+        let numbers: Vec<u32> = q.options.iter().map(|o| o.number).collect();
+        assert_eq!(numbers, vec![1, 2, 3, 4]);
+        assert_eq!(q.options[0].label, "직접 확인하겠음");
+        assert_eq!(q.options[3].label, "Chat about this");
+    }
+
+    /// **커서를 못 찾았으면 0 이어야 한다.** 여기서 1 로 대신 채우면, 커서가 3번에 있는데
+    /// 1번을 고른다고 믿고 곧바로 Enter 를 쳐 **엉뚱한 선택지가 확정된다**. `require_form` 이
+    /// 0 을 거르는 것도 이 값이 "모름"을 말해 주기 때문이다.
+    #[test]
+    fn reports_unknown_cursor_as_zero_not_one() {
+        let no_marker = REAL_FORM.replace('❯', " ");
+        let q = parse_terminal_question("w5:p1", &no_marker).expect("폼 자체는 찾아야 한다");
+        assert_eq!(q.cursor, 0);
+
+        // 커서가 아래로 내려간 화면은 그 번호를 그대로 읽어야 한다(이동량 계산의 기준).
+        let moved = REAL_FORM.replace("❯ 1.", "  1.").replace("  2.", "❯ 2.");
+        let q2 = parse_terminal_question("w5:p1", &moved).expect("폼을 찾아야 한다");
+        assert_eq!(q2.cursor, 2);
+    }
+
+    /// 살아 있는 pane 에 대고 "읽기 → 키 전송 → 다시 읽어 확인" 한 바퀴를 돈다. **Enter 는
+    /// 치지 않으므로 아무것도 선택되지 않고**, 커서는 원래 자리로 되돌려 놓는다.
+    ///
+    /// 자동으로 돌 수 없어 `#[ignore]` 다 — 지금 선택 폼이 떠 있는 herdr pane 이 필요하다.
+    /// ```sh
+    /// ANSWER_PANE=w5:p1 cargo test --lib moves_the_cursor_on_a_live_pane -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore]
+    fn moves_the_cursor_on_a_live_pane() {
+        let pane = std::env::var("ANSWER_PANE").expect("ANSWER_PANE=<pane_id> 를 지정하세요");
+        let session = std::env::var("ANSWER_SESSION").unwrap_or_else(|_| "default".into());
+
+        let before = require_form(&session, &pane).expect("선택 폼이 떠 있어야 한다");
+        println!("커서 {} / 선택지 {}개", before.cursor, before.options.len());
+        assert!(before.options.len() >= 2, "선택지가 2개 이상인 질문이어야 한다");
+
+        let other = if before.cursor == 1 { 2 } else { 1 };
+        move_cursor(&session, &pane, other).expect("커서를 옮겨야 한다");
+        assert_eq!(require_form(&session, &pane).unwrap().cursor, other);
+
+        // 원위치. 여기까지 Enter 를 친 적이 없으므로 화면은 처음 그대로다.
+        move_cursor(&session, &pane, before.cursor).expect("커서를 되돌려야 한다");
+        assert_eq!(
+            require_form(&session, &pane).unwrap().cursor,
+            before.cursor
+        );
     }
 }

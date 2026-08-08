@@ -10,6 +10,10 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { SETTINGS_ID, useOpenTabs } from "@/lib/use-open-tabs"
 import { NavigationProvider } from "@/lib/navigation-store"
 import { PinnedMenusProvider } from "@/lib/pinned-menus-store"
+import { DevDarkProvider } from "@/features/cowork-dev/dev-dark-store"
+import { DbConnectionsProvider } from "@/features/db-viewer/db-connections-store"
+import { EsConnProvider } from "@/features/es-viewer/es-conn-store"
+import { KafkaConnProvider } from "@/features/kafka-viewer/kafka-conn-store"
 import { ReminderProvider } from "@/features/reminder/reminder-store"
 import { SlackProvider } from "@/features/slack/slack-store"
 import { GmailProvider } from "@/features/gmail/gmail-store"
@@ -105,63 +109,83 @@ export default function App() {
                           둘을 감싸는 자리에서 공급한다(같은 창의 useLocalStorage 끼리는
                           서로의 변경을 통보받지 못한다). */}
                       <PinnedMenusProvider>
-                        <div className="flex h-svh flex-col overflow-hidden bg-ui-chrome">
-                          <TitleBar
-                            onToggleSidebar={() => setCollapsed((v) => !v)}
-                          />
-                          <div className="flex min-h-0 min-w-0 flex-1">
-                            <ActivityBar
-                              onOpenSettings={() => open(SETTINGS_ID)}
-                              settingsActive={isSettings}
-                              activeId={activeId}
-                              onSelectMenu={open}
-                            />
-                            {!collapsed && (
-                              <SideBar
-                                activeId={activeId}
-                                onSelectMenu={open}
-                              />
-                            )}
-                            {/* 에디터 영역 — 탭 바 + 뷰 헤더 + 활성 뷰.
-                        사이드바가 접혀 있으면 이쪽이 좌상단 라운드를 대신 맡는다. */}
-                            <div
-                              className={cn(
-                                "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
-                                collapsed &&
-                                  "rounded-tl-[var(--ui-panel-radius)]"
-                              )}
-                            >
-                              <TabBar
-                                openIds={openIds}
-                                activeId={activeId}
-                                onSelect={setActive}
-                                onClose={close}
-                                onCloseAll={closeAll}
-                                onMove={move}
-                              />
-                              {/* 열린 탭들을 겹쳐 두고 활성 탭만 보인다. display:none 대신
-                          visibility 로 감춰야 숨은 탭의 스크롤 위치가 유지된다. */}
-                              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-                                {nextMounted.map((id) => (
-                                  <TabActiveProvider
-                                    key={id}
-                                    active={id === activeId}
-                                  >
+                        {/* 저장해 둔 DB 접속 목록. 데이터베이스 뷰어와 IntelliJ Cowork 이
+                            같은 목록을 보므로(둘 다 탭으로 살아 있다) 한 군데서 공급한다 —
+                            각자 useLocalStorage 로 읽으면 서로의 추가·삭제를 덮어쓴다. */}
+                        <DbConnectionsProvider>
+                          {/* ES·Kafka 접속 정보. DB 와 달리 설정이 화면마다 하나가 아니라
+                              **전체에 하나**라(목록도 id 도 없다) 두 화면이 같은 값을 본다 —
+                              사본을 주면 뷰어에서 맞춘 클러스터를 IntelliJ Cowork 이 안 보고 있는
+                              이유를 설명할 방법이 없다. 컨텍스트로 두는 이유는 DB 와 같다. */}
+                          <EsConnProvider>
+                            <KafkaConnProvider>
+                              {/* "IntelliJ Cowork 화면만 다크" 선택. 토글은 뷰 헤더(탭 바)에
+                                  있고 `dark` 클래스는 그 뷰가 붙이므로 둘이 같은 값을
+                                  봐야 한다 — 그래서 탭 바와 뷰를 **함께** 감싼다. */}
+                              <DevDarkProvider>
+                                <div className="flex h-svh flex-col overflow-hidden bg-ui-chrome">
+                                  <TitleBar
+                                    onToggleSidebar={() =>
+                                      setCollapsed((v) => !v)
+                                    }
+                                  />
+                                  <div className="flex min-h-0 min-w-0 flex-1">
+                                    <ActivityBar
+                                      onOpenSettings={() => open(SETTINGS_ID)}
+                                      settingsActive={isSettings}
+                                      activeId={activeId}
+                                      onSelectMenu={open}
+                                    />
+                                    {!collapsed && (
+                                      <SideBar
+                                        activeId={activeId}
+                                        onSelectMenu={open}
+                                      />
+                                    )}
+                                    {/* 에디터 영역 — 탭 바 + 뷰 헤더 + 활성 뷰.
+                              사이드바가 접혀 있으면 이쪽이 좌상단 라운드를 대신 맡는다. */}
                                     <div
                                       className={cn(
-                                        "absolute inset-0 flex flex-col overflow-x-hidden overflow-y-auto p-5",
-                                        id !== activeId && "invisible"
+                                        "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
+                                        collapsed &&
+                                          "rounded-tl-[var(--ui-panel-radius)]"
                                       )}
                                     >
-                                      {viewElement(id)}
+                                      <TabBar
+                                        openIds={openIds}
+                                        activeId={activeId}
+                                        onSelect={setActive}
+                                        onClose={close}
+                                        onCloseAll={closeAll}
+                                        onMove={move}
+                                      />
+                                      {/* 열린 탭들을 겹쳐 두고 활성 탭만 보인다. display:none 대신
+                                visibility 로 감춰야 숨은 탭의 스크롤 위치가 유지된다. */}
+                                      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+                                        {nextMounted.map((id) => (
+                                          <TabActiveProvider
+                                            key={id}
+                                            active={id === activeId}
+                                          >
+                                            <div
+                                              className={cn(
+                                                "absolute inset-0 flex flex-col overflow-x-hidden overflow-y-auto p-5",
+                                                id !== activeId && "invisible"
+                                              )}
+                                            >
+                                              {viewElement(id)}
+                                            </div>
+                                          </TabActiveProvider>
+                                        ))}
+                                      </div>
                                     </div>
-                                  </TabActiveProvider>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                          <StatusBar onOpen={open} />
-                        </div>
+                                  </div>
+                                  <StatusBar onOpen={open} />
+                                </div>
+                              </DevDarkProvider>
+                            </KafkaConnProvider>
+                          </EsConnProvider>
+                        </DbConnectionsProvider>
                       </PinnedMenusProvider>
                     </LoginGate>
                   </NavigationProvider>

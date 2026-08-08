@@ -3,10 +3,10 @@ import { useEffect, useRef } from "react"
 import { trackedInvoke } from "@/lib/tauri"
 import { isMainWindow } from "@/lib/window-role"
 import { useSettings } from "@/features/settings/settings-context"
-import { useSlack } from "@/features/slack/use-slack"
+import { useSlack, type ChannelUnread } from "@/features/slack/use-slack"
 import { useGmail, matchesInterest } from "@/features/gmail/use-gmail"
 import type { CalendarEvent } from "@/features/gcal/use-gcal"
-import { notifyPet, type AppNotice } from "./pet-notify"
+import { notifyPet, dismissPetNotice, type AppNotice } from "./pet-notify"
 
 /*
  * Gmail 새 메일 · Slack 새 메시지 · 캘린더 일정을 펫 말풍선 알림으로 바꾸는 무표시 컴포넌트.
@@ -130,15 +130,71 @@ function useGmailNotices(enabled: boolean, ttlMs: number) {
   }, [enabled, inbox, senders, keywords, ttlMs, seenRef, seededRef])
 }
 
+/**
+ * 그 메시지가 여전히 "안 읽음" 인가. 안 읽은 목록에 있으면 당연히 안 읽음이고, 없을 때는
+ * 목록이 잘렸을 가능성(`has_more` — 안 읽은 게 많으면 일부만 가져온다)을 감안해 **가져온
+ * 범위 안인지**로 가른다: 잘려서 빠지는 것은 항상 가장 오래된 쪽이므로, 남아 있는 것보다
+ * 더 오래된 메시지는 "읽었다"고 단정하지 않고 판단을 미룬다.
+ *
+ * 채널이 목록에서 아예 빠졌으면 그 채널에 안 읽은 메시지가 없다(또는 감시 대상에서
+ * 제외됐다) — 어느 쪽이든 알림을 남겨 둘 이유가 없다.
+ *
+ * ⚠️ DM 은 개수가 많아 Rust 가 **회전하며 나눠 확인**하므로 "이번 응답에 없다"가 곧
+ * "확인했는데 없다"는 아니다. 그런데도 이 판정이 성립하는 것은 Rust 가 **지난번 안 읽음이
+ * 있던 대화(`hot`)를 회전과 무관하게 매번 확인**하기 때문이다. 즉 알림이 떠 있는 DM 은
+ * 항상 확인 대상이라, 응답에서 빠졌다면 정말로 읽힌 것이다. 그 규칙(slack.rs 의 `DmScan`)을
+ * 없애면 아직 안 읽은 DM 알림이 다음 주기에 조용히 사라진다.
+ */
+function stillUnread(c: ChannelUnread | undefined, ts: string): boolean {
+  if (!c || !c.messages.length) return false
+  if (c.messages.some((m) => m.ts === ts)) return true
+  const at = Number(ts)
+  // ts 를 숫자로 읽을 수 없으면(형식이 바뀌었다면) 지우지 않는다 — 안 읽은 알림을 조용히
+  // 없애는 쪽이 남겨 두는 쪽보다 나쁘다.
+  if (!Number.isFinite(at)) return true
+  return at < Math.min(...c.messages.map((m) => Number(m.ts)))
+}
+
 /** 새 Slack 메시지 알림 — 선택한 채널의 안 읽은 메시지 목록에서 새것만 고른다. */
 function useSlackNotices(enabled: boolean, ttlMs: number) {
-  const { channels } = useSlack()
+  const { channels, error } = useSlack()
   const { seenRef, seededRef } = useSeenIds(enabled)
+  /**
+   * 아직 말풍선에 떠 있을 수 있는 알림 id → 원본 메시지. 사용자가 Slack 에서 직접 읽으면
+   * 다음 폴링의 안 읽은 목록에서 그 메시지가 빠지므로, 그때 알림도 같이 치우려고 들고 있다.
+   * `seenRef` 로 대신할 수 없다 — 그쪽은 "다시 알리지 않기" 표시라 치운 뒤에도 남아야 한다.
+   */
+  const liveRef = useRef<Map<string, { channel: string; ts: string }>>(
+    new Map()
+  )
+
+  useEffect(() => {
+    // 알림을 껐으면 추적도 멈춘다(남은 알림은 표시 시간이 지나며 사라진다).
+    if (!enabled) liveRef.current.clear()
+  }, [enabled])
 
   useEffect(() => {
     if (!isMainWindow || !enabled) return
 
-    const fresh: AppNotice[] = []
+    /*
+     * 사용자가 Slack 에서 직접 읽은 메시지의 알림을 치운다 — 이미 확인한 것을 계속 띄워 두면
+     * ("항상 표시" 설정이면 시간으로도 사라지지 않는다) 알림이 실제 상태와 어긋난다.
+     * 폴링이 실패한 주기(error)에는 목록이 낡았을 수 있어 건드리지 않는다.
+     */
+    if (!error) {
+      for (const [id, m] of [...liveRef.current]) {
+        const c = channels.find((c) => c.id === m.channel)
+        if (stillUnread(c, m.ts)) continue
+        liveRef.current.delete(id)
+        dismissPetNotice(id)
+      }
+    }
+
+    /*
+     * 원본(채널·ts)을 알림과 함께 들고 간다 — 뒤에서 `liveRef` 에 넣을 때 id 를 다시 쪼개지
+     * 않기 위해서다(만드는 쪽과 읽는 쪽이 각자 문자열을 조립하면 조용히 어긋난다).
+     */
+    const fresh: { notice: AppNotice; channel: string; ts: string }[] = []
     for (const c of channels) {
       for (const m of c.messages) {
         // ts 는 채널 안에서 유일하다(같은 메시지는 폴링마다 같은 값으로 온다).
@@ -146,13 +202,29 @@ function useSlackNotices(enabled: boolean, ttlMs: number) {
         if (seenRef.current.has(id)) continue
         seenRef.current.add(id)
         fresh.push({
-          id,
-          source: "slack",
-          chip: "새 메시지",
-          // 채널 이름을 굵게 — DM 은 이름 자체가 상대이므로 # 를 붙이지 않는다.
-          title: c.kind === "im" ? c.name : `#${c.name}`,
-          body: `${m.user}: ${m.text}`,
-          menuId: "slack",
+          notice: {
+            id,
+            source: "slack",
+            chip: "새 메시지",
+            // 채널 이름을 굵게 — DM·그룹 DM 은 이름 자체가 사람이라 # 를 붙이지 않는다
+            // (그룹 DM 이름은 "가, 나, 다" 형태다).
+            title:
+              c.kind === "channel" || c.kind === "private"
+                ? `#${c.name}`
+                : c.name,
+            body: `${m.user}: ${m.text}`,
+            menuId: "slack",
+            // Slack 앱으로 바로 갈 수 있게 원본 좌표를 함께 실어 보낸다. 어느 쪽으로
+            // 갈지는 누를 때 펫 창이 설정을 보고 정하므로 여기서는 고르지 않는다.
+            link: {
+              kind: "slack",
+              channel: c.id,
+              ts: m.ts,
+              threadTs: m.thread_ts,
+            },
+          },
+          channel: c.id,
+          ts: m.ts,
         })
       }
     }
@@ -162,8 +234,12 @@ function useSlackNotices(enabled: boolean, ttlMs: number) {
       return
     }
 
-    for (const n of fresh.slice(0, MAX_PER_BATCH)) notifyPet(n, ttlMs)
-  }, [enabled, channels, ttlMs, seenRef, seededRef])
+    // 띄운 것만 추적한다 — 배치 상한에 걸려 안 띄운 알림은 치울 것도 없다.
+    for (const f of fresh.slice(0, MAX_PER_BATCH)) {
+      notifyPet(f.notice, ttlMs)
+      liveRef.current.set(f.notice.id, { channel: f.channel, ts: f.ts })
+    }
+  }, [enabled, channels, error, ttlMs, seenRef, seededRef])
 }
 
 /**
@@ -193,14 +269,18 @@ function useGcalNotices(before: boolean, start: boolean, ttlMs: number) {
         })
     }
 
-    /** 같은 일정·같은 종류로 두 번 알리지 않는다(30초마다 같은 판정을 하므로 필수). */
+    /**
+     * 같은 일정·같은 종류로 두 번 알리지 않는다(30초마다 같은 판정을 하므로 필수).
+     * 실제로 띄웠을 때만 `true` — 뒤따르는 정리(10분 전 알림 치우기)를 한 번만 하려고.
+     */
     const fire = (id: string, chip: string, title: string, body: string) => {
-      if (fired.current.has(id)) return
+      if (fired.current.has(id)) return false
       fired.current.add(id)
       notifyPet(
         { id, source: "gcal", chip, title, body, menuId: "gcal" },
         ttlMs
       )
+      return true
     }
 
     const check = () => {
@@ -223,7 +303,14 @@ function useGcalNotices(before: boolean, start: boolean, ttlMs: number) {
         }
         // 정시: 시작 직후 잠깐만. 이미 지난 일정까지 알리면 앱을 켤 때마다 쏟아진다.
         if (start && now >= at && now < at + GCAL_GRACE_MS) {
-          fire(`gcal:start:${at}:${title}`, "시작", title, `${hhmm} 시작`)
+          if (
+            fire(`gcal:start:${at}:${title}`, "시작", title, `${hhmm} 시작`)
+          ) {
+            // 같은 일정의 "10분 전" 알림은 할 일을 다했다 — 항상 표시(TTL 0)면 스스로
+            // 사라지지 않아 같은 일정 카드가 두 장 쌓인다(TTL 이 있으면 이미 없어져
+            // 있고, 없는 id 를 치우는 건 무해하다).
+            dismissPetNotice(`gcal:before:${at}:${title}`)
+          }
         }
       }
     }

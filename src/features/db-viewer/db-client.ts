@@ -201,6 +201,18 @@ export function connect(args: ConnectArgs) {
 }
 
 /**
+ * 이미 열려 있는 접속의 정보. 없으면 `null`.
+ *
+ * `connId` 는 자바 브리지 접속 맵의 키이고 **두 화면(데이터베이스 뷰어 · IntelliJ Cowork)이
+ * 같은 값을 쓴다.** 그래서 `db_connect` 를 다시 부르면 브리지가 앞의 `java.sql.Connection`
+ * 을 먼저 닫고, 그 순간 옆 화면이 열어 둔 트랜잭션이 조용히 롤백된다. "붙여 달라"는
+ * 요청은 먼저 이걸로 확인하고, 살아 있으면 재연결하지 말고 그대로 쓸 것.
+ */
+export function connInfo(connId: string) {
+  return call<ConnInfo | null>("db_conn_info", { connId })
+}
+
+/**
  * 접속 해제. 남은 접속이 없으면 Rust 가 JDBC 브리지(JVM)까지 내린다 —
  * 다음 연결이 다시 띄우므로 첫 요청에 1~2초가 더 걸린다.
  */

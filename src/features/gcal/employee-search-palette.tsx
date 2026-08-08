@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Input } from "@/components/ui/input"
 import { trackedInvoke } from "@/lib/tauri"
 import { cn } from "@/lib/utils"
+import { suppressWebviews } from "@/lib/webview-overlay"
 
 import { friendlyError } from "./gcal-error"
 import { WeekSection } from "./gcal-shared"
@@ -103,6 +104,13 @@ export function EmployeeSearchPalette() {
     return () => window.removeEventListener("pointerdown", onDown)
   }, [open])
 
+  // 드롭다운은 네이티브 웹뷰(브라우저 등) 위로 내려오는데, 웹뷰는 창 위에 겹쳐 그려져
+  // CSS 로 가려지지 않는다. 열려 있는 동안만 웹뷰 숨김을 요청한다(탭 넘침 목록과 같은 방식).
+  useEffect(() => {
+    if (!open) return
+    return suppressWebviews()
+  }, [open])
+
   const q = query.trim().toLowerCase()
   // 주소록 전체를 매 글자마다 훑으므로 검색어가 바뀔 때만 다시 계산한다.
   const hits = useMemo(
@@ -174,16 +182,18 @@ export function EmployeeSearchPalette() {
   const { thisWeek, nextWeek } = splitByWeek(schedule?.events ?? [])
 
   return (
-    <div
-      ref={rootRef}
-      className="absolute top-1/2 left-1/2 z-50 w-[min(420px,45%)] -translate-x-1/2 -translate-y-1/2"
-    >
-      {/* 상단바 검색 알약 — Slack 의 "Search …" 자리. 드래그 영역으로 만들지 않는다. */}
+    // 가로 위치는 상단바가 잡는다(내 일정·회의실 예약 알약과 나란히) — 여기서는 드롭다운의
+    // 기준점이 되도록 relative 만 둔다.
+    <div ref={rootRef} className="relative shrink-0">
+      {/* 상단바 검색 알약 — Slack 의 "Search …" 자리. 드래그 영역으로 만들지 않는다.
+          폭은 회의실 예약 알약과 같은 150px 고정이다 — 남는 폭을 다 먹게 두면(이전의
+          flex-1) 상단바 절반이 검색창이 된다. 실제 입력은 아래 드롭다운에서 하므로
+          알약은 여는 버튼 이상일 필요가 없다. */}
       <button
         type="button"
         aria-label="구성원 일정 검색"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-full border border-ui-chrome-fg/20 bg-ui-chrome-hover px-3 text-[13px] text-ui-chrome-muted-fg transition-colors hover:bg-ui-chrome-active"
+        className="flex h-7 w-[150px] cursor-pointer items-center gap-2 rounded-full border border-ui-chrome-fg/20 bg-ui-chrome-hover px-3 text-[13px] text-ui-chrome-muted-fg transition-colors hover:bg-ui-chrome-active"
       >
         <SearchIcon className="size-3.5 shrink-0" />
         <span className="truncate">구성원 일정 검색</span>

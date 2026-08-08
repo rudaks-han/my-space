@@ -64,15 +64,24 @@ export function TopicPane({
   meta,
   client,
   active,
+  scope,
 }: {
   topic: string
   meta?: TopicInfo
   client: KafkaClient
   active: boolean
+  /**
+   * 조회 조건(`persisted.ts`)을 담아 둘 칸의 화면 접두사. 주지 않으면 Kafka 뷰어의
+   * 기존 칸을 쓴다 — 두 화면이 접두사 없이 같은 칸을 나눠 쓰면, 한쪽에서 **탭을 닫을
+   * 때마다** 도는 `purgeTopic` 이 다른 쪽이 지금 보고 있는 파티션·오프셋·검색어를 지운다.
+   */
+  scope?: string
 }) {
   const tabActive = useTabActive()
   const [sub, setSub] = useState<SubTab>("messages")
-  const [query, setQuery] = useState<TopicQuery>(() => getTopicQuery(topic))
+  const [query, setQuery] = useState<TopicQuery>(() =>
+    getTopicQuery(topic, scope)
+  )
 
   const [result, setResult] = useState<FetchResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -89,7 +98,7 @@ export function TopicPane({
   const patch = (p: Partial<TopicQuery>) => {
     const next = { ...query, ...p }
     setQuery(next)
-    setTopicQuery(topic, next)
+    setTopicQuery(topic, next, scope)
   }
 
   const runFetch = useCallback(
@@ -132,8 +141,8 @@ export function TopicPane({
     if (started.current) return
     started.current = true
     void loadPartitions()
-    void runFetch(getTopicQuery(topic))
-  }, [loadPartitions, runFetch, topic])
+    void runFetch(getTopicQuery(topic, scope))
+  }, [loadPartitions, runFetch, topic, scope])
 
   // 설정 탭은 처음 열 때만 읽는다.
   useEffect(() => {
@@ -153,10 +162,11 @@ export function TopicPane({
   useEffect(() => {
     if (!live || !active || !tabActive) return
     const id = setInterval(() => {
-      void runFetch(getTopicQuery(topic))
+      // 저장된 조건을 매번 다시 읽는다(자동 새로고침 중에도 조건을 고칠 수 있으므로).
+      void runFetch(getTopicQuery(topic, scope))
     }, LIVE_INTERVAL_MS)
     return () => clearInterval(id)
-  }, [live, active, tabActive, runFetch, topic])
+  }, [live, active, tabActive, runFetch, topic, scope])
 
   const totalMessages =
     result?.watermarks.reduce((sum, [, low, high]) => sum + (high - low), 0) ??

@@ -1,6 +1,7 @@
 import { SettingsIcon } from "lucide-react"
 
 import { UnsupportedView } from "@/components/shell/unsupported-view"
+import { DevDarkToggle } from "@/features/cowork-dev/dev-dark-store"
 import { SettingsView } from "@/features/settings/settings-view"
 import { SETTINGS_ID } from "@/lib/use-open-tabs"
 import { MENUS, MENU_GROUPS, unsupportedReason } from "@/menus"
@@ -33,6 +34,21 @@ export function viewInfo(id: string): ViewInfo | null {
     // label 이 null 인 그룹(general)은 사이드바와 같은 이름으로 표시한다.
     group: group?.label ?? "일반",
   }
+}
+
+/**
+ * 화면 id → 뷰 헤더의 제목 **옆**에 붙는 버튼. 없으면 null.
+ *
+ * 여기 있는 이유는 하나다 — 메인 창의 탭 바와 팝아웃 창이 각자 헤더를 그리므로, 화면별
+ * 버튼을 양쪽에 따로 적으면 한쪽만 고쳐진다. 셸이 특정 화면을 `if` 로 아는 것도 막는다
+ * (그 판단은 이 레지스트리 하나에 모여 있다 — 아이콘·제목·그룹과 같은 자리다).
+ *
+ * 헤더 **오른쪽**의 "새 창으로 열기" 와 달리 제목 옆에 두는 것은, 이 버튼이 창을 다루는
+ * 동작이 아니라 **그 화면의 상태**라서다.
+ */
+export function viewHeaderAction(id: string) {
+  if (id === "cowork-dev") return <DevDarkToggle />
+  return null
 }
 
 /**

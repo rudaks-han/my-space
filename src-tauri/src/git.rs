@@ -660,6 +660,108 @@ pub async fn git_stash_drop(home: String, index: usize) -> Result<String, String
     .map_err(|e| e.to_string())?
 }
 
+/* ────────────────────────────── 파일 이력 ────────────────────────────── */
+
+/// 이력 한 줄(IntelliJ 의 Show History 표 한 행).
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommit {
+    /// 전체 해시 — 이 커밋의 diff 를 읽을 때 쓴다.
+    pub hash: String,
+    /// 짧은 해시(표시용).
+    pub short: String,
+    /// 커밋 제목 한 줄(`%s` 라 항상 한 줄이다 — 본문은 담지 않는다).
+    pub subject: String,
+    pub author: String,
+    /// "2 hours ago" 같은 상대 시각.
+    pub relative: String,
+    /// `2026-08-07 14:03` 형태의 절대 시각(같은 날 여러 커밋을 가릴 때 필요하다).
+    pub date: String,
+}
+
+/// 이력 한 줄의 포맷. 필드는 `\x1f`(unit separator)로 끊는다 — 커밋 제목·사람 이름에
+/// 나올 수 없는 글자라 `-z` 없이도 안전하고, 한 커밋이 정확히 한 줄이 되어 파싱이 단순하다.
+const HISTORY_FORMAT: &str = "--format=%H%x1f%h%x1f%s%x1f%an%x1f%cr%x1f%cd";
+
+fn parse_history(raw: &str) -> Vec<GitCommit> {
+    raw.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| {
+            let mut f = line.split('\x1f');
+            let hash = f.next()?.to_string();
+            let short = f.next()?.to_string();
+            let subject = f.next()?.to_string();
+            let author = f.next()?.to_string();
+            let relative = f.next()?.to_string();
+            let date = f.next().unwrap_or_default().to_string();
+            Some(GitCommit {
+                hash,
+                short,
+                subject,
+                author,
+                relative,
+                date,
+            })
+        })
+        .collect()
+}
+
+/// 파일(또는 디렉터리) 하나의 커밋 이력. IntelliJ 의 Git → Show History 와 같다.
+///
+/// `path` 는 **절대 경로**를 받는다 — 트리의 `DevEntry.path` 가 그것이고, git 은 저장소
+/// 안의 절대 경로를 pathspec 으로 그대로 받으므로 프론트가 루트 상대로 바꿀 필요가 없다
+/// (홈이 저장소의 하위 폴더일 수 있어서 그 변환은 프론트에서 틀리기 쉬운 계산이다).
+///
+/// 아직 커밋된 적 없는 파일이면 빈 목록이 온다(오류가 아니다).
+#[tauri::command]
+pub async fn git_file_history(
+    home: String,
+    path: String,
+    limit: u32,
+) -> Result<Vec<GitCommit>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = repo_root(&home)?;
+        let max = format!("--max-count={}", limit.clamp(1, 500));
+        let mut args: Vec<&str> = vec![
+            "log",
+            "--no-color",
+            &max,
+            HISTORY_FORMAT,
+            "--date=format:%Y-%m-%d %H:%M",
+        ];
+        // `--follow` 는 pathspec 이 파일 하나일 때만 뜻이 있다(디렉터리에 주면 git 이
+        // 거부한다). 붙여 두면 이름이 바뀐 파일의 이력이 그 지점에서 끊기지 않는다.
+        if Path::new(&path).is_file() {
+            args.push("--follow");
+        }
+        args.push("--");
+        args.push(&path);
+        Ok(parse_history(&run(&root, &args)?))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 커밋 하나에서 이 파일이 어떻게 바뀌었는지(unified diff).
+///
+/// **이름이 바뀐 파일의 옛 커밋은 빈 diff 가 나온다** — `--follow` 가 찾아 준 커밋이라도
+/// 그 시점의 경로는 지금 이름이 아니기 때문이다. 목록에서 커밋을 고르면 화면이 "표시할
+/// 변경이 없습니다"로 말해 주므로 여기서 따로 추적하지는 않는다(그러려면 커밋마다 옛
+/// 경로를 되짚어야 하고, 그 비용은 이 화면이 낼 만한 것이 아니다).
+#[tauri::command]
+pub async fn git_commit_file_diff(
+    home: String,
+    hash: String,
+    path: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = repo_root(&home)?;
+        run(&root, &["show", "--no-color", "--format=", &hash, "--", &path])
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,6 +870,71 @@ mod tests {
         assert_eq!(st.untracked[0].path, "zz-new.txt");
         // 이름 변경의 원래 경로(a.txt)가 별도 항목으로 새어 나오면 안 된다.
         assert!(!st.changes.iter().any(|c| c.path == "a.txt"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 이력 한 줄이 `\x1f` 로만 끊긴다는 계약. 필드가 밀리면 해시 자리에 제목이 들어가
+    /// diff 조회가 통째로 실패하는데, 목록은 그럴듯하게 채워져 눈에 띄지 않는다.
+    #[test]
+    fn parses_history_lines() {
+        let raw = "abc123\u{1f}abc\u{1f}첫 커밋\u{1f}한경만\u{1f}2 hours ago\u{1f}2026-08-07 14:03\n";
+        let list = parse_history(raw);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].hash, "abc123");
+        assert_eq!(list[0].subject, "첫 커밋");
+        assert_eq!(list[0].author, "한경만");
+        assert_eq!(list[0].date, "2026-08-07 14:03");
+    }
+
+    /// 진짜 저장소에서 이력과 커밋별 diff 를 읽어 본다 — 포맷 문자열이 git 에게 실제로
+    /// 먹히는지(그리고 `--follow` 가 이름 변경을 넘어가는지)는 파싱만으로는 확인되지 않는다.
+    #[test]
+    fn reads_file_history_across_a_rename() {
+        let dir = std::env::temp_dir().join(format!("myspace-git-hist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let git = |args: &[&str]| {
+            let out = exec(&dir, args).unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", err_text(&out, args));
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "test"]);
+
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "첫 커밋"]);
+        git(&["mv", "a.txt", "b.txt"]);
+        std::fs::write(dir.join("b.txt"), "one\ntwo\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "두 번째"]);
+
+        let abs = dir.join("b.txt").to_string_lossy().to_string();
+        let args: Vec<&str> = vec![
+            "log",
+            "--no-color",
+            "--max-count=50",
+            HISTORY_FORMAT,
+            "--date=format:%Y-%m-%d %H:%M",
+            "--follow",
+            "--",
+            &abs,
+        ];
+        let list = parse_history(&run(&dir, &args).unwrap());
+        // `--follow` 가 없으면 이름 변경 이전 커밋이 빠져 1건만 나온다.
+        assert_eq!(list.len(), 2, "이름 변경 전 커밋까지 따라와야 한다");
+        assert_eq!(list[0].subject, "두 번째");
+        assert_eq!(list[1].subject, "첫 커밋");
+        assert!(!list[0].hash.is_empty() && !list[0].date.is_empty());
+
+        let diff = run(
+            &dir,
+            &["show", "--no-color", "--format=", &list[0].hash, "--", &abs],
+        )
+        .unwrap();
+        assert!(diff.contains("+two"), "커밋별 diff 가 나와야 한다: {diff}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
